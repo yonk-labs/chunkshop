@@ -33,9 +33,13 @@ def _log(msg: str, log_path: Optional[Path]) -> None:
 
 
 def run_cell(cfg: CellConfig) -> CellResult:
-    # Pin CPU before any embedder loads ONNX (some models honor these at init)
-    os.environ.setdefault("OMP_NUM_THREADS", str(cfg.runtime.omp_num_threads))
-    os.environ.setdefault("MKL_NUM_THREADS", str(cfg.runtime.omp_num_threads))
+    # Cap CPU threads before any embedder loads ONNX. These env vars must be
+    # set before numpy / ONNX / BLAS libs are imported — most read them once at
+    # module load. The embedder's own `threads` config also caps ORT's
+    # intra_op_num_threads via SessionOptions (see FastembedProvider).
+    n = str(cfg.runtime.omp_num_threads)
+    for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ.setdefault(var, n)
 
     log_path = Path(cfg.runtime.log_path) if cfg.runtime.log_path else None
     if log_path:

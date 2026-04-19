@@ -30,3 +30,37 @@ def test_dim_mismatch_raises():
     import pytest
     with pytest.raises(ValueError, match="dim"):
         emb.embed(["probe"])
+
+
+def test_threads_parameter_caps_ort_session():
+    # threads=1 must be plumbed into fastembed so ORT's intra_op_num_threads
+    # is capped. Without this, 4 concurrent workers on a shared box end up
+    # running 4 × num_cpus threads each and thrashing.
+    cfg = FastembedEmbedder(
+        type="fastembed", model_name="BAAI/bge-small-en-v1.5", dim=384, threads=1
+    )
+    emb = load_embedder(cfg)
+    arr = emb.embed(["hello"])  # smoke
+    assert arr.shape == (1, 384)
+
+    # Walk fastembed's internals to find the ORT session and confirm the cap.
+    # Layout varies by fastembed version; tolerate missing attrs and fall
+    # back to the smoke assertion above if we can't introspect.
+    def _find_intra_op(obj, depth: int = 0):
+        if depth > 4 or obj is None:
+            return None
+        for attr in ("_sess_options", "sess_options", "session_options"):
+            opts = getattr(obj, attr, None)
+            if opts is not None and hasattr(opts, "intra_op_num_threads"):
+                return opts.intra_op_num_threads
+        for attr in ("model", "_model", "session", "_session", "ort_session"):
+            nxt = getattr(obj, attr, None)
+            if nxt is not None:
+                v = _find_intra_op(nxt, depth + 1)
+                if v is not None:
+                    return v
+        return None
+
+    found = _find_intra_op(emb._model)
+    if found is not None:
+        assert found == 1, f"expected intra_op_num_threads=1, got {found}"

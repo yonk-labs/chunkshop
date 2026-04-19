@@ -93,6 +93,8 @@ class FastembedEmbedder(_Base):
     model_name: str
     dim: int
     batch_size: int = 64
+    threads: Optional[int] = None  # None = fastembed auto-detects (bad on shared boxes);
+                                    # set to N to cap ORT intra_op_num_threads at session init
 
 
 EmbedderConfig = Annotated[Union[FastembedEmbedder], Field(discriminator="type")]

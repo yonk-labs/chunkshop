@@ -8,6 +8,7 @@ embedder:
   type: fastembed
   model_name: nomic-ai/nomic-embed-text-v1.5
   dim: 768
+  threads: 4
 target:
   dsn_env: AGE_BAKEOFF_PGRG_DSN
   schema: factorial
@@ -15,6 +16,6 @@ target:
   overwrite: true
   hnsw: true
 runtime:
-  omp_num_threads: 1
+  omp_num_threads: 4
   heartbeat_every: 25
   log_path: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/logs/factorial/a_nomic.log

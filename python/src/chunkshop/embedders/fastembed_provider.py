@@ -16,7 +16,13 @@ class FastembedProvider:
     def __init__(self, cfg: Cfg):
         self.cfg = cfg
         self.dim = cfg.dim
-        self._model = TextEmbedding(model_name=cfg.model_name)
+        # threads=N caps ORT intra_op_num_threads at session init. Without this,
+        # fastembed auto-detects and creates a pool sized to all cores, which
+        # thrashes badly when running 4 workers concurrently on a shared box.
+        kwargs = {"model_name": cfg.model_name}
+        if cfg.threads is not None:
+            kwargs["threads"] = cfg.threads
+        self._model = TextEmbedding(**kwargs)
 
     def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:
