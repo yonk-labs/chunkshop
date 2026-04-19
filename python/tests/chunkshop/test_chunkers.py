@@ -33,7 +33,11 @@ def test_fixed_overlap_windows():
 
 
 def test_hierarchy_prefixes_heading():
-    md = "# Section One\n\nalpha body text that is long enough to pass min_section_chars threshold of one hundred characters.\n\n# Section Two\n\nbeta body text that is also long enough to pass the min_section_chars threshold of one hundred characters."
+    # bodies must exceed min_section_chars (default 100); keep them well over to avoid drift
+    body_a = "alpha body text that is unambiguously longer than one hundred characters so the min_section_chars filter leaves it intact."
+    body_b = "beta body text that is unambiguously longer than one hundred characters so the min_section_chars filter leaves it intact."
+    md = f"# Section One\n\n{body_a}\n\n# Section Two\n\n{body_b}"
+    assert len(body_a) > 100 and len(body_b) > 100  # self-check: keep future edits honest
     chunker = load_chunker(HierarchyChunker(type="hierarchy"))
     chunks = chunker.chunk(_doc(md))
     assert len(chunks) == 2

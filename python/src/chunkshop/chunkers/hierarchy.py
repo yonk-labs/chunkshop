@@ -44,10 +44,7 @@ class HierarchyChunker:
             start = m.end()
             end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
             body = text[start:end].strip()
-            # measure section size as heading + body so short headings with
-            # just-under-threshold bodies still emit a chunk
-            section_len = len(heading_text) + len(body)
-            if section_len < self.cfg.min_section_chars:
+            if len(body) < self.cfg.min_section_chars:
                 continue
             embedded = f"{heading_text}\n\n{body}" if self.cfg.prefix_heading else body
             chunks.append(Chunk(
