@@ -33,3 +33,9 @@ vendor/
 # ONNX model cache
 .cache/
 fastembed_cache/
+
+# ONNX quantize_dynamic / preprocessing scratch artifacts (often written to CWD)
+*.onnx
+!src/**/*.onnx
+*.data
+sym_shape_infer_temp.onnx
