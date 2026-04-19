@@ -1,0 +1,46 @@
+[project]
+name = "chunkshop"
+version = "0.1.0"
+description = "Standalone ingest-to-pgvector: source → chunker → embedder → extractor → table."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "The Yonk", email = "matt@theyonk.com" }]
+keywords = ["rag", "pgvector", "embeddings", "chunking", "ingest"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "click>=8.1",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "numpy>=1.26",
+    "fastembed>=0.3",
+]
+
+[project.optional-dependencies]
+extractors = ["rake-nltk>=1.0.6", "nltk>=3.8"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+chunkshop = "chunkshop.cli:cli"
+
+[project.urls]
+Homepage = "https://github.com/theyonk/chunkshop"
+Issues = "https://github.com/theyonk/chunkshop/issues"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

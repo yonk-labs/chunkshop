@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg
+
+# Rust
+target/
+Cargo.lock
+
+# Go
+vendor/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local env / tmp
+.env
+.env.local
+/tmp/
+*.log
+
+# ONNX model cache
+.cache/
+fastembed_cache/
