@@ -6,9 +6,24 @@ library or driven from the command line.
 
 ## Status
 
-- **Python** (`python/`): active, MVP in progress.
+- **Python** (`python/`): v0.2.0, int8 by default.
 - **Rust** (`rust/`): planned.
 - **Go** (`go/`): planned.
+
+## Defaults, from the benchmark
+
+The example config ships with `chunker.type: hierarchy` and `embedder.model_name:
+Xenova/bge-small-en-v1.5-int8` because chunkshop's own factorial benchmark on a 772-doc
+legal QA corpus (30 gold-labeled questions, `gpt-4.1-mini` answer + judge) found:
+
+- **Hierarchy chunker wins across every embedder column** — prepending the section
+  heading to each embedded chunk adds free framing context.
+- **int8 >= fp32 in aggregate** (160 vs 152 fully_correct across 12 cells) with 2x faster
+  ingest. int8 `bge-small` ties the best fp32 cell at 18/30.
+- Zero hallucinations across 720 answers (both runs) — prompt discipline, not model choice.
+
+Swap to fp32 (`BAAI/bge-small-en-v1.5`) or nomic (`nomic-ai/nomic-embed-text-v1.5`) if your
+corpus needs the extra recall margin. Full benchmark data in the `pg-raggraph` repo.
 
 All three implementations share the same YAML config schema, the same ONNX Runtime-based
 embedder (via `fastembed` in Python; via `ort` in Rust; via `onnxruntime_go` in Go), and the

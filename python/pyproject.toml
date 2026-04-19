@@ -1,7 +1,7 @@
 [project]
 name = "chunkshop"
-version = "0.1.0"
-description = "Standalone ingest-to-pgvector: source → chunker → embedder → extractor → table."
+version = "0.2.0"
+description = "Standalone ingest-to-pgvector: source → chunker → embedder → extractor → table. int8 by default."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }

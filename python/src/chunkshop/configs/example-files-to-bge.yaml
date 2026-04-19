@@ -1,10 +1,15 @@
-# Example: ingest markdown files from disk into a pgvector table with bge-small embeddings.
+# Example: ingest markdown files from disk into a pgvector table.
+#
+# Defaults below use the hierarchy chunker + int8 bge-small — the production
+# sweet spot from chunkshop's own factorial benchmark (18/30 on legal QA,
+# tied with any fp32 config, 2x faster ingest). For highest-recall corpora
+# where 1-2 questions of accuracy matter, swap in:
+#   chunker.type: sentence_aware
+#   embedder.model_name: nomic-ai/nomic-embed-text-v1.5   (fp32, 768d)
 #
 # Usage:
 #   export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
 #   chunkshop ingest --config example-files-to-bge.yaml
-#
-# The DSN env var is named in `target.dsn_env`; set it in your shell before invoking.
 cell_name: example_files
 source:
   type: files
@@ -12,22 +17,28 @@ source:
   id_from: stem                   # stem | path | sha1
   encoding: utf-8
 chunker:
-  type: sentence_aware            # other options: fixed_overlap | hierarchy | neighbor_expand
+  type: hierarchy                 # prepends section heading to each chunk — biggest single accuracy lever
+  prefix_heading: true
+  min_section_chars: 100
+  # other chunker types: sentence_aware | fixed_overlap | neighbor_expand
 embedder:
   type: fastembed
-  model_name: BAAI/bge-small-en-v1.5
+  # int8 default (chunkshop registers Xenova's pre-quantized variants; see
+  # chunkshop/embedders/_registry.py). Swap to BAAI/bge-small-en-v1.5 for fp32.
+  model_name: Xenova/bge-small-en-v1.5-int8
   dim: 384
+  threads: 4                      # ORT intra_op_num_threads; tune for your CPU
   batch_size: 64
 extractor:
   type: none                      # or: rake_keywords (local, no LLM)
 target:
   dsn_env: CHUNKSHOP_DSN
-  schema: chunkshop                # any schema; created if missing
+  schema: chunkshop               # any schema; created if missing
   table: my_docs
-  overwrite: false                # set true to drop+recreate
-  hnsw: true                      # set false for tiny test tables
+  overwrite: false                # true to drop+recreate
+  hnsw: true                      # false for tiny test tables
 runtime:
-  omp_num_threads: 1
+  omp_num_threads: 4              # match embedder.threads
   heartbeat_every: 25             # log every N docs
   doc_limit: null                 # set to an int for smoke tests
   log_path: /tmp/chunkshop-example.log
