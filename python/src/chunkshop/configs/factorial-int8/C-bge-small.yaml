@@ -1,0 +1,23 @@
+cell_name: factorial_int8_c_bge_small
+source:
+  type: json_corpus
+  path: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/src/age_bakeoff/extraction/data/scotus.json
+chunker:
+  type: hierarchy
+  prefix_heading: true
+  min_section_chars: 100
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 4
+target:
+  dsn_env: AGE_BAKEOFF_PGRG_DSN
+  schema: factorial_int8
+  table: c_bge_small
+  overwrite: true
+  hnsw: true
+runtime:
+  omp_num_threads: 4
+  heartbeat_every: 25
+  log_path: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/logs/factorial-int8/c_bge_small.log

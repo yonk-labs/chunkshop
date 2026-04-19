@@ -1,0 +1,23 @@
+cell_name: factorial_int8_b_nomic
+source:
+  type: json_corpus
+  path: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/src/age_bakeoff/extraction/data/scotus.json
+chunker:
+  type: fixed_overlap
+  window_words: 300
+  step_words: 150
+embedder:
+  type: fastembed
+  model_name: nomic-ai/nomic-embed-text-v1.5-Q
+  dim: 768
+  threads: 4
+target:
+  dsn_env: AGE_BAKEOFF_PGRG_DSN
+  schema: factorial_int8
+  table: b_nomic
+  overwrite: true
+  hnsw: true
+runtime:
+  omp_num_threads: 4
+  heartbeat_every: 25
+  log_path: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/logs/factorial-int8/b_nomic.log
