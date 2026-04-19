@@ -1,0 +1,20 @@
+cell_name: factorial_a_bge_small
+source:
+  type: json_corpus
+  path: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/src/age_bakeoff/extraction/data/scotus.json
+chunker:
+  type: sentence_aware
+embedder:
+  type: fastembed
+  model_name: BAAI/bge-small-en-v1.5
+  dim: 384
+target:
+  dsn_env: AGE_BAKEOFF_PGRG_DSN
+  schema: factorial
+  table: a_bge_small
+  overwrite: true
+  hnsw: true
+runtime:
+  omp_num_threads: 1
+  heartbeat_every: 25
+  log_path: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/logs/factorial/a_bge_small.log

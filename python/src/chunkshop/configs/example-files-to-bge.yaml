@@ -1,0 +1,33 @@
+# Example: ingest markdown files from disk into a pgvector table with bge-small embeddings.
+#
+# Usage:
+#   export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
+#   chunkshop ingest --config example-files-to-bge.yaml
+#
+# The DSN env var is named in `target.dsn_env`; set it in your shell before invoking.
+cell_name: example_files
+source:
+  type: files
+  glob: /path/to/your/docs/**/*.md
+  id_from: stem                   # stem | path | sha1
+  encoding: utf-8
+chunker:
+  type: sentence_aware            # other options: fixed_overlap | hierarchy | neighbor_expand
+embedder:
+  type: fastembed
+  model_name: BAAI/bge-small-en-v1.5
+  dim: 384
+  batch_size: 64
+extractor:
+  type: none                      # or: rake_keywords (local, no LLM)
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: chunkshop                # any schema; created if missing
+  table: my_docs
+  overwrite: false                # set true to drop+recreate
+  hnsw: true                      # set false for tiny test tables
+runtime:
+  omp_num_threads: 1
+  heartbeat_every: 25             # log every N docs
+  doc_limit: null                 # set to an int for smoke tests
+  log_path: /tmp/chunkshop-example.log
