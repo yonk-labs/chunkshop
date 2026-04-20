@@ -16,10 +16,11 @@ def test_rake_returns_keywords_sorted():
         "Supreme Court justice Neil Gorsuch wrote the majority opinion in "
         "Bostock v. Clayton County. Bostock concerns civil rights and Title VII."
     )
-    tags = extractor.extract(text)
-    assert isinstance(tags, list)
-    assert 1 <= len(tags) <= 3
-    lowered = [t.lower() for t in tags]
+    result = extractor.extract(text)
+    assert isinstance(result.tags, list)
+    assert 1 <= len(result.tags) <= 3
+    assert result.metadata == {}  # RAKE carries no structured metadata
+    lowered = [t.lower() for t in result.tags]
     assert any(
         "bostock" in t or "gorsuch" in t or "civil rights" in t or "title vii" in t
         for t in lowered
