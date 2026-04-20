@@ -6,6 +6,7 @@ from chunkshop.config import (
 from chunkshop.extractors.base import Extractor
 from chunkshop.extractors.none_provider import NoneExtractor
 from chunkshop.extractors.rake_keywords import RakeKeywordsExtractor
+from chunkshop.extractors.result import ExtractResult
 
 
 def load_extractor(cfg: ExtractorConfig) -> Extractor:
@@ -16,4 +17,4 @@ def load_extractor(cfg: ExtractorConfig) -> Extractor:
     raise ValueError(f"unknown extractor type: {type(cfg).__name__}")
 
 
-__all__ = ["Extractor", "load_extractor"]
+__all__ = ["Extractor", "ExtractResult", "load_extractor"]
