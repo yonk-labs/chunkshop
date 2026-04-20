@@ -115,6 +115,33 @@ ExtractorConfig = Annotated[
 ]
 
 
+_ALLOWED_PROMOTE_TYPES = {"text", "text[]", "int", "bigint", "boolean", "jsonb", "timestamptz", "date"}
+_PATH_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class PromoteColumn(_Base):
+    path: str
+    type: str
+
+    @field_validator("path")
+    @classmethod
+    def _safe_path(cls, v: str) -> str:
+        if not v or not all(_PATH_SEGMENT.match(seg) for seg in v.split(".")):
+            raise ValueError(
+                f"path segments must match ^[A-Za-z_][A-Za-z0-9_]*$ separated by '.', got {v!r}"
+            )
+        return v
+
+    @field_validator("type")
+    @classmethod
+    def _safe_type(cls, v: str) -> str:
+        if v not in _ALLOWED_PROMOTE_TYPES:
+            raise ValueError(
+                f"promote_metadata type must be one of {_ALLOWED_PROMOTE_TYPES}, got {v!r}"
+            )
+        return v
+
+
 class TargetConfig(_Base):
     dsn_env: str = "AGE_BAKEOFF_PGRG_DSN"
     schema_name: str = Field(alias="schema")
