@@ -1,11 +1,11 @@
 from chunkshop.config import NoneExtractor, RakeKeywordsExtractor
-from chunkshop.extractors import load_extractor
-from chunkshop.extractors.result import ExtractResult
+from chunkshop.extractors import ExtractResult, load_extractor
 
 
 def test_none_returns_empty():
     extractor = load_extractor(NoneExtractor())
     result = extractor.extract("any text")
+    assert isinstance(result, ExtractResult)
     assert result.tags == []
     assert result.metadata == {}
 
@@ -17,6 +17,7 @@ def test_rake_returns_keywords_sorted():
         "Bostock v. Clayton County. Bostock concerns civil rights and Title VII."
     )
     result = extractor.extract(text)
+    assert isinstance(result, ExtractResult)
     assert isinstance(result.tags, list)
     assert 1 <= len(result.tags) <= 3
     assert result.metadata == {}  # RAKE carries no structured metadata
