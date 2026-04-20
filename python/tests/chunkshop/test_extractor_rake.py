@@ -1,10 +1,13 @@
 from chunkshop.config import NoneExtractor, RakeKeywordsExtractor
 from chunkshop.extractors import load_extractor
+from chunkshop.extractors.result import ExtractResult
 
 
 def test_none_returns_empty():
     extractor = load_extractor(NoneExtractor())
-    assert extractor.extract("any text") == []
+    result = extractor.extract("any text")
+    assert result.tags == []
+    assert result.metadata == {}
 
 
 def test_rake_returns_keywords_sorted():
