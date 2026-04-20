@@ -74,7 +74,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
             results = [extractor.extract(c.original_content) for c in chunks]
             tags = [r.tags for r in results]
             chunks = [
-                _replace(c, metadata={**c.metadata, **r.metadata})
+                _replace(c, metadata={**r.metadata, **c.metadata})
                 for c, r in zip(chunks, results)
             ]
             sink.write_document(doc.id, chunks, embeddings, tags)
