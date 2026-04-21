@@ -136,3 +136,40 @@ def test_append_fails_on_malformed_table(ensure_pg):
     cfg = _mk_target(mode="append", source_tag="pdfs")
     with pytest.raises(RuntimeError, match="does not appear to be a chunkshop target"):
         PgVectorSink(cfg, embed_dim=4).create_table()
+
+
+def test_overwrite_refuses_foreign_source_tag(ensure_pg):
+    # First cell populates the table with source_tag=pdfs
+    cfg_a = _mk_target(mode="create_if_missing", source_tag="pdfs")
+    PgVectorSink(cfg_a, embed_dim=4).create_table()
+    # Insert one row with source='pdfs' to make the foreign tag detectable
+    with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO chunkshop_test_append.target_a "
+            "(id, doc_id, seq_num, original_content, embedded_content, "
+            " tags, metadata, embedding, source) "
+            "VALUES ('d1::0','d1',0,'x','x','{}','{}'::jsonb, '[1,0,0,0]'::vector, 'pdfs')"
+        )
+        conn.commit()
+
+    # Second cell in overwrite mode with a different source_tag — should refuse.
+    cfg_b = _mk_target(mode="overwrite", source_tag="web_scrape")
+    with pytest.raises(RuntimeError, match="source_tag"):
+        PgVectorSink(cfg_b, embed_dim=4).create_table()
+
+
+def test_overwrite_force_bypasses_check(ensure_pg):
+    cfg_a = _mk_target(mode="create_if_missing", source_tag="pdfs")
+    PgVectorSink(cfg_a, embed_dim=4).create_table()
+    with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO chunkshop_test_append.target_a "
+            "(id, doc_id, seq_num, original_content, embedded_content, "
+            " tags, metadata, embedding, source) "
+            "VALUES ('d1::0','d1',0,'x','x','{}','{}'::jsonb, '[1,0,0,0]'::vector, 'pdfs')"
+        )
+        conn.commit()
+
+    cfg_force = _mk_target(mode="overwrite", source_tag="web_scrape", force_overwrite=True)
+    # Should not raise
+    PgVectorSink(cfg_force, embed_dim=4).create_table()

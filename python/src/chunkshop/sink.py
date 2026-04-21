@@ -125,7 +125,23 @@ class PgVectorSink:
             )
 
     def _overwrite_create(self, cur) -> None:
-        # Safety check (refuse foreign source_tag) lands in Task 12.
+        if self._table_exists(cur) and not self.cfg.force_overwrite:
+            # Check if the existing table holds rows from a different source_tag.
+            cur.execute(
+                sql.SQL("SELECT DISTINCT source FROM {tbl} WHERE source IS NOT NULL LIMIT 10").format(
+                    tbl=self._fq()
+                )
+            )
+            existing_tags = {r[0] for r in cur.fetchall()}
+            my_tag = self.cfg.source_tag
+            foreign = existing_tags - ({my_tag} if my_tag else set())
+            if foreign:
+                raise RuntimeError(
+                    f"overwrite refuses to drop {self.cfg.schema_name}.{self.cfg.table}: "
+                    f"table holds rows with source_tag values {sorted(foreign)!r} that differ "
+                    f"from this cell's source_tag {my_tag!r}. Set target.force_overwrite: true "
+                    f"in YAML to bypass."
+                )
         if self._table_exists(cur):
             cur.execute(sql.SQL("DROP TABLE {}").format(self._fq()))
         self._create_base_ddl(cur)
