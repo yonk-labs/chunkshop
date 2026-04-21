@@ -66,3 +66,15 @@ def test_target_promote_metadata_parses():
     assert len(cfg.promote_metadata) == 2
     assert cfg.promote_metadata[0].path == "language"
     assert cfg.promote_metadata[1].type == "text[]"
+
+
+def test_promote_column_name_is_lowercased():
+    assert PromoteColumn(path="language", type="text").column_name == "language"
+    assert PromoteColumn(path="entities.ORG", type="text[]").column_name == "entities__org"
+    assert PromoteColumn(path="A.B.C", type="text").column_name == "a__b__c"
+
+
+def test_promote_column_is_frozen():
+    pc = PromoteColumn(path="language", type="text")
+    with pytest.raises(ValidationError):
+        pc.path = "mutated"

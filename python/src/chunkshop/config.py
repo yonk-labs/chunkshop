@@ -120,6 +120,8 @@ _PATH_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class PromoteColumn(_Base):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     path: str
     type: str
 
@@ -140,6 +142,18 @@ class PromoteColumn(_Base):
                 f"promote_metadata type must be one of {_ALLOWED_PROMOTE_TYPES}, got {v!r}"
             )
         return v
+
+    @property
+    def column_name(self) -> str:
+        """Return the Postgres column identifier for this promoted jsonb path.
+
+        Replaces dots with double underscores and lowercases the result. Mixed-case
+        input paths like ``entities.ORG`` become canonical lowercase columns
+        (``entities__org``) so unquoted SELECTs across cells reach the same column
+        regardless of which cell's YAML declared it. Centralized here so Tasks 11
+        and 13 (sink preflight + write) both derive the identifier the same way.
+        """
+        return self.path.replace(".", "__").lower()
 
 
 class TargetConfig(_Base):
