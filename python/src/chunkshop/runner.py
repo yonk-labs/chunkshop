@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _replace
 from pathlib import Path
 from typing import Optional
 
@@ -71,7 +71,12 @@ def run_cell(cfg: CellConfig) -> CellResult:
                 continue
             texts = [c.embedded_content for c in chunks]
             embeddings = embedder.embed(texts)
-            tags = [extractor.extract(c.original_content) for c in chunks]
+            results = [extractor.extract(c.original_content) for c in chunks]
+            tags = [r.tags for r in results]
+            chunks = [
+                _replace(c, metadata={**r.metadata, **c.metadata})
+                for c, r in zip(chunks, results)
+            ]
             sink.write_document(doc.id, chunks, embeddings, tags)
             chunks_written += len(chunks)
             docs_processed += 1
