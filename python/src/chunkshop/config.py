@@ -88,6 +88,16 @@ ChunkerConfig = Annotated[
 NeighborExpandChunker.model_rebuild()
 
 
+class IdentityFramerConfig(_Base):
+    type: Literal["identity"] = "identity"
+
+
+FramerConfig = Annotated[
+    IdentityFramerConfig,
+    Field(discriminator="type"),
+]
+
+
 class FastembedEmbedder(_Base):
     type: Literal["fastembed"]
     model_name: str
@@ -195,6 +205,7 @@ class RuntimeConfig(_Base):
 class CellConfig(_Base):
     cell_name: str
     source: SourceConfig
+    framer: FramerConfig = Field(default_factory=IdentityFramerConfig)
     chunker: ChunkerConfig
     embedder: EmbedderConfig
     extractor: ExtractorConfig = NoneExtractor()
