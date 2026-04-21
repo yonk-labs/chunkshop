@@ -11,6 +11,7 @@ from chunkshop.chunkers import load_chunker
 from chunkshop.config import CellConfig
 from chunkshop.embedders import load_embedder
 from chunkshop.extractors import load_extractor
+from chunkshop.framers import load_framer
 from chunkshop.sink import PgVectorSink
 from chunkshop.sources import load_source
 
@@ -49,6 +50,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
     _log(f"cell {cfg.cell_name} starting", log_path)
     try:
         source = load_source(cfg.source)
+        framer = load_framer(cfg.framer)
         chunker = load_chunker(cfg.chunker)
         embedder = load_embedder(cfg.embedder)
         extractor = load_extractor(cfg.extractor)
@@ -62,23 +64,24 @@ def run_cell(cfg: CellConfig) -> CellResult:
         limit = cfg.runtime.doc_limit
         heartbeat = cfg.runtime.heartbeat_every
 
-        for doc in source.iter_documents():
+        for raw in source.iter_documents():
             if limit is not None and docs_processed >= limit:
                 break
-            chunks = chunker.chunk(doc)
-            if not chunks:
-                docs_processed += 1
-                continue
-            texts = [c.embedded_content for c in chunks]
-            embeddings = embedder.embed(texts)
-            results = [extractor.extract(c.original_content) for c in chunks]
-            tags = [r.tags for r in results]
-            chunks = [
-                _replace(c, metadata={**r.metadata, **c.metadata})
-                for c, r in zip(chunks, results)
-            ]
-            sink.write_document(doc.id, chunks, embeddings, tags)
-            chunks_written += len(chunks)
+            for doc in framer.frame(raw):
+                chunks = chunker.chunk(doc)
+                if not chunks:
+                    continue
+                texts = [c.embedded_content for c in chunks]
+                embeddings = embedder.embed(texts)
+                results = [extractor.extract(c.original_content) for c in chunks]
+                tags = [r.tags for r in results]
+                chunks = [
+                    _replace(c, metadata={**r.metadata, **c.metadata})
+                    for c, r in zip(chunks, results)
+                ]
+                sink.write_document(doc.id, chunks, embeddings, tags)
+                chunks_written += len(chunks)
+            # `docs_processed` counts RAW docs (what the source yielded), not framed docs.
             docs_processed += 1
             if docs_processed % heartbeat == 0:
                 elapsed = time.time() - start
