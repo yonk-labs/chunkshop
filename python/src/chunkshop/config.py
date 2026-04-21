@@ -92,8 +92,14 @@ class IdentityFramerConfig(_Base):
     type: Literal["identity"] = "identity"
 
 
+class HeadingBoundaryFramerConfig(_Base):
+    type: Literal["heading_boundary"] = "heading_boundary"
+    pattern: str = r"^#+\s"
+    title_from_heading: bool = True
+
+
 FramerConfig = Annotated[
-    IdentityFramerConfig,
+    Union[IdentityFramerConfig, HeadingBoundaryFramerConfig],
     Field(discriminator="type"),
 ]
 
