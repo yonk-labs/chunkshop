@@ -12,7 +12,7 @@ cell_name: samples_neighbor_expand_int8
 
 source:
   type: files
-  glob: docs/samples/*.md
+  glob: docs/samples/*-*.md   # dash-containing filenames — excludes README.md
   id_from: stem
   encoding: utf-8
 

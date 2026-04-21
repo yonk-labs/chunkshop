@@ -11,7 +11,7 @@ cell_name: samples_sentence_aware_fp32
 
 source:
   type: files
-  glob: docs/samples/*.md
+  glob: docs/samples/*-*.md   # dash-containing filenames — excludes README.md
   id_from: stem
   encoding: utf-8
 

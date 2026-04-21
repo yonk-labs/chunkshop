@@ -16,7 +16,7 @@ cell_name: samples_hierarchy_int8
 
 source:
   type: files
-  glob: docs/samples/*.md   # run from the chunkshop repo root, or edit to absolute path
+  glob: docs/samples/*-*.md   # dash-containing filenames — excludes README.md. Run from repo root.
   id_from: stem
   encoding: utf-8
 

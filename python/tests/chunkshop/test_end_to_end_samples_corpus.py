@@ -1,10 +1,13 @@
-"""End-to-end test: ingest all four docs/samples/*.md via run_cell, then run a
-real semantic query and assert top-1 hit.
+"""End-to-end test: ingest the four dash-named sample markdown docs via run_cell,
+then run a real semantic query and assert top-1 hit.
 
 Validates the full pipeline (files source -> hierarchy chunker -> fastembed
 int8 -> rake_keywords extractor -> pgvector sink) against a realistic corpus,
 not synthesized fixtures. Skips cleanly if Postgres is unreachable. First run
 downloads ~35 MB of model weights to ~/.cache/fastembed/.
+
+Glob uses ``*-*.md`` to pick up handbook-*.md and release-notes.md while skipping
+README.md (which would otherwise pollute the corpus).
 """
 import os
 import pytest
@@ -17,7 +20,7 @@ from chunkshop.runner import run_cell
 DSN_ENV = "CHUNKSHOP_TEST_DSN"
 DEFAULT_DSN = "postgresql://postgres:postgres@localhost:5434/age_bakeoff_pgrg"
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SAMPLES_GLOB = os.path.join(os.path.dirname(REPO_ROOT), "docs", "samples", "*.md")
+SAMPLES_GLOB = os.path.join(os.path.dirname(REPO_ROOT), "docs", "samples", "*-*.md")
 
 
 @pytest.fixture
@@ -38,7 +41,9 @@ def ensure_pg():
 def test_ingest_samples_corpus_end_to_end(ensure_pg):
     import glob
     md_files = sorted(glob.glob(SAMPLES_GLOB))
-    assert len(md_files) >= 4, f"expected >=4 sample markdown docs, found {md_files}"
+    # 4 dash-named sample docs: handbook-intro, handbook-engineering, handbook-security,
+    # release-notes. README.md is excluded by the `*-*.md` glob.
+    assert len(md_files) == 4, f"expected exactly 4 sample markdown docs, found {md_files}"
 
     cfg = CellConfig(
         cell_name="e2e_samples",
