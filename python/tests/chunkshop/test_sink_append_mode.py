@@ -102,3 +102,37 @@ def test_append_adds_promote_columns(ensure_pg):
         # Dotted paths become double-underscored AND lowercased via PromoteColumn.column_name.
         assert "language" in cols
         assert "entities__org" in cols
+
+
+def test_append_dim_check_works_on_empty_table(ensure_pg):
+    # Create dim=4 table, don't write any rows, then append with matching dim — must succeed.
+    cfg_create = _mk_target(mode="create_if_missing", source_tag="pdfs")
+    PgVectorSink(cfg_create, embed_dim=4).create_table()
+
+    # Verify table is empty (no rows for vector_dims to see).
+    with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM chunkshop_test_append.target_a")
+        assert cur.fetchone()[0] == 0
+
+    # Append with matching dim should not raise.
+    cfg_append_match = _mk_target(mode="append", source_tag="pdfs")
+    PgVectorSink(cfg_append_match, embed_dim=4).create_table()
+
+    # Append with mismatched dim on empty table must still raise.
+    cfg_append_mismatch = _mk_target(mode="append", source_tag="pdfs")
+    with pytest.raises(RuntimeError, match="dim"):
+        PgVectorSink(cfg_append_mismatch, embed_dim=16).create_table()
+
+
+def test_append_fails_on_malformed_table(ensure_pg):
+    # Pre-existing non-chunkshop table with the same name — no embedding column.
+    with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
+        cur.execute("CREATE SCHEMA IF NOT EXISTS chunkshop_test_append")
+        cur.execute(
+            "CREATE TABLE chunkshop_test_append.target_a (id text PRIMARY KEY, payload text)"
+        )
+        conn.commit()
+
+    cfg = _mk_target(mode="append", source_tag="pdfs")
+    with pytest.raises(RuntimeError, match="does not appear to be a chunkshop target"):
+        PgVectorSink(cfg, embed_dim=4).create_table()

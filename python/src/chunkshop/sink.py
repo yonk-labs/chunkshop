@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 
 import numpy as np
 import psycopg
@@ -62,34 +63,17 @@ class PgVectorSink:
         return cur.fetchone()[0]
 
     def _current_embed_dim(self, cur) -> int | None:
-        """Returns the existing embedding vector dim, or None if column/table missing."""
-        # Check whether the `embedding` column exists first
+        """Return the declared dim of the `embedding` vector column, or None if the column
+        does not exist on this table.
+
+        Uses ``format_type(atttypid, atttypmod)`` which yields strings like ``vector(384)``
+        regardless of pgvector version — robust to the atttypmod-plus-VARHDRSZ encoding
+        variance that used to bite direct ``atttypmod`` reads. Works on empty tables.
+        """
         cur.execute(
             """
-            SELECT 1 FROM pg_attribute
-            WHERE attrelid = (
-                SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE c.relname = %s AND n.nspname = %s
-            ) AND attname = 'embedding'
-            """,
-            (self.cfg.table, self.cfg.schema_name),
-        )
-        if cur.fetchone() is None:
-            return None
-        # Use vector_dims() to get the declared dim — most reliable across pgvector versions
-        try:
-            cur.execute(
-                sql.SQL("SELECT vector_dims(embedding) FROM {} LIMIT 1").format(self._fq())
-            )
-            r = cur.fetchone()
-            if r is not None:
-                return r[0]
-        except Exception:
-            pass
-        # Fall back: the table might be empty. Inspect atttypmod on the column.
-        cur.execute(
-            """
-            SELECT atttypmod FROM pg_attribute
+            SELECT format_type(atttypid, atttypmod)
+            FROM pg_attribute
             WHERE attrelid = (
                 SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 WHERE c.relname = %s AND n.nspname = %s
@@ -98,7 +82,10 @@ class PgVectorSink:
             (self.cfg.table, self.cfg.schema_name),
         )
         r = cur.fetchone()
-        return r[0] if r else None
+        if r is None:
+            return None
+        m = re.match(r"^vector\((\d+)\)$", r[0])
+        return int(m.group(1)) if m else None
 
     def _create_base_ddl(self, cur) -> None:
         fq = self._fq()
@@ -160,10 +147,17 @@ class PgVectorSink:
                 f"Use mode='create_if_missing' on the first cell."
             )
         current_dim = self._current_embed_dim(cur)
-        if current_dim is not None and current_dim != self.embed_dim:
+        if current_dim is None:
+            raise RuntimeError(
+                f"append mode: table {self.cfg.schema_name}.{self.cfg.table} exists but has no "
+                f"'embedding' vector column. This does not appear to be a chunkshop target "
+                f"table — point at a different table or use mode='overwrite'."
+            )
+        if current_dim != self.embed_dim:
             raise RuntimeError(
                 f"append mode: target embedding dim is {current_dim}, cell's embedder dim is "
-                f"{self.embed_dim}. Vectors are not comparable."
+                f"{self.embed_dim}. Vectors are not comparable. Use a different target table "
+                f"or re-ingest into an overwrite-mode target."
             )
         # Ensure source column + promoted columns present.
         cur.execute(
