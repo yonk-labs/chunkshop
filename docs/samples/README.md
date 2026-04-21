@@ -14,6 +14,7 @@ without hunting for a corpus.
 | `sample.yaml`                     | Default recipe: `hierarchy` + int8 `bge-small`.             |
 | `sample-sentence-aware.yaml`      | Alternative: `sentence_aware` + fp32 `bge-small`.           |
 | `sample-neighbor-expand.yaml`     | Alternative: `neighbor_expand` wrapping `hierarchy`.        |
+| `sample-multi-source.yaml`        | Schema-flex demo: `mode: create_if_missing` + `source_tag` + `promote_metadata`. |
 
 ## Run it
 
@@ -70,6 +71,15 @@ Runs hierarchy first, then rebuilds each row's `embedded_content` by joining the
 current, and next sections. `original_content` stays as the single section (clean for grep),
 but the vector sees more context. Useful when retrieval misses answers that span section
 boundaries.
+
+### `sample-multi-source.yaml` — schema-flex shape
+
+Same corpus, same chunker, but written via the new `mode: create_if_missing` +
+`source_tag: handbook_markdown` + `promote_metadata: [{path: strategy, type: text}]`
+target shape. Demonstrates the multi-source fields on a guaranteed-populated promoted
+column (`HierarchyChunker` writes `metadata.strategy = "hierarchy"` on every chunk).
+Layer a second cell on top with `mode: append` to see two sources in one table —
+full walkthrough in [`../tutorial-multi-source.md`](../tutorial-multi-source.md).
 
 ## Comparing results
 

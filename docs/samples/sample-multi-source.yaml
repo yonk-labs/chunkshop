@@ -1,0 +1,57 @@
+# Schema-flex demo: same sample corpus, but written via the new `mode` / `source_tag` /
+# `promote_metadata` shape instead of legacy `overwrite: true`.
+#
+# Run with:
+#   chunkshop ingest --config docs/samples/sample-multi-source.yaml
+#
+# What's different from sample.yaml:
+#   - `mode: create_if_missing`  — create the table on first run, no-op on re-runs.
+#                                   (Swap to `mode: append` from a second cell to layer in
+#                                   another source; see docs/tutorial-multi-source.md.)
+#   - `source_tag: handbook_markdown` — stamped into every row's `source` column; the
+#                                        discriminator used to filter or GROUP BY later.
+#   - `promote_metadata` — lifts `metadata.strategy` ("hierarchy") into a typed text column.
+#                          Guaranteed populated because HierarchyChunker writes that key on
+#                          every chunk — a reliable first-introduction promote_metadata target.
+#
+# After running:
+#   SELECT DISTINCT source, strategy FROM chunkshop_samples.handbook_multi;
+#   -- source            | strategy
+#   -- handbook_markdown | hierarchy
+cell_name: samples_multi_source
+
+source:
+  type: files
+  glob: docs/samples/*.md   # run from the chunkshop repo root, or edit to absolute path
+  id_from: stem
+  encoding: utf-8
+
+chunker:
+  type: hierarchy
+  prefix_heading: true
+  min_section_chars: 100
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 4
+  batch_size: 64
+
+extractor:
+  type: none
+
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: chunkshop_samples
+  table: handbook_multi
+  mode: create_if_missing
+  source_tag: handbook_markdown
+  promote_metadata:
+    - path: strategy
+      type: text
+  hnsw: false               # 4 docs is too small for HNSW to beat seq scan
+
+runtime:
+  omp_num_threads: 4
+  heartbeat_every: 5
