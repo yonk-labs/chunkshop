@@ -87,3 +87,50 @@ def test_heading_boundary_metadata_isolation():
     frames[0].metadata["mutation"] = "test"
     assert "mutation" not in frames[1].metadata
     assert "mutation" not in raw.metadata
+
+
+from chunkshop.framers.regex_boundary import RegexBoundaryFramer
+from chunkshop.config import RegexBoundaryFramerConfig
+
+
+def test_regex_boundary_medical_topic_split():
+    """Simulates the pg-raggraph medical corpus pattern: 'About <topic>' separators."""
+    content = (
+        "About Lupus. Lupus is an autoimmune disease. It affects joints. "
+        "About Diabetes. Diabetes is a metabolic disorder. Insulin management matters. "
+        "About Asthma. Asthma narrows airways. Triggers vary by patient."
+    )
+    raw = Document(id="med", content=content, title="Medical", metadata={})
+    framer = RegexBoundaryFramer(RegexBoundaryFramerConfig(
+        type="regex_boundary",
+        split_pattern=r"(?:^|(?<=[.?!]\s))About\s+",
+        title_pattern=r"About\s+([^.?]{3,80})",
+    ))
+    out = framer.frame(raw)
+    assert len(out) == 3
+    titles = {d.title for d in out}
+    assert any("Lupus" in t for t in titles)
+    assert any("Diabetes" in t for t in titles)
+    assert any("Asthma" in t for t in titles)
+    for i, d in enumerate(out):
+        assert d.metadata["framer"] == "regex_boundary"
+        assert d.metadata["frame_seq"] == i
+
+
+def test_regex_boundary_no_match_returns_single_frame():
+    raw = Document(id="d1", content="No boundaries here.", title="t", metadata={})
+    framer = RegexBoundaryFramer(RegexBoundaryFramerConfig(
+        type="regex_boundary", split_pattern=r"SPLIT",
+    ))
+    out = framer.frame(raw)
+    assert len(out) == 1
+
+
+def test_regex_boundary_invalid_pattern_rejected_at_config_load():
+    import pytest
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        RegexBoundaryFramerConfig(
+            type="regex_boundary",
+            split_pattern=r"[unclosed",  # invalid regex
+        )

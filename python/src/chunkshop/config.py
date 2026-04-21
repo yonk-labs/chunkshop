@@ -98,8 +98,26 @@ class HeadingBoundaryFramerConfig(_Base):
     title_from_heading: bool = True
 
 
+class RegexBoundaryFramerConfig(_Base):
+    type: Literal["regex_boundary"] = "regex_boundary"
+    split_pattern: str
+    title_pattern: Optional[str] = None
+    body_starts_with_match: bool = True
+
+    @field_validator("split_pattern", "title_pattern")
+    @classmethod
+    def _valid_regex(cls, v):
+        if v is None:
+            return v
+        try:
+            re.compile(v)
+        except re.error as exc:
+            raise ValueError(f"invalid regex: {exc}")
+        return v
+
+
 FramerConfig = Annotated[
-    Union[IdentityFramerConfig, HeadingBoundaryFramerConfig],
+    Union[IdentityFramerConfig, HeadingBoundaryFramerConfig, RegexBoundaryFramerConfig],
     Field(discriminator="type"),
 ]
 
