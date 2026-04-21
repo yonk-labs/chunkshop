@@ -1,0 +1,42 @@
+# Alternative recipe: hierarchy base chunker wrapped with ±1 neighbor expansion.
+# Chunks still grep-cleanly (original_content is section body only) but embeddings
+# see the sections on either side for extra context.
+#
+# Run with:
+#   chunkshop ingest --config docs/samples/sample-neighbor-expand.yaml
+cell_name: samples_neighbor_expand_int8
+
+source:
+  type: files
+  glob: docs/samples/*.md
+  id_from: stem
+  encoding: utf-8
+
+chunker:
+  type: neighbor_expand
+  window: 1
+  base:
+    type: hierarchy
+    prefix_heading: true
+    min_section_chars: 100
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 4
+  batch_size: 64
+
+extractor:
+  type: none
+
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: chunkshop_samples
+  table: handbook_neighbor_expand
+  overwrite: true
+  hnsw: false
+
+runtime:
+  omp_num_threads: 4
+  heartbeat_every: 5

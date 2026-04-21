@@ -1,0 +1,44 @@
+# Ready-to-run chunkshop config pointing at the sample markdown in this directory.
+#
+# From the chunkshop repo root:
+#   export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
+#   chunkshop ingest --config docs/samples/sample.yaml
+#
+# This uses the production-sweet-spot defaults (hierarchy + int8 bge-small). For
+# alternative recipes that target the same data, see:
+#   docs/samples/sample-sentence-aware.yaml   — prose splitter, fp32
+#   docs/samples/sample-neighbor-expand.yaml  — hierarchy wrapped with ±1 neighbor context
+cell_name: samples_hierarchy_int8
+
+source:
+  type: files
+  glob: docs/samples/*.md   # run from the chunkshop repo root, or edit to absolute path
+  id_from: stem
+  encoding: utf-8
+
+chunker:
+  type: hierarchy
+  prefix_heading: true
+  min_section_chars: 100
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 4
+  batch_size: 64
+
+extractor:
+  type: none
+
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: chunkshop_samples
+  table: handbook
+  overwrite: true           # drop+recreate each run — this is a demo table
+  hnsw: false               # 4 docs is too small for HNSW to beat seq scan
+
+runtime:
+  omp_num_threads: 4
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop-sample.log
