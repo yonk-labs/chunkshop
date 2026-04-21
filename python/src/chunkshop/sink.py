@@ -228,10 +228,14 @@ class PgVectorSink:
         all_cols = base_cols + promote_cols
         all_placeholders = base_placeholders + promote_placeholders
 
-        # ON CONFLICT DO UPDATE clause: update every column except id.
+        # ON CONFLICT DO UPDATE: refresh content, tags, metadata, embedding, and
+        # promoted columns. Explicitly SKIP `source` (base_cols[8]) — source is
+        # write-once, owned by the cell that created the row. Without this, a
+        # later cell with the same (doc_id, seq_num) would silently clobber the
+        # original cell's provenance, breaking multi-source filtering (SC-006).
+        update_cols = base_cols[3:8] + promote_cols  # skip id/doc_id/seq_num AND source
         update_assignments = [
-            sql.SQL("{c} = EXCLUDED.{c}").format(c=c)
-            for c in base_cols[3:] + promote_cols  # skip id, doc_id, seq_num
+            sql.SQL("{c} = EXCLUDED.{c}").format(c=c) for c in update_cols
         ]
 
         stmt = sql.SQL(

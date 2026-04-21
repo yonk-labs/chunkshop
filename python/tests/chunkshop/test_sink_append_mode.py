@@ -206,3 +206,38 @@ def test_write_populates_source_and_promoted(ensure_pg):
         assert row[0] == "pdfs"
         assert row[1] == "en"
         assert row[2] == ["Acme", "Northwind"]
+
+
+def test_write_conflict_preserves_source(ensure_pg):
+    """On-conflict upsert must refresh content/embedding but keep original source.
+
+    Two cells writing the same (doc_id, seq_num) would corrupt multi-source
+    provenance if the later cell's source_tag overwrote the earlier one.
+    """
+    # Cell A writes d1::0 with source_tag='cell_a'
+    cfg_a = _mk_target(mode="create_if_missing", source_tag="cell_a")
+    sink_a = PgVectorSink(cfg_a, embed_dim=4)
+    sink_a.create_table()
+    chunks = [Chunk(doc_id="d1", seq_num=0, original_content="from A",
+                    embedded_content="from A", metadata={})]
+    sink_a.write_document("d1", chunks, np.array([[1, 0, 0, 0]], dtype=np.float32), [["a"]])
+
+    # Cell B writes d1::0 with source_tag='cell_b' — colliding PK
+    cfg_b = _mk_target(mode="append", source_tag="cell_b")
+    sink_b = PgVectorSink(cfg_b, embed_dim=4)
+    sink_b.create_table()
+    chunks = [Chunk(doc_id="d1", seq_num=0, original_content="from B",
+                    embedded_content="from B", metadata={})]
+    sink_b.write_document("d1", chunks, np.array([[0, 1, 0, 0]], dtype=np.float32), [["b"]])
+
+    with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT source, original_content, tags FROM chunkshop_test_append.target_a "
+            "WHERE id = 'd1::0'"
+        )
+        row = cur.fetchone()
+        # Source is write-once: cell_a owns this row's provenance
+        assert row[0] == "cell_a"
+        # Content and tags DO update on conflict — cell_b's write reflects
+        assert row[1] == "from B"
+        assert row[2] == ["b"]
