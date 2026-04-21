@@ -1,7 +1,9 @@
 import os
 import pytest
 import psycopg
+import numpy as np
 
+from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
 from chunkshop.sink import PgVectorSink
 
@@ -173,3 +175,34 @@ def test_overwrite_force_bypasses_check(ensure_pg):
     cfg_force = _mk_target(mode="overwrite", source_tag="web_scrape", force_overwrite=True)
     # Should not raise
     PgVectorSink(cfg_force, embed_dim=4).create_table()
+
+
+def test_write_populates_source_and_promoted(ensure_pg):
+    cfg = _mk_target(
+        mode="create_if_missing",
+        source_tag="pdfs",
+        promote_metadata=[
+            {"path": "language", "type": "text"},
+            {"path": "entities.ORG", "type": "text[]"},
+        ],
+    )
+    sink = PgVectorSink(cfg, embed_dim=4)
+    sink.create_table()
+    chunks = [
+        Chunk(
+            doc_id="d1", seq_num=0, original_content="x", embedded_content="x",
+            metadata={"language": "en", "entities": {"ORG": ["Acme", "Northwind"]}},
+        ),
+    ]
+    embeddings = np.array([[1, 0, 0, 0]], dtype=np.float32)
+    tags = [["t"]]
+    sink.write_document("d1", chunks, embeddings, tags)
+
+    with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
+        cur.execute(
+            'SELECT source, language, "entities__org" FROM chunkshop_test_append.target_a'
+        )
+        row = cur.fetchone()
+        assert row[0] == "pdfs"
+        assert row[1] == "en"
+        assert row[2] == ["Acme", "Northwind"]

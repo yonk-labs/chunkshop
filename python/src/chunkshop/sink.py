@@ -12,6 +12,19 @@ from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
 
 
+def _jsonb_path_get(meta: dict, path: str):
+    """Traverse a dotted path through nested dicts; return None if any segment missing.
+
+    Example: _jsonb_path_get({"entities": {"ORG": ["x"]}}, "entities.ORG") == ["x"].
+    """
+    cur = meta
+    for seg in path.split("."):
+        if not isinstance(cur, dict) or seg not in cur:
+            return None
+        cur = cur[seg]
+    return cur
+
+
 class PgVectorSink:
     """Per-document writer to a pgvector table.
 
@@ -197,10 +210,44 @@ class PgVectorSink:
                 f"chunks ({len(chunks)}) and tags ({len(tags_per_chunk)}) length mismatch"
             )
         fq = self._fq()
+        promote = self.cfg.promote_metadata
+
+        # Column idents and value placeholders, in order.
+        base_col_names = [
+            "id", "doc_id", "seq_num", "original_content", "embedded_content",
+            "tags", "metadata", "embedding", "source",
+        ]
+        base_cols = [sql.Identifier(n) for n in base_col_names]
+        base_placeholders = [
+            sql.SQL("%s"), sql.SQL("%s"), sql.SQL("%s"), sql.SQL("%s"), sql.SQL("%s"),
+            sql.SQL("%s"), sql.SQL("%s::jsonb"), sql.SQL("%s::vector"), sql.SQL("%s"),
+        ]
+        promote_cols = [sql.Identifier(pc.column_name) for pc in promote]
+        promote_placeholders = [sql.SQL("%s")] * len(promote)
+
+        all_cols = base_cols + promote_cols
+        all_placeholders = base_placeholders + promote_placeholders
+
+        # ON CONFLICT DO UPDATE clause: update every column except id.
+        update_assignments = [
+            sql.SQL("{c} = EXCLUDED.{c}").format(c=c)
+            for c in base_cols[3:] + promote_cols  # skip id, doc_id, seq_num
+        ]
+
+        stmt = sql.SQL(
+            "INSERT INTO {tbl} ({cols}) VALUES ({vals}) "
+            "ON CONFLICT (id) DO UPDATE SET {updates}"
+        ).format(
+            tbl=fq,
+            cols=sql.SQL(", ").join(all_cols),
+            vals=sql.SQL(", ").join(all_placeholders),
+            updates=sql.SQL(", ").join(update_assignments),
+        )
+
         rows = []
         for c, emb, tags in zip(chunks, embeddings, tags_per_chunk):
             vec_literal = "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
-            rows.append((
+            base_values = [
                 f"{c.doc_id}::{c.seq_num}",
                 c.doc_id,
                 c.seq_num,
@@ -209,18 +256,11 @@ class PgVectorSink:
                 tags,
                 json.dumps(c.metadata),
                 vec_literal,
-            ))
-        stmt = sql.SQL("""
-            INSERT INTO {tbl}
-                (id, doc_id, seq_num, original_content, embedded_content, tags, metadata, embedding)
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::vector)
-            ON CONFLICT (id) DO UPDATE SET
-                original_content = EXCLUDED.original_content,
-                embedded_content = EXCLUDED.embedded_content,
-                tags = EXCLUDED.tags,
-                metadata = EXCLUDED.metadata,
-                embedding = EXCLUDED.embedding
-        """).format(tbl=fq)
+                self.cfg.source_tag,
+            ]
+            promote_values = [_jsonb_path_get(c.metadata, pc.path) for pc in promote]
+            rows.append(tuple(base_values + promote_values))
+
         with psycopg.connect(self._dsn) as conn, conn.cursor() as cur:
             cur.executemany(stmt, rows)
             conn.commit()
