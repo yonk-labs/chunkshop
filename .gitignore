@@ -30,6 +30,9 @@ vendor/
 /tmp/
 *.log
 
+# Skill outputs (briefs, plans, audits — regenerate with the skill, don't edit)
+skill-output/
+
 # ONNX model cache
 .cache/
 fastembed_cache/
