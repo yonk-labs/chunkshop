@@ -116,8 +116,32 @@ class RegexBoundaryFramerConfig(_Base):
         return v
 
 
+class JSONPathFramerConfig(_Base):
+    type: Literal["jsonpath"] = "jsonpath"
+    row_path: str
+    title_path: Optional[str] = None
+    body_path: str = "$"
+
+    @field_validator("row_path", "title_path", "body_path")
+    @classmethod
+    def _safe_path(cls, v):
+        if v is None:
+            return v
+        # Allowlist: lowercase letters, digits, underscores, dots, asterisks
+        if v != "$" and not re.match(r"^[a-z_0-9][a-z_0-9.*]*$", v):
+            raise ValueError(
+                f"path must match ^[a-z_0-9][a-z_0-9.*]*$ or be literal '$', got {v!r}"
+            )
+        return v
+
+
 FramerConfig = Annotated[
-    Union[IdentityFramerConfig, HeadingBoundaryFramerConfig, RegexBoundaryFramerConfig],
+    Union[
+        IdentityFramerConfig,
+        HeadingBoundaryFramerConfig,
+        RegexBoundaryFramerConfig,
+        JSONPathFramerConfig,
+    ],
     Field(discriminator="type"),
 ]
 

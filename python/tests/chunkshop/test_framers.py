@@ -134,3 +134,51 @@ def test_regex_boundary_invalid_pattern_rejected_at_config_load():
             type="regex_boundary",
             split_pattern=r"[unclosed",  # invalid regex
         )
+
+
+import json as _json
+from chunkshop.framers.jsonpath import JSONPathFramer
+from chunkshop.config import JSONPathFramerConfig
+
+
+def test_jsonpath_list_expansion():
+    payload = {
+        "meta": {"source": "api"},
+        "items": [
+            {"id": "a", "body": "first doc body"},
+            {"id": "b", "body": "second doc body"},
+            {"id": "c", "body": "third doc body"},
+        ],
+    }
+    raw = Document(id="bundle", content=_json.dumps(payload), title="Bundle", metadata={})
+    framer = JSONPathFramer(JSONPathFramerConfig(
+        type="jsonpath",
+        row_path="items.*",
+        title_path="id",
+        body_path="body",
+    ))
+    out = framer.frame(raw)
+    assert len(out) == 3
+    assert out[0].title == "a"
+    assert "first doc body" in out[0].content
+    for i, d in enumerate(out):
+        assert d.metadata["framer"] == "jsonpath"
+        assert d.metadata["frame_seq"] == i
+
+
+def test_jsonpath_missing_row_path_returns_empty():
+    raw = Document(id="bundle", content='{"other": []}', title="t", metadata={})
+    framer = JSONPathFramer(JSONPathFramerConfig(
+        type="jsonpath", row_path="items.*", body_path="body",
+    ))
+    assert framer.frame(raw) == []
+
+
+def test_jsonpath_invalid_json_raises():
+    import pytest
+    raw = Document(id="bundle", content="not-json-at-all", title="t", metadata={})
+    framer = JSONPathFramer(JSONPathFramerConfig(
+        type="jsonpath", row_path="items.*", body_path="body",
+    ))
+    with pytest.raises(ValueError, match="JSON"):
+        framer.frame(raw)
