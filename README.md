@@ -85,7 +85,7 @@ One YAML = one cell = one end-to-end ingest. Five sections:
 | chunker   | sentence_aware · fixed_overlap · hierarchy · neighbor_expand                 |
 | embedder  | fastembed (Python); onnx_direct (Rust, Go, optional in Python)               |
 | extractor | none · rake_keywords (Python)                                                |
-| target    | pgvector table `{schema}.{table}` with HNSW index                            |
+| target    | pgvector table `{schema}.{table}`; `mode: overwrite \| append \| create_if_missing`; `source_tag` + `promote_metadata` for multi-source tables; HNSW index |
 
 Full field-by-field reference in [`python/README.md`](python/README.md).
 
@@ -111,11 +111,12 @@ CREATE TABLE {schema}.{table} (
 | Doc                                            | For                                                              |
 |------------------------------------------------|------------------------------------------------------------------|
 | [`docs/tutorial.md`](docs/tutorial.md)         | **Start here.** Zero-to-retrieval end-to-end walkthrough.        |
+| [`docs/tutorial-multi-source.md`](docs/tutorial-multi-source.md) | Multi-source ingest: two cells, one table, filter by source. |
 | [`python/README.md`](python/README.md)         | Reference: install, CLI flags, YAML field-by-field, troubleshooting. |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit: components, data flow, extension points.     |
 | [`docs/chunkers.md`](docs/chunkers.md)         | Each chunker: what it does, when to pick it, knobs.              |
 | [`docs/embedders.md`](docs/embedders.md)       | Model catalogue, int8 registry, A/B testing embedders.           |
-| [`docs/samples/`](docs/samples/)               | Sample markdown + three runnable configs.                        |
+| [`docs/samples/`](docs/samples/)               | Sample markdown + four runnable configs.                         |
 
 ## Monorepo layout
 
