@@ -122,6 +122,56 @@ document. This is deliberate:
 
 Not a connection pool — this is batch ingest, not an online serving path.
 
+## Multi-source ingest and schema flexibility
+
+A single pgvector table can hold rows from multiple cells, each tagged with its own
+`source_tag`. The `target` section in YAML drives this with four knobs:
+
+- `mode: create_if_missing` — first cell into a table. Creates if absent, no-op if present.
+- `mode: append` — subsequent cells. Requires `source_tag`; runs pre-flight before writing.
+- `mode: overwrite` — `DROP TABLE IF EXISTS` + recreate. Default. Refuses to drop a table
+  that holds rows from a foreign `source_tag` unless `force_overwrite: true`.
+
+Every row written gets its cell's `source_tag` stamped into a dedicated `source text`
+column. The column is **write-once** across `ON CONFLICT` upserts — if two cells collide on
+`(doc_id, seq_num)`, the first writer owns the `source` value forever. This makes provenance
+a load-bearing guarantee rather than a last-writer-wins race.
+
+`target.promote_metadata` lifts jsonb paths into typed columns so they become first-class
+filterable / indexable fields. A promotion spec like `[{path: "strategy", type: "text"}]`
+adds a `strategy text` column and populates it from `metadata.strategy` on every write.
+Column names are deterministic: `path` is lowercased and `.` becomes `__`
+(`entities.ORG` → `entities__org`). Both the sink's pre-flight and write path derive the
+identifier from the same `PromoteColumn.column_name` property.
+
+The append pre-flight runs before a single row is written:
+
+1. Target table exists.
+2. `embedding` column dim matches the cell's embedder `dim`.
+3. `source` column exists (or is added idempotently with `ADD COLUMN IF NOT EXISTS`).
+4. Every declared `promote_metadata` column exists or is addable with the declared type.
+
+If any check fails, chunkshop raises and inserts nothing. The pre-flight refusing early is
+why `mode: append` is safe to drive from multiple cells in parallel — each cell either
+proves it can write compatibly or exits cleanly.
+
+### Extractor contract
+
+Extractors return `ExtractResult(tags: list[str], metadata: dict)`. The runner merges the
+extractor's metadata with the chunker's per-chunk metadata using **chunker-wins** semantics
+— on key collision, the chunker's value sticks. This preserves per-chunk provenance
+(heading, strategy) while letting extractors add document-level signals (detected language,
+extracted keywords) without clobbering it.
+
+```mermaid
+flowchart LR
+    CA[Cell A<br/>source_tag: docs_markdown<br/>mode: create_if_missing] -->|write rows| T[(mydata.all_docs<br/>source text<br/>language text)]
+    CB[Cell B<br/>source_tag: support_tickets<br/>mode: append<br/>pre-flight: dim + columns] -->|write rows| T
+    T --> Q[Query:<br/>WHERE source = ...<br/>GROUP BY source<br/>ORDER BY embedding <=> ?]
+```
+
+Full walkthrough: [`tutorial-multi-source.md`](tutorial-multi-source.md).
+
 ## The `Chunk` contract
 
 ```python
