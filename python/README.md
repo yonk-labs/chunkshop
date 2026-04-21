@@ -172,13 +172,33 @@ RAKE downloads NLTK corpora (`stopwords`, `punkt`) on first use to `~/nltk_data/
 
 ### `target`
 
-| Field       | Required | Default                  | Notes                                                     |
-|-------------|----------|--------------------------|-----------------------------------------------------------|
-| `dsn_env`   | no       | `AGE_BAKEOFF_PGRG_DSN`   | Name of the env var holding your DSN. **Override this** to `CHUNKSHOP_DSN` in your configs. |
-| `schema`    | yes      | —                        | Lowercase ident; must match `^[a-z_][a-z0-9_]*$`. Created if missing. |
-| `table`     | yes      | —                        | Same ident rule.                                          |
-| `overwrite` | no       | `false`                  | `true` → `DROP TABLE IF EXISTS` before create.            |
-| `hnsw`      | no       | `true`                   | `false` for tiny test tables where HNSW is slower than seq scan. |
+| Field              | Required             | Default                  | Notes                                                                                                                                             |
+|--------------------|----------------------|--------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
+| `dsn_env`          | no                   | `AGE_BAKEOFF_PGRG_DSN`   | Name of the env var holding your DSN. **Override this** to `CHUNKSHOP_DSN` in your configs.                                                       |
+| `schema`           | yes                  | —                        | Lowercase ident; must match `^[a-z_][a-z0-9_]*$`. Created if missing.                                                                             |
+| `table`            | yes                  | —                        | Same ident rule.                                                                                                                                  |
+| `mode`             | no                   | `overwrite`              | One of `overwrite`, `append`, `create_if_missing`. See [`../docs/tutorial-multi-source.md`](../docs/tutorial-multi-source.md).                     |
+| `source_tag`       | when `mode=append`   | `null`                   | Ident-safe tag written to every row's `source` column. Required for `append`; optional (but recommended) for `overwrite`/`create_if_missing`.     |
+| `promote_metadata` | no                   | `[]`                     | List of `{path, type}` pairs lifting jsonb metadata paths into typed columns. `path` is lowercased + `.` → `__` for the column name.              |
+| `force_overwrite`  | no                   | `false`                  | Bypasses the "refuse to drop a table that holds rows from a foreign `source_tag`" safety check in `overwrite` mode.                               |
+| `overwrite`        | no (soft-deprecated) | `false`                  | Legacy boolean. Still honored when `mode=overwrite` (acts as the DROP+CREATE switch). Prefer the new `mode` field for new configs.                |
+| `hnsw`             | no                   | `true`                   | `false` for tiny test tables where HNSW is slower than seq scan.                                                                                  |
+
+### Multi-source ingest
+
+Multiple cells can write to the same table by tagging each cell's rows with a `source_tag`.
+Cell A creates the table with `mode: create_if_missing`, Cell B appends with `mode: append`
+and its own tag. Queries filter or group by the `source` column. See
+[`../docs/tutorial-multi-source.md`](../docs/tutorial-multi-source.md) for the end-to-end walkthrough.
+
+```yaml
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: mydata
+  table: all_docs
+  mode: append
+  source_tag: support_tickets
+```
 
 ### `runtime`
 
