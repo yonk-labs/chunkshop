@@ -52,3 +52,53 @@ def test_append_fails_on_dim_mismatch(ensure_pg):
     cfg_bad = _mk_target(mode="append", source_tag="pdfs")
     with pytest.raises(RuntimeError, match="dim"):
         PgVectorSink(cfg_bad, embed_dim=8).create_table()
+
+
+def test_append_preflight_adds_missing_source_column(ensure_pg):
+    # Create the table in overwrite mode (no source_tag set — simulating pre-v0.3.0 table).
+    cfg_old = _mk_target(mode="overwrite")
+    PgVectorSink(cfg_old, embed_dim=4).create_table()
+
+    # Manually drop the source column to simulate a pre-existing table missing it
+    with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
+        cur.execute("ALTER TABLE chunkshop_test_append.target_a DROP COLUMN IF EXISTS source")
+        conn.commit()
+
+    # Now append — should auto-add `source` column.
+    cfg_append = _mk_target(mode="append", source_tag="pdfs")
+    PgVectorSink(cfg_append, embed_dim=4).create_table()
+
+    with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema=%s AND table_name=%s",
+            ("chunkshop_test_append", "target_a"),
+        )
+        cols = {r[0] for r in cur.fetchall()}
+        assert "source" in cols
+
+
+def test_append_adds_promote_columns(ensure_pg):
+    cfg_create = _mk_target(mode="create_if_missing", source_tag="pdfs")
+    PgVectorSink(cfg_create, embed_dim=4).create_table()
+
+    cfg_append = _mk_target(
+        mode="append",
+        source_tag="pdfs",
+        promote_metadata=[
+            {"path": "language", "type": "text"},
+            {"path": "entities.ORG", "type": "text[]"},
+        ],
+    )
+    PgVectorSink(cfg_append, embed_dim=4).create_table()
+
+    with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema=%s AND table_name=%s",
+            ("chunkshop_test_append", "target_a"),
+        )
+        cols = {r[0] for r in cur.fetchall()}
+        # Dotted paths become double-underscored AND lowercased via PromoteColumn.column_name.
+        assert "language" in cols
+        assert "entities__org" in cols
