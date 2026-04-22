@@ -61,6 +61,8 @@ SourceConfig = Annotated[
 class SentenceAwareChunker(_Base):
     type: Literal["sentence_aware"] = "sentence_aware"
     doc_type: Literal["prose", "code"] = "prose"
+    max_chars: int = 2000
+    min_chars: int = 200
 
 
 class FixedOverlapChunker(_Base):
@@ -73,6 +75,7 @@ class HierarchyChunker(_Base):
     type: Literal["hierarchy"]
     prefix_heading: bool = True
     min_section_chars: int = 100
+    max_chars: int = 2000
 
 
 class NeighborExpandChunker(_Base):
