@@ -32,7 +32,7 @@ Both scenarios share the same prereqs and assume you've worked through
 
 ### The fixture
 
-`docs/samples/giant-handbook.md` ships with chunkshop. It concatenates four unrelated
+`docs/samples/framer_demo_handbook.md` ships with chunkshop. It concatenates four unrelated
 internal-handbook topics — onboarding, code review, incident response, benefits — into
 one markdown file separated only by `##` headings. It's a deliberate shape: real
 exports from Notion, Confluence, or a "dump our wiki to a file" script look exactly
@@ -41,7 +41,7 @@ like this.
 Quick look:
 
 ```bash
-grep '^## ' docs/samples/giant-handbook.md
+grep '^## ' docs/samples/framer_demo_handbook.md
 ```
 
 ```
@@ -57,7 +57,7 @@ Four sections. For retrieval purposes, they should act like four documents.
 
 If you point chunkshop at this file with no framer config, it treats the whole file as
 one document. The hierarchy chunker splits it into sections, but every chunk still
-carries `doc_id = 'giant-handbook'`. A query for "what's the code review SLA" can pull
+carries `doc_id = 'framer_demo_handbook'`. A query for "what's the code review SLA" can pull
 back a chunk that happens to mention PTO because it all lives inside the same raw doc
 and the chunker's heading boundaries don't travel through to retrieval as a hard
 filter.
@@ -76,7 +76,7 @@ cell_name: handbook_framed
 
 source:
   type: files
-  glob: docs/samples/giant-handbook.md
+  glob: docs/samples/framer_demo_handbook.md
   id_from: stem
   encoding: utf-8
 
@@ -127,14 +127,16 @@ You should see something like:
 {
   "cell_name": "handbook_framed",
   "docs_processed": 1,
-  "chunks_written": 9,
+  "chunks_written": 5,
   "wall_seconds": 3.4,
   "error": null
 }
 ```
 
 Notice `docs_processed: 1`. That's the count of **raw** source documents — one file was
-read. Framing is invisible to that counter. The framing is visible in the database.
+read. Framing is invisible to that counter. The framing is visible in the database
+(chunk count depends on how aggressively hierarchy decides to split each frame; on this
+fixture you'll see one chunk per frame because none of the frames have sub-headings).
 
 ### Inspect what changed
 
@@ -164,13 +166,13 @@ ORDER BY doc_id;
 ```
 
 ```
-       doc_id         |     framer       | seq
-----------------------+------------------+-----
- giant-handbook#0     | heading_boundary | 0
- giant-handbook#1     | heading_boundary | 1
- giant-handbook#2     | heading_boundary | 2
- giant-handbook#3     | heading_boundary | 3
- giant-handbook#4     | heading_boundary | 4
+         doc_id          |     framer       | seq
+-------------------------+------------------+-----
+ framer_demo_handbook#0  | heading_boundary | 0
+ framer_demo_handbook#1  | heading_boundary | 1
+ framer_demo_handbook#2  | heading_boundary | 2
+ framer_demo_handbook#3  | heading_boundary | 3
+ framer_demo_handbook#4  | heading_boundary | 4
 ```
 
 Every framed doc gets `<raw_id>#<frame_seq>` as its new ID, stamped with
@@ -183,19 +185,18 @@ Peek at the chunks for the code-review frame:
 ```sql
 SELECT seq_num, metadata->>'heading' AS heading, length(original_content) AS len
 FROM chunkshop_samples.framed_handbook
-WHERE doc_id = 'giant-handbook#2'
+WHERE doc_id = 'framer_demo_handbook#2'
 ORDER BY seq_num;
 ```
 
 ```
  seq_num |           heading           | len
----------+-----------------------------+-----
-       0 | Code review expectations    | 1024
-       1 | Code review expectations    |  987
+---------+-----------------------------+------
+       0 | Code review expectations    | 1974
 ```
 
-Two chunks, both belonging to the code-review frame. A retrieval query filtered by
-`doc_id = 'giant-handbook#2'` now returns only code-review content. Without the framer
+One chunk, belonging entirely to the code-review frame. A retrieval query filtered by
+`doc_id = 'framer_demo_handbook#2'` now returns only code-review content. Without the framer
 you'd have to filter by `metadata->>'heading' LIKE 'Code review%'` and hope the
 chunker's heading tracking was stable.
 
@@ -213,7 +214,7 @@ QUERY = "what's the code review SLA"
 python query.py
 ```
 
-The top hit is now definitively from `giant-handbook#2` — the code-review frame — with
+The top hit is now definitively from `framer_demo_handbook#2` — the code-review frame — with
 its chunks ranked by semantic similarity *within* that frame. No cross-contamination
 from the PTO section that happens to share tokens like "hours" and "manager". If you
 rerun the same query against a non-framed ingest of the same file, you'll typically see
@@ -228,7 +229,7 @@ exist.
 
 ### The fixture
 
-`docs/samples/news-dump.json` ships with chunkshop. It wraps its actual items under
+`docs/samples/framer_demo_news.json` ships with chunkshop. It wraps its actual items under
 `items[*]` rather than the default `documents[*]` that `type: json_corpus` expects:
 
 ```json
@@ -251,7 +252,7 @@ is exactly one level deep you can point it at `items` and be done:
 ```yaml
 source:
   type: json_corpus
-  path: docs/samples/news-dump.json
+  path: docs/samples/framer_demo_news.json
   documents_key: items
   id_field: id
   title_field: title
@@ -274,7 +275,7 @@ cell_name: news_framed
 
 source:
   type: files
-  glob: docs/samples/news-dump.json
+  glob: docs/samples/framer_demo_news.json
   id_from: stem
   encoding: utf-8
 
@@ -345,12 +346,12 @@ ORDER BY doc_id;
 ```
 
 ```
-    doc_id      |  framer  |                      preview
-----------------+----------+----------------------------------------------------
- news-dump#0    | jsonpath | The company reported revenue of $1.2B, up 15% yea
- news-dump#1    | jsonpath | The data platform beta opened to 100 enterprise c
- news-dump#2    | jsonpath | VP of Engineering Priya Shah announced her depart
- news-dump#3    | jsonpath | The company completed its annual SOC 2 Type II au
+       doc_id        |  framer  |                      preview
+---------------------+----------+----------------------------------------------------
+ framer_demo_news#0  | jsonpath | The company reported revenue of $1.2B, up 15% yea
+ framer_demo_news#1  | jsonpath | The data platform beta opened to 100 enterprise c
+ framer_demo_news#2  | jsonpath | VP of Engineering Priya Shah announced her depart
+ framer_demo_news#3  | jsonpath | The company completed its annual SOC 2 Type II au
 ```
 
 Four distinct framed documents, each with content pulled from the `body` field of the

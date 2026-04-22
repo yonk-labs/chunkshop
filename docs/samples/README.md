@@ -11,6 +11,8 @@ without hunting for a corpus.
 | `handbook-engineering.md`         | Medium doc with four `##` sections — realistic prose.       |
 | `handbook-security.md`            | Doc with `##` sections and one deliberately-small section.  |
 | `release-notes.md`                | Headingless prose — exercises the hierarchy fallback path.  |
+| `framer_demo_handbook.md`         | Giant-markdown fixture for [`../tutorial-framers.md`](../tutorial-framers.md) Scenario A. Underscore-named to stay outside the `*-*.md` corpus globs. |
+| `framer_demo_news.json`           | Nested-JSON fixture for [`../tutorial-framers.md`](../tutorial-framers.md) Scenario B. |
 | `sample.yaml`                     | Default recipe: `hierarchy` + int8 `bge-small`.             |
 | `sample-sentence-aware.yaml`      | Alternative: `sentence_aware` + fp32 `bge-small`.           |
 | `sample-neighbor-expand.yaml`     | Alternative: `neighbor_expand` wrapping `hierarchy`.        |
