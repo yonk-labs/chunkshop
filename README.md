@@ -123,6 +123,7 @@ CREATE TABLE {schema}.{table} (
 
 | Doc                                            | For                                                              |
 |------------------------------------------------|------------------------------------------------------------------|
+| [`docs/executive-summary.md`](docs/executive-summary.md) | Two-page overview: what, why, current state, measured performance, who should use it. |
 | [`docs/tutorial.md`](docs/tutorial.md)         | **Start here.** Zero-to-retrieval end-to-end walkthrough.        |
 | [`docs/tutorial-multi-source.md`](docs/tutorial-multi-source.md) | Multi-source ingest: two cells, one table, filter by source. |
 | [`docs/tutorial-framers.md`](docs/tutorial-framers.md) | DocFramer walkthrough: markdown heading splits + nested-JSON expansion. |
