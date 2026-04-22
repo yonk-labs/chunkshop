@@ -176,8 +176,20 @@ class LangDetectExtractor(_Base):
     backend: Literal["langdetect"] = "langdetect"
 
 
+class KeyBertPhrasesExtractor(_Base):
+    type: Literal["keybert_phrases"]
+    top_k: int = 10
+    model_name: str = "all-MiniLM-L6-v2"
+    keyphrase_ngram_range: tuple[int, int] = (1, 2)
+
+
 ExtractorConfig = Annotated[
-    Union[NoneExtractor, RakeKeywordsExtractor, LangDetectExtractor],
+    Union[
+        NoneExtractor,
+        RakeKeywordsExtractor,
+        LangDetectExtractor,
+        KeyBertPhrasesExtractor,
+    ],
     Field(discriminator="type"),
 ]
 

@@ -1,10 +1,12 @@
 from chunkshop.config import (
     ExtractorConfig,
+    KeyBertPhrasesExtractor as KeyBertCfg,
     LangDetectExtractor as LangDetectCfg,
     NoneExtractor as NoneCfg,
     RakeKeywordsExtractor as RakeCfg,
 )
 from chunkshop.extractors.base import Extractor
+from chunkshop.extractors.keybert_phrases import KeyBertPhrasesExtractor
 from chunkshop.extractors.lang_detect import LangDetectExtractor
 from chunkshop.extractors.none_provider import NoneExtractor
 from chunkshop.extractors.rake_keywords import RakeKeywordsExtractor
@@ -18,6 +20,8 @@ def load_extractor(cfg: ExtractorConfig) -> Extractor:
         return RakeKeywordsExtractor(cfg)
     if isinstance(cfg, LangDetectCfg):
         return LangDetectExtractor(cfg)
+    if isinstance(cfg, KeyBertCfg):
+        return KeyBertPhrasesExtractor(cfg)
     raise ValueError(f"unknown extractor type: {type(cfg).__name__}")
 
 
