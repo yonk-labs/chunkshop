@@ -4,7 +4,7 @@ from chunkshop.embedders.base import Embedder
 from chunkshop.embedders.fastembed_provider import FastembedProvider
 
 # Register chunkshop's pre-quantized int8 variants so users can reference them
-# in YAML (e.g. model_name: "Xenova/bge-small-en-v1.5-int8"). Idempotent.
+# in YAML (e.g. model_name: "Xenova/bge-base-en-v1.5-int8"). Idempotent.
 register_int8_variants()
 
 

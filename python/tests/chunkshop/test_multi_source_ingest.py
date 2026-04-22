@@ -61,8 +61,8 @@ def test_two_cells_append_into_one_table(ensure_pg, tmp_path):
         chunker={"type": "hierarchy"},
         embedder={
             "type": "fastembed",
-            "model_name": "Xenova/bge-small-en-v1.5-int8",
-            "dim": 384,
+            "model_name": "Xenova/bge-base-en-v1.5-int8",
+            "dim": 768,
             "threads": 2,
         },
         target={**common_target, "mode": "create_if_missing", "source_tag": "cell_a_source"},
@@ -73,8 +73,8 @@ def test_two_cells_append_into_one_table(ensure_pg, tmp_path):
         chunker={"type": "hierarchy"},
         embedder={
             "type": "fastembed",
-            "model_name": "Xenova/bge-small-en-v1.5-int8",
-            "dim": 384,
+            "model_name": "Xenova/bge-base-en-v1.5-int8",
+            "dim": 768,
             "threads": 2,
         },
         target={**common_target, "mode": "append", "source_tag": "cell_b_source"},

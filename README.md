@@ -38,7 +38,7 @@ uv sync --extra dev
 export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
 
 # 3. Run against the shipped sample corpus (4 markdown files in docs/samples/).
-#    First run downloads the ONNX model (~35 MB for int8 bge-small).
+#    First run downloads the ONNX model (~85 MB for int8 bge-base).
 cd ..   # repo root
 chunkshop ingest --config docs/samples/sample.yaml
 ```
@@ -55,21 +55,31 @@ line for pgvector and a copy-paste query script.
 | Rust             | `rust/`    | Planned. `ort` + `tokenizers` crates.                |
 | Go               | `go/`      | Planned. `onnxruntime_go` + HF tokenizer bindings.   |
 
-## Defaults, from the benchmark
+## Defaults
 
 The example config ships with `chunker.type: hierarchy` and `embedder.model_name:
-Xenova/bge-small-en-v1.5-int8` because chunkshop's own factorial benchmark on a 772-doc
-legal QA corpus (30 gold-labeled questions, `gpt-4.1-mini` answer + judge) found:
+Xenova/bge-base-en-v1.5-int8`.
+
+**Chunker choice is benchmark-backed.** chunkshop's factorial on a 772-doc legal QA
+corpus (30 gold questions, `gpt-4.1-mini` answer + judge) found:
 
 - **Hierarchy chunker wins across every embedder column** — prepending the section
   heading to each embedded chunk adds free framing context.
-- **int8 >= fp32 in aggregate** (160 vs 152 fully_correct across 12 cells) with 2x faster
-  ingest. int8 `bge-small` ties the best fp32 cell at 18/30.
-- Zero hallucinations across 720 answers (both runs) — prompt discipline, not model choice.
+- **int8 >= fp32 in aggregate** (160 vs 152 fully_correct across 12 cells) with 2×
+  faster ingest.
+- Zero hallucinations across 720 answers — prompt discipline, not model choice.
 
-Swap to fp32 (`BAAI/bge-small-en-v1.5`) or nomic (`nomic-ai/nomic-embed-text-v1.5`) if your
-corpus needs the extra recall margin. Full benchmark data in the `pg-raggraph` repo.
-See [`docs/embedders.md`](docs/embedders.md) for the catalogue and A/B recipe.
+**Embedder default is MTEB-backed.** `bge-base` beats `bge-small` by ~3–5 points
+on public retrieval benchmarks (MTEB). Our 772-doc factorial had `bge-small-int8`
+tied with the best fp32 cell *on that specific corpus*; broader benchmarks favor
+the larger model, so we default there. `bge-base-int8` is still int8-quantized,
+~85 MB, and CPU-fast — the upgrade over `bge-small-int8` is essentially free.
+
+Swap to `Xenova/bge-small-en-v1.5-int8` for a smaller footprint (~35 MB, 384 dim)
+or `nomic-ai/nomic-embed-text-v1.5-Q` for long-context (8k tokens). Run the
+factorial configs against your own corpus to confirm. Full pg-raggraph benchmark
+data in the sibling repo. See [`docs/embedders.md`](docs/embedders.md) for the
+catalogue and A/B recipe.
 
 All three implementations share the same YAML config schema, the same ONNX Runtime-based
 embedder (via `fastembed` in Python; via `ort` in Rust; via `onnxruntime_go` in Go), and the

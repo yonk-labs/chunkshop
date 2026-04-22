@@ -25,8 +25,8 @@ embedder:
   type: fastembed
   # int8 default (chunkshop registers Xenova's pre-quantized variants; see
   # chunkshop/embedders/_registry.py). Swap to BAAI/bge-small-en-v1.5 for fp32.
-  model_name: Xenova/bge-small-en-v1.5-int8
-  dim: 384
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
   threads: 4                      # ORT intra_op_num_threads; tune for your CPU
   batch_size: 64
 extractor:

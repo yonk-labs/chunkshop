@@ -38,8 +38,8 @@ chunker:
   type: hierarchy
 embedder:
   type: fastembed
-  model_name: Xenova/bge-small-en-v1.5-int8
-  dim: 384
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
   threads: 4
 extractor:
   type: lang_detect          # optional — populates metadata.language if [lang] extra installed
@@ -92,8 +92,8 @@ chunker:
   type: hierarchy
 embedder:
   type: fastembed
-  model_name: Xenova/bge-small-en-v1.5-int8
-  dim: 384
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
   threads: 4
 extractor:
   type: lang_detect
@@ -118,11 +118,11 @@ chunkshop ingest --config cell-b-tickets.yaml
 Before any rows are written, chunkshop's **append pre-flight** runs:
 
 1. The target table `mydata.all_docs` exists — **pass**.
-2. The table's `embedding` column dim matches this cell's embedder `dim` (both 384) — **pass**.
+2. The table's `embedding` column dim matches this cell's embedder `dim` (both 768) — **pass**.
 3. The `source` column exists on the table (auto-added in Cell A; `ADD COLUMN IF NOT EXISTS` is idempotent on this cell too) — **pass**.
 4. Every `promote_metadata` column exists or is addable (`language text`) — **pass**.
 
-If any check fails, chunkshop raises a clear error and inserts nothing. Try it: change `dim: 384` to `dim: 768` in `cell-b-tickets.yaml` and re-run — the pre-flight will refuse before writing.
+If any check fails, chunkshop raises a clear error and inserts nothing. Try it: change `dim: 768` to `dim: 384` in `cell-b-tickets.yaml` and re-run — the pre-flight will refuse before writing.
 
 ## Step 3 — Verify the unification
 
@@ -149,7 +149,7 @@ import os, psycopg
 from fastembed import TextEmbedding
 import chunkshop.embedders  # register int8 variant
 
-qvec = list(TextEmbedding(model_name="Xenova/bge-small-en-v1.5-int8").embed(["why are logins failing"]))[0]
+qvec = list(TextEmbedding(model_name="Xenova/bge-base-en-v1.5-int8").embed(["why are logins failing"]))[0]
 qlit = "[" + ",".join(f"{x:.6f}" for x in qvec) + "]"
 
 with psycopg.connect(os.environ["CHUNKSHOP_DSN"]) as conn, conn.cursor() as cur:

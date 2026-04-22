@@ -92,8 +92,8 @@ chunker:
 
 embedder:
   type: fastembed
-  model_name: Xenova/bge-small-en-v1.5-int8
-  dim: 384
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
   threads: 4
 
 extractor:
@@ -292,8 +292,8 @@ chunker:
 
 embedder:
   type: fastembed
-  model_name: Xenova/bge-small-en-v1.5-int8
-  dim: 384
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
   threads: 4
 
 extractor:

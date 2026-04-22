@@ -43,8 +43,8 @@ def test_identity_framer_default_preserves_existing_behavior(ensure_pg, tmp_path
         source={"type": "json_corpus", "path": str(corpus)},
         chunker={"type": "hierarchy"},
         embedder={"type": "fastembed",
-                  "model_name": "Xenova/bge-small-en-v1.5-int8",
-                  "dim": 384, "threads": 2},
+                  "model_name": "Xenova/bge-base-en-v1.5-int8",
+                  "dim": 768, "threads": 2},
         target={"dsn_env": DSN_ENV, "schema": "chunkshop_test_framer",
                 "table": "t", "mode": "overwrite", "hnsw": False},
     )

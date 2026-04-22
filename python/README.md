@@ -40,7 +40,7 @@ Python ≥ 3.12 required.
 
 - **Postgres ≥ 14** with the `pgvector` extension installed
   (`CREATE EXTENSION vector;` must succeed in your target DB).
-- **Disk space for model cache** in `~/.cache/fastembed/` — ~35 MB for int8 `bge-small`,
+- **Disk space for model cache** in `~/.cache/fastembed/` — ~85 MB for int8 `bge-base`,
   ~550 MB for `nomic`.
 - **An env var holding your DSN.** The target config references it by name, not by value.
 
@@ -156,7 +156,7 @@ Only `fastembed` today.
 | Field        | Required | Default | Notes                                                    |
 |--------------|----------|---------|----------------------------------------------------------|
 | `type`       | yes      | —       | Literal `fastembed`.                                      |
-| `model_name` | yes      | —       | e.g. `Xenova/bge-small-en-v1.5-int8`. See [embedders.md](../docs/embedders.md). |
+| `model_name` | yes      | —       | e.g. `Xenova/bge-base-en-v1.5-int8`. See [embedders.md](../docs/embedders.md). |
 | `dim`        | yes      | —       | Must match the model. Mismatch fails loudly at first embed. |
 | `batch_size` | no       | `64`    | Per-call batch to `fastembed.embed`.                     |
 | `threads`    | no       | `None`  | `None` = auto (bad on shared boxes). Set to 4 typically. |
@@ -306,5 +306,5 @@ uv run pytest
 ```
 
 Most tests are offline. `test_embedder_fastembed.py` and `test_int8_registry.py` download the
-int8 `bge-small` model on first run and cache it — budget ~35 MB + a few seconds the first
+int8 `bge-base` model on first run and cache it — budget ~85 MB + a few seconds the first
 time.

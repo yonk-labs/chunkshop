@@ -9,14 +9,14 @@ new model, and how to A/B two embedders on the same corpus.
 
 ## Catalogue
 
-| `model_name`                             | dim | Precision | Registered by        | Notes                           |
-|------------------------------------------|-----|-----------|----------------------|---------------------------------|
-| `BAAI/bge-small-en-v1.5`                 | 384 | fp32      | fastembed (built-in) | Classic strong baseline.        |
-| `BAAI/bge-base-en-v1.5`                  | 768 | fp32      | fastembed (built-in) | More accuracy, 2x dim cost.     |
-| `nomic-ai/nomic-embed-text-v1.5`         | 768 | fp32      | fastembed (built-in) | Long-context, 8k tokens.        |
-| `nomic-ai/nomic-embed-text-v1.5-Q`       | 768 | int8      | fastembed (built-in) | Nomic's own Q release.          |
-| `Xenova/bge-small-en-v1.5-int8`          | 384 | int8      | chunkshop `_registry`| Pre-quantized community upload. |
-| `Xenova/bge-base-en-v1.5-int8`           | 768 | int8      | chunkshop `_registry`| Pre-quantized community upload. |
+| `model_name`                             | dim | Precision | Registered by        | Notes                                  |
+|------------------------------------------|-----|-----------|----------------------|----------------------------------------|
+| `Xenova/bge-base-en-v1.5-int8`           | 768 | int8      | chunkshop `_registry`| **Default.** Best quality-for-size.    |
+| `Xenova/bge-small-en-v1.5-int8`          | 384 | int8      | chunkshop `_registry`| Smaller/faster; ~3–5 fewer MTEB pts.   |
+| `BAAI/bge-small-en-v1.5`                 | 384 | fp32      | fastembed (built-in) | fp32 of small; +0–2 pts over int8.     |
+| `BAAI/bge-base-en-v1.5`                  | 768 | fp32      | fastembed (built-in) | Quality ceiling for BGE family.        |
+| `nomic-ai/nomic-embed-text-v1.5-Q`       | 768 | int8      | fastembed (built-in) | 8k-token context; use for long docs.   |
+| `nomic-ai/nomic-embed-text-v1.5`         | 768 | fp32      | fastembed (built-in) | fp32 long-context; ~550 MB.            |
 
 Any model fastembed knows about is usable — `fastembed.TextEmbedding.list_supported_models()`
 in a REPL is the full current list. The catalogue above is what the shipped example configs
@@ -39,7 +39,7 @@ flowchart LR
 ```
 
 First invocation of a given `model_name` downloads ONNX + tokenizer to `~/.cache/fastembed/`.
-Subsequent invocations are local. Size varies: int8 `bge-small` is ~35 MB, fp32 `nomic` is
+Subsequent invocations are local. Size varies: int8 `bge-base` is ~85 MB, fp32 `nomic` is
 ~550 MB.
 
 ## The int8 registry trick

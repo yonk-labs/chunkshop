@@ -4,7 +4,7 @@ then run a real semantic query and assert top-1 hit.
 Validates the full pipeline (files source -> hierarchy chunker -> fastembed
 int8 -> rake_keywords extractor -> pgvector sink) against a realistic corpus,
 not synthesized fixtures. Skips cleanly if Postgres is unreachable. First run
-downloads ~35 MB of model weights to ~/.cache/fastembed/.
+downloads ~85 MB of model weights to ~/.cache/fastembed/.
 
 Glob uses ``*-*.md`` to pick up handbook-*.md and release-notes.md while skipping
 README.md (which would otherwise pollute the corpus).
@@ -51,8 +51,8 @@ def test_ingest_samples_corpus_end_to_end(ensure_pg):
         chunker={"type": "hierarchy"},
         embedder={
             "type": "fastembed",
-            "model_name": "Xenova/bge-small-en-v1.5-int8",
-            "dim": 384,
+            "model_name": "Xenova/bge-base-en-v1.5-int8",
+            "dim": 768,
             "threads": 2,
         },
         target={
@@ -74,7 +74,7 @@ def test_ingest_samples_corpus_end_to_end(ensure_pg):
     # the handbook-security "Secrets management" section.
     from fastembed import TextEmbedding
     import chunkshop.embedders  # registers int8 variant
-    emb = TextEmbedding(model_name="Xenova/bge-small-en-v1.5-int8", threads=2)
+    emb = TextEmbedding(model_name="Xenova/bge-base-en-v1.5-int8", threads=2)
     qvec = list(emb.embed(["how do we handle customer credentials"]))[0]
     qlit = "[" + ",".join(f"{x:.6f}" for x in qvec) + "]"
 

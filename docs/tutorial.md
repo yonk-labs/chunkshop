@@ -25,7 +25,7 @@ Roughly 15 minutes start to finish, most of which is the first model download.
 | Python                     | 3.12              | `python3 --version`                               |
 | [`uv`](https://docs.astral.sh/uv/) | any recent | `uv --version`                                    |
 | Docker OR a local Postgres | any recent        | `docker --version` or `psql --version`            |
-| Disk space                 | ~1 GB             | ~35 MB for int8 bge-small + ~500 MB for Postgres  |
+| Disk space                 | ~1 GB             | ~85 MB for int8 bge-base + ~500 MB for Postgres   |
 | Network for first run      | yes               | Downloads ONNX model from HuggingFace             |
 
 `uv` is the fastest path. If you'd rather use pip, substitute `pip install -e .` for
@@ -122,7 +122,7 @@ What happens, in order:
 
 1. chunkshop reads the YAML and validates it with pydantic.
 2. `FastembedProvider.__init__` triggers — first run downloads
-   `Xenova/bge-small-en-v1.5-int8` (~35 MB) to `~/.cache/fastembed/`. You'll see download
+   `Xenova/bge-base-en-v1.5-int8` (~85 MB) to `~/.cache/fastembed/`. You'll see download
    progress on stderr.
 3. The sink runs `CREATE EXTENSION IF NOT EXISTS vector`, creates schema
    `chunkshop_samples`, drops and recreates `handbook` (because `overwrite: true`).
@@ -201,14 +201,14 @@ Check the embedding dimension:
 
 ```sql
 SELECT vector_dims(embedding) FROM chunkshop_samples.handbook LIMIT 1;
--- Should return 384 (bge-small).
+-- Should return 768 (bge-base).
 ```
 
 ## Step 6 — Your first semantic query
 
 This is the payoff: given a plain-English question, find the chunks whose embeddings are
 closest. You need to produce a query vector with the **same model** the cell used
-(`Xenova/bge-small-en-v1.5-int8`), then use pgvector's `<=>` cosine-distance operator.
+(`Xenova/bge-base-en-v1.5-int8`), then use pgvector's `<=>` cosine-distance operator.
 
 Create `query.py` anywhere:
 
@@ -222,7 +222,7 @@ from fastembed import TextEmbedding
 # chunkshop registers the int8 variant on import.
 import chunkshop.embedders  # noqa: F401
 
-MODEL = "Xenova/bge-small-en-v1.5-int8"
+MODEL = "Xenova/bge-base-en-v1.5-int8"
 DSN = os.environ["CHUNKSHOP_DSN"]
 QUERY = "how do we handle customer credentials"
 TOP_K = 3
@@ -303,8 +303,8 @@ chunker:
 
 embedder:
   type: fastembed
-  model_name: Xenova/bge-small-en-v1.5-int8
-  dim: 384
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
   threads: 4
   batch_size: 64
 
@@ -375,12 +375,12 @@ the guidance in [`embedders.md`](embedders.md#ab-testing-two-embedders).
 
 Edit `embedder.model_name` and `embedder.dim` in your YAML. Popular options:
 
-| `model_name`                             | `dim` | Precision | Trade-off                       |
-|------------------------------------------|-------|-----------|---------------------------------|
-| `Xenova/bge-small-en-v1.5-int8`          | 384   | int8      | Default. Fastest.               |
-| `BAAI/bge-small-en-v1.5`                 | 384   | fp32      | +0–2 points recall, 2× ingest.  |
-| `Xenova/bge-base-en-v1.5-int8`           | 768   | int8      | Bigger, more nuanced.           |
-| `nomic-ai/nomic-embed-text-v1.5`         | 768   | fp32      | 8k-token context; long docs.    |
+| `model_name`                             | `dim` | Precision | Trade-off                                |
+|------------------------------------------|-------|-----------|------------------------------------------|
+| `Xenova/bge-base-en-v1.5-int8`           | 768   | int8      | **Default.** Best quality-for-size.      |
+| `Xenova/bge-small-en-v1.5-int8`          | 384   | int8      | Smaller & faster; ~3–5 fewer MTEB pts.   |
+| `BAAI/bge-base-en-v1.5`                  | 768   | fp32      | +0–2 points recall over int8; 2× ingest. |
+| `nomic-ai/nomic-embed-text-v1.5-Q`       | 768   | int8      | 8k-token context; long docs.             |
 
 After changing the embedder, use `overwrite: true` (or a different table) — you can't mix
 vectors from different models in one table, they're not comparable.

@@ -80,8 +80,8 @@ chunker:
   type: hierarchy
 embedder:
   type: fastembed
-  model_name: Xenova/bge-small-en-v1.5-int8
-  dim: 384
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
   threads: 4
 extractor:
   type: composite
@@ -216,7 +216,7 @@ from fastembed import TextEmbedding
 import chunkshop.embedders  # register int8 variant
 
 q = "enterprise AI strategy"
-qvec = list(TextEmbedding(model_name="Xenova/bge-small-en-v1.5-int8").embed([q]))[0]
+qvec = list(TextEmbedding(model_name="Xenova/bge-base-en-v1.5-int8").embed([q]))[0]
 qlit = "[" + ",".join(f"{x:.6f}" for x in qvec) + "]"
 
 with psycopg.connect(os.environ["CHUNKSHOP_DSN"]) as conn, conn.cursor() as cur:
