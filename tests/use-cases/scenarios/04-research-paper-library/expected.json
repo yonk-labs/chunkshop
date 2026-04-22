@@ -1,0 +1,6 @@
+{
+  "table": "research_paper_library",
+  "min_rows": 9,
+  "min_docs": 3,
+  "metadata_keys_required": ["strategy", "heading", "entities", "language"]
+}

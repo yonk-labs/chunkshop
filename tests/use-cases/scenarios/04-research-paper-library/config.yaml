@@ -1,0 +1,53 @@
+# Scenario 04 — Research paper library.
+# json_corpus + hierarchy + bge-base-int8 + composite(spacy + lang) + promote.
+# Hybrid filter-plus-similarity pick: papers have clean #Abstract / #Methods
+# structure so hierarchy slices cleanly, and promoting entities.ORG lets
+# queries filter by author-affiliation (Google, Meta, Stanford) alongside a
+# text similarity ranking.
+cell_name: usecase_research_paper_library
+
+source:
+  type: json_corpus
+  path: tests/use-cases/scenarios/04-research-paper-library/data/papers.json
+  documents_key: documents
+  id_field: id
+  content_field: content
+  title_field: title
+
+chunker:
+  type: hierarchy
+  prefix_heading: true
+  min_section_chars: 100
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 2
+  batch_size: 32
+
+extractor:
+  type: composite
+  extractors:
+    - type: spacy_entities
+      model: en_core_web_sm
+      label_whitelist: ["ORG", "PERSON", "GPE", "DATE"]
+    - type: lang_detect
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_use_cases
+  table: research_paper_library
+  mode: overwrite
+  source_tag: arxiv_library
+  promote_metadata:
+    - path: entities.ORG
+      type: text[]
+    - path: language
+      type: text
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop_usecase_research_paper_library.log

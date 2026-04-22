@@ -1,0 +1,43 @@
+# Scenario 03 — Dev API docs RAG.
+# files + sentence_aware (max_chars=5000) + nomic-Q (8k context).
+# Long-context pick: API doc pages often have 2-3 KB prose + a code example
+# we want kept together. nomic-embed-text-v1.5-Q accepts up to 8192 tokens,
+# so a full page lands in one embedded chunk instead of splitting at a
+# semantic boundary.
+cell_name: usecase_dev_api_docs_rag
+
+source:
+  type: files
+  glob: tests/use-cases/scenarios/03-dev-api-docs-rag/data/*.md
+  id_from: stem
+  encoding: utf-8
+
+chunker:
+  type: sentence_aware
+  doc_type: prose
+  max_chars: 5000
+  min_chars: 200
+
+embedder:
+  type: fastembed
+  model_name: nomic-ai/nomic-embed-text-v1.5-Q
+  dim: 768
+  threads: 2
+  batch_size: 16
+
+extractor:
+  type: rake_keywords
+  top_k: 10
+  min_chars: 3
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_use_cases
+  table: dev_api_docs_rag
+  mode: overwrite
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop_usecase_dev_api_docs_rag.log

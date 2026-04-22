@@ -1,0 +1,6 @@
+{
+  "table": "dev_api_docs_rag",
+  "min_rows": 3,
+  "min_docs": 3,
+  "metadata_keys_required": ["strategy"]
+}
