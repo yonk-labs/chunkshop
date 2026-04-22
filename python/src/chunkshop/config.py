@@ -171,8 +171,14 @@ class RakeKeywordsExtractor(_Base):
     min_chars: int = 3
 
 
+class LangDetectExtractor(_Base):
+    type: Literal["lang_detect"]
+    backend: Literal["langdetect"] = "langdetect"
+
+
 ExtractorConfig = Annotated[
-    Union[NoneExtractor, RakeKeywordsExtractor], Field(discriminator="type")
+    Union[NoneExtractor, RakeKeywordsExtractor, LangDetectExtractor],
+    Field(discriminator="type"),
 ]
 
 
