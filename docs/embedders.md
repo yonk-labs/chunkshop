@@ -228,6 +228,71 @@ uv --project python run python scripts/bench_embedders.py
 
 Raw results + per-query detail live in `skill-output/bench-embedders/` (gitignored).
 
+## Full-factorial: 5 chunkers x 3 embedders
+
+`scripts/bench_matrix.py` runs every combination of the five canonical chunking
+strategies against the three int8 embedders — 15 total cells, same 14 gold
+queries, same corpus. Run date 2026-04-22.
+
+Strategies (matching chunkshop's factorial convention):
+
+| Key | Chunker                                               |
+|-----|-------------------------------------------------------|
+| A   | `sentence_aware`                                      |
+| B   | `hierarchy` (default)                                 |
+| C   | `fixed_overlap(window_words=300, step_words=150)`     |
+| D   | `neighbor_expand(window=1)` over `sentence_aware`     |
+| E   | `neighbor_expand(window=1)` over `hierarchy`          |
+
+**MRR grid (higher is better):**
+
+| strategy \ embedder | `bge-small-int8` | `bge-base-int8` | `nomic-q` |
+|---------------------|-----------------:|----------------:|----------:|
+| A: `sentence_aware`        | 0.917 | 0.929 | 0.871 |
+| B: `hierarchy`             | 0.917 | **0.964** | 0.911 |
+| C: `fixed_overlap`         | 0.854 | 0.946 | 0.863 |
+| D: `neighbor+sentence`     | 0.869 | 0.952 | 0.911 |
+| E: `neighbor+hierarchy`    | **0.964** | 0.952 | 0.911 |
+
+Two combos tie for best at MRR=0.964: `hierarchy + bge-base-int8` (the
+shipped default) and `neighbor+hierarchy + bge-small-int8`. The latter is
+interesting — a smaller embedder closes the gap via context-augmented chunks.
+The spread across the whole grid is ~0.11 MRR, which is ~1.5 queries out of
+14. Treat anything within ~0.07 of the leader as indistinguishable on this
+corpus.
+
+**Chunk counts per combo:**
+
+| strategy \ embedder | `bge-small` | `bge-base` | `nomic-q` |
+|---------------------|------------:|-----------:|----------:|
+| A                   | 8 | 8 | 8 |
+| B                   | 13 | 13 | 13 |
+| C                   | 7 | 7 | 7 |
+| D                   | 14 | 14 | 14 |
+| E                   | 13 | 13 | 13 |
+
+Takeaways:
+
+- `fixed_overlap` is consistently at the bottom — predictable baseline, no
+  semantic structure to exploit.
+- `hierarchy` leads among non-neighbor strategies on every embedder.
+- `neighbor_expand` around `hierarchy` matches or exceeds plain `hierarchy` at
+  the cost of more chunks (each chunk includes the ±1 context in its embedded
+  text).
+- `nomic-q` underperforms both bge variants on this small corpus on every
+  strategy — consistent with the single-axis bench above.
+
+Reproduce:
+
+```bash
+uv --project python run python scripts/bench_matrix.py
+# -> skill-output/bench-matrix/{results.json, report.md}
+```
+
+Same caveat as the single-axis bench: 4 docs × 14 queries is low statistical
+power. Use this as directional signal and run against your own corpus before
+making a load-bearing choice.
+
 ## Thread tuning for embedders
 
 `embedder.threads` caps ORT's `intra_op_num_threads` at session creation. Without it,
