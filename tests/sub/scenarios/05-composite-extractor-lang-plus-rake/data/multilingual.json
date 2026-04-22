@@ -1,0 +1,24 @@
+{
+  "documents": [
+    {
+      "id": "en_001",
+      "title": "Observability in distributed systems",
+      "content": "Distributed tracing captures the path of a request across service boundaries. Engineers use the trace to locate latency spikes and error sources quickly. The practical value of tracing grows with the number of hops; a two-service system rarely needs it, but a twenty-service mesh cannot be debugged without it. Sampling rates are the usual knob: a hundred percent for slow or failing requests, and a small percentage for the baseline."
+    },
+    {
+      "id": "fr_001",
+      "title": "Architecture de microservices",
+      "content": "L'architecture de microservices consiste a decouper une application en plusieurs petits services independants. Chaque service possede sa propre base de donnees et communique avec les autres par des interfaces bien definies. Cette approche facilite le deploiement continu et permet aux equipes de travailler en parallele sur differentes parties du systeme. En pratique, la complexite operationnelle augmente et il faut investir dans l'observabilite et l'automatisation pour en tirer parti."
+    },
+    {
+      "id": "de_001",
+      "title": "Continuous Integration in der Softwareentwicklung",
+      "content": "Continuous Integration beschreibt den Prozess, bei dem Entwickler ihre Aenderungen haeufig in das gemeinsame Repository integrieren. Jede Integration wird automatisch gebaut und getestet, damit Fehler frueh erkannt werden. Dieser Ansatz reduziert die Zeit zwischen dem Einfuehren eines Fehlers und seiner Entdeckung erheblich. Viele Teams kombinieren Continuous Integration mit automatisierten Deployment-Pipelines, um neue Funktionen schneller ausliefern zu koennen."
+    },
+    {
+      "id": "es_001",
+      "title": "Bases de datos vectoriales",
+      "content": "Las bases de datos vectoriales almacenan representaciones numericas de texto, imagenes u otros datos y permiten buscar por similitud en lugar de por coincidencia exacta. Son la pieza central de los sistemas de busqueda semantica y de los asistentes que combinan recuperacion con modelos de lenguaje. El rendimiento depende del algoritmo de indexacion elegido y del hardware disponible. En general, los indices aproximados ofrecen un buen equilibrio entre precision y latencia."
+    }
+  ]
+}

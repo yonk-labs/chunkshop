@@ -1,0 +1,19 @@
+{
+  "documents": [
+    {
+      "id": "api-001",
+      "title": "POST /events",
+      "content": "Accepts a JSON payload describing an event and returns a 202 with the assigned event_id. Idempotency keys are honored on this endpoint for up to 24 hours. Payloads larger than 1 MB are rejected with 413."
+    },
+    {
+      "id": "api-002",
+      "title": "GET /events/{id}",
+      "content": "Returns the canonical representation of an ingested event including enrichments. Results are available within two seconds of ingestion under normal conditions. Returns 404 if the event_id is unknown or has expired from the hot store."
+    },
+    {
+      "id": "api-003",
+      "title": "DELETE /events/{id}",
+      "content": "Marks the event for purge across both hot and cold storage tiers. Deletion is asynchronous and can take up to 24 hours to propagate. The endpoint returns 202 immediately on a valid request."
+    }
+  ]
+}

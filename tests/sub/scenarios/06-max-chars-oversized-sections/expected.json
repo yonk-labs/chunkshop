@@ -1,0 +1,6 @@
+{
+  "table": "max_chars_split",
+  "min_rows": 5,
+  "min_docs": 1,
+  "metadata_keys_required": ["strategy", "section_part"]
+}

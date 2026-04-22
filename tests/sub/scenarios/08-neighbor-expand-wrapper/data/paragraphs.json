@@ -1,0 +1,24 @@
+{
+  "documents": [
+    {
+      "id": "para_001",
+      "title": "Caching layers",
+      "content": "A read-through cache sits in front of the database and fills on miss. The TTL dominates freshness. Shorter TTLs mean more cache misses and more database load; longer TTLs mean staler reads. Choose the TTL based on how often the underlying data changes and how tolerant the caller is of staleness. A handful of hot keys usually account for most of the traffic."
+    },
+    {
+      "id": "para_002",
+      "title": "Invalidation",
+      "content": "Cache invalidation is hard precisely because it couples producers and consumers of a value through a channel that doesn't exist in the data model. Write-through strategies push the invalidation into the write path. Pub-sub strategies broadcast keys that have changed. Both approaches trade simplicity for correctness; the right choice depends on how catastrophic a stale read actually is."
+    },
+    {
+      "id": "para_003",
+      "title": "Warm-up",
+      "content": "A cold cache causes a thundering herd when traffic arrives. Warming the cache during a deploy by pre-fetching the top thousand hot keys is usually enough. Some systems skip warming and absorb the first-minute latency spike instead; whether this is acceptable depends on the SLO. Synthetic traffic during blue-green rollout is another option."
+    },
+    {
+      "id": "para_004",
+      "title": "Eviction",
+      "content": "LRU is the default because it matches typical workloads. LFU is better when a small set of keys is dramatically hotter than the rest and you can afford the bookkeeping cost. Random eviction is never optimal but is cheap and hard to beat for adversarial or uniform workloads. Measure the hit rate before switching away from LRU."
+    }
+  ]
+}

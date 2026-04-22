@@ -1,0 +1,46 @@
+# Scenario 05 — composite extractor (lang_detect + rake_keywords) + promote_metadata.
+# Multilingual synthesized prose (en/fr/de/es), all 4 short paragraphs freshly written.
+cell_name: sub_extractor_composite
+
+source:
+  type: json_corpus
+  path: tests/sub/scenarios/05-composite-extractor-lang-plus-rake/data/multilingual.json
+  documents_key: documents
+  id_field: id
+  content_field: content
+  title_field: title
+
+chunker:
+  type: hierarchy
+  prefix_heading: false
+  min_section_chars: 60
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 2
+  batch_size: 32
+
+extractor:
+  type: composite
+  extractors:
+    - type: lang_detect
+    - type: rake_keywords
+      top_k: 5
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_sub_scenarios
+  table: extractor_composite
+  mode: overwrite
+  source_tag: multilingual_notes
+  promote_metadata:
+    - path: language
+      type: text
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop_sub_05_extractor_composite.log

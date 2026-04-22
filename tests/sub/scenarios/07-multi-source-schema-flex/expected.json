@@ -1,0 +1,6 @@
+{
+  "table": "unified_multi_source",
+  "min_rows": 6,
+  "min_docs": 4,
+  "metadata_keys_required": ["strategy"]
+}

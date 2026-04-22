@@ -1,0 +1,6 @@
+{
+  "table": "extractor_composite",
+  "min_rows": 4,
+  "min_docs": 4,
+  "metadata_keys_required": ["language", "strategy"]
+}
