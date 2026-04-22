@@ -186,6 +186,48 @@ chunkshop orchestrate --config-dir python/src/chunkshop/configs/factorial-int8 -
 
 Every YAML writes to its own `{schema}.{table}`. No cleanup between cells.
 
+## Benchmark on docs/samples
+
+The quickest way to move past MTEB folklore is to run the A/B on chunkshop's own
+sample corpus. The numbers below come from `scripts/bench_embedders.py` running
+against `docs/samples/*-*.md` on 2026-04-22.
+
+**Setup.** 4 markdown docs (`handbook-intro`, `handbook-engineering`,
+`handbook-security`, `release-notes`), chunked with `hierarchy(prefix_heading=true,
+min_section_chars=100)` → 13 chunks per table. Three int8 embedders, same
+chunker, same framer, no extractor. 14 hand-written gold queries covering all
+four docs, mixing direct-keyword lookups and paraphrased questions (written
+before any retrieval ran, so they cannot drift toward a desired answer).
+
+| Embedder                   | recall@1 | recall@3 | recall@5 | MRR   |
+|----------------------------|---------:|---------:|---------:|------:|
+| `bge-small-int8` (dim 384) |    0.857 |    1.000 |    1.000 | 0.917 |
+| `bge-base-int8`  (dim 768) |    0.929 |    1.000 |    1.000 | 0.964 |
+| `nomic-q`        (dim 768) |    0.857 |    0.929 |    1.000 | 0.911 |
+
+**Interpretation.** `bge-base-int8` leads by one query at rank 1 and ~0.05 MRR.
+On a 14-query corpus that is *one query's difference* — directional signal, not a
+statistically significant gap. The honest read: on this tiny corpus all three
+embedders are within noise at recall@5, and `bge-base-int8` has a modest edge at
+rank 1 that is consistent with what MTEB shows at scale. If you are retrieving
+into a small corpus where top-5 is your operating budget, any of the three
+will work; if rank 1 matters (e.g., the top chunk goes straight into a prompt),
+prefer `bge-base-int8`.
+
+Caveats. 4 docs × 14 queries is low statistical power — a single query flipping
+changes aggregate recall by ~0.07. Do not generalize these exact numbers to
+your own corpus; run the script against it.
+
+Reproduce:
+
+```bash
+# From repo root, with a reachable CHUNKSHOP_TEST_DSN:
+uv --project python run python scripts/bench_embedders.py
+# Outputs land in skill-output/bench-embedders/{results.json,report.md}
+```
+
+Raw results + per-query detail live in `skill-output/bench-embedders/` (gitignored).
+
 ## Thread tuning for embedders
 
 `embedder.threads` caps ORT's `intra_op_num_threads` at session creation. Without it,
