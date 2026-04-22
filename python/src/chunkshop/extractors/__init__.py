@@ -1,4 +1,5 @@
 from chunkshop.config import (
+    CompositeExtractor as CompositeCfg,
     ExtractorConfig,
     KeyBertPhrasesExtractor as KeyBertCfg,
     LangDetectExtractor as LangDetectCfg,
@@ -7,6 +8,7 @@ from chunkshop.config import (
     SpacyEntitiesExtractor as SpacyCfg,
 )
 from chunkshop.extractors.base import Extractor
+from chunkshop.extractors.composite import CompositeExtractor
 from chunkshop.extractors.keybert_phrases import KeyBertPhrasesExtractor
 from chunkshop.extractors.lang_detect import LangDetectExtractor
 from chunkshop.extractors.none_provider import NoneExtractor
@@ -26,6 +28,8 @@ def load_extractor(cfg: ExtractorConfig) -> Extractor:
         return KeyBertPhrasesExtractor(cfg)
     if isinstance(cfg, SpacyCfg):
         return SpacyEntitiesExtractor(cfg)
+    if isinstance(cfg, CompositeCfg):
+        return CompositeExtractor(cfg)
     raise ValueError(f"unknown extractor type: {type(cfg).__name__}")
 
 

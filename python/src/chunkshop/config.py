@@ -191,6 +191,11 @@ class SpacyEntitiesExtractor(_Base):
     )
 
 
+class CompositeExtractor(_Base):
+    type: Literal["composite"]
+    extractors: list["ExtractorConfig"] = Field(default_factory=list)
+
+
 ExtractorConfig = Annotated[
     Union[
         NoneExtractor,
@@ -198,9 +203,11 @@ ExtractorConfig = Annotated[
         LangDetectExtractor,
         KeyBertPhrasesExtractor,
         SpacyEntitiesExtractor,
+        CompositeExtractor,
     ],
     Field(discriminator="type"),
 ]
+CompositeExtractor.model_rebuild()
 
 
 _ALLOWED_PROMOTE_TYPES = {"text", "text[]", "int", "bigint", "boolean", "jsonb", "timestamptz", "date"}
