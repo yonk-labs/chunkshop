@@ -47,6 +47,39 @@ def test_hierarchy_prefixes_heading():
     assert not chunks[0].original_content.startswith("Section One")
 
 
+def test_hierarchy_splits_oversized_sections():
+    # One H1 with a 10 KB body
+    body = ("This is a paragraph that talks about medical conditions. " * 30).strip()
+    paragraphs = [body] * 10
+    big_section = "\n\n".join(paragraphs)
+    assert len(big_section) > 10_000
+    md = f"# About Bladder Cancer\n\n{big_section}"
+    chunker = load_chunker(HierarchyChunker(type="hierarchy", max_chars=2000))
+    chunks = chunker.chunk(_doc(md))
+    assert len(chunks) >= 5
+    for c in chunks:
+        # embedded_content includes the heading prefix (prefix_heading default True)
+        # so the effective content limit is max_chars + heading overhead; check original
+        assert len(c.original_content) <= 2000
+        assert c.metadata["heading"] == "About Bladder Cancer"
+    # section_part should be monotonically increasing from 0
+    parts = [c.metadata.get("section_part") for c in chunks]
+    assert parts == list(range(len(chunks)))
+
+
+def test_hierarchy_non_oversized_sections_still_work():
+    # Same body layout as the classic heading test — none oversized
+    body_a = "alpha body text that is unambiguously longer than one hundred characters so the min_section_chars filter leaves it intact."
+    body_b = "beta body text that is unambiguously longer than one hundred characters so the min_section_chars filter leaves it intact."
+    md = f"# Section One\n\n{body_a}\n\n# Section Two\n\n{body_b}"
+    chunker = load_chunker(HierarchyChunker(type="hierarchy"))
+    chunks = chunker.chunk(_doc(md))
+    assert len(chunks) == 2
+    # Sections not split -> section_part is 0 on each
+    for c in chunks:
+        assert c.metadata.get("section_part") == 0
+
+
 def test_sentence_aware_respects_configured_max_chars():
     # 10 KB doc with many sentences
     sentences = [f"Sentence number {i} with some filler words here." for i in range(400)]
