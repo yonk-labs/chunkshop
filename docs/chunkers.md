@@ -25,6 +25,23 @@ flowchart TB
     FO -.wrap for recall.-> NE
 ```
 
+## Tuning `max_chars` for your embedder
+
+`max_chars` on `sentence_aware` and `hierarchy` enforces an upper bound so chunks never exceed
+the embedder's token limit. Defaults target `bge-small-en-v1.5` (512 tokens). If you're using
+a larger-context embedder, raise it to match.
+
+| Embedder                 | Token limit | Recommended `max_chars` |
+|--------------------------|-------------|-------------------------|
+| `bge-small-en-v1.5`      | 512         | `2000` (default)        |
+| `bge-base-en-v1.5`       | 512         | `2000`                  |
+| `text-embedding-3-small` | 8192        | `6000`                  |
+| `text-embedding-3-large` | 8192        | `6000`                  |
+
+Character-to-token ratio is corpus-dependent (~4 chars/token for English prose; less for code,
+URLs, or non-Latin scripts). Defaults leave headroom. If you see truncation warnings from the
+embedder, lower `max_chars`.
+
 ## 1. `sentence_aware` — paragraph-respecting prose splitter
 
 Source: `python/src/chunkshop/chunkers/sentence_aware.py`
@@ -38,24 +55,19 @@ chunker:
 ### What it does
 
 - **prose mode** (default): finds markdown headings (`^#{1,6} `), keeps each section intact,
-  hard-splits at 3000 chars if a section is bigger. No heading? Falls back to paragraph-
-  respecting greedy packing (splits on blank lines, accumulates up to `_MAX_CHARS = 3000`).
+  hard-splits on paragraph → sentence → char boundaries if a section exceeds `max_chars`.
+  No heading? Falls back to paragraph-respecting greedy packing.
 - **code mode**: skips the heading pass, uses the paragraph-fallback splitter directly.
   Good for log files, source code, anything where `#` is a comment token rather than
   structure.
 
 ### Knobs
 
-| YAML key   | Default | Notes                                              |
-|------------|---------|----------------------------------------------------|
-| `doc_type` | `prose` | `prose` or `code`. No other values.                |
-
-Module constants (not exposed in YAML — edit the file to change):
-
-| Constant     | Value | Meaning                                           |
-|--------------|-------|---------------------------------------------------|
-| `_MAX_CHARS` | 3000  | ~750 tokens for `bge-small-en-v1.5`. Hard cap.    |
-| `_MIN_CHARS` | 200   | Tiny fragments dropped after heading split.       |
+| YAML key     | Default | Notes                                                                   |
+|--------------|---------|-------------------------------------------------------------------------|
+| `max_chars`  | `2000`  | Hard cap on chunk size. See "Tuning `max_chars` for your embedder" below. |
+| `min_chars`  | `200`   | Chunks below this are dropped when splitting a headed doc.              |
+| `doc_type`   | `prose` | `prose` or `code`. No other values.                                     |
 
 ### When to pick it
 
@@ -99,8 +111,13 @@ is emitted as chunk 0 and prefixed with the document title (if any).
 
 | YAML key            | Default | Notes                                                          |
 |---------------------|---------|----------------------------------------------------------------|
+| `max_chars`         | `2000`  | Hard cap; sections above are split on paragraph → sentence → char. |
 | `prefix_heading`    | `true`  | Disable only if you're benchmarking "same chunker without prefix". |
 | `min_section_chars` | `100`   | Drops nav fluff, 3-line "See also" sections.                   |
+
+Split children of an oversized section carry `metadata.heading` (same as their parent) and
+`metadata.section_part` (0-indexed per section). Non-split sections get `section_part: 0` too
+— the key is always present, so downstream code doesn't need to branch on absence.
 
 ### Why it's the default
 
@@ -212,8 +229,11 @@ row 3 was computed from chunks 2, 3, and 4 glued together (more context).
 
 ### When not to
 
-- Your base chunker already emits long chunks (≥ 2000 chars) — you'll blow past the
-  embedder's token limit. `bge-small-en-v1.5` truncates at 512 tokens.
+- Your base chunker's `max_chars` plus `window` × neighbor size exceeds your embedder's token
+  budget. With the default `max_chars: 2000` and `window: 1`, each neighbor-expanded embed
+  concatenates up to ~6000 chars (~1500 tokens) — safe for `bge-small-en-v1.5` at 512 tokens
+  ONLY IF your base chunks are short enough. Drop `max_chars` to ~1500 on the base chunker if
+  you see truncation.
 - You're using `hierarchy` with `prefix_heading: true` — the heading already provides
   framing; expansion is double-dipping.
 
