@@ -70,33 +70,38 @@ with psycopg.connect(DSN) as conn, conn.cursor() as cur:
         print(f"{dist:.3f}  {doc_id}#{seq}  {heading}  {content[:80]!r}")
 ```
 
-## JavaScript / TypeScript — Node (`@xenova/transformers` + `pg`)
+## JavaScript / TypeScript — Node (`@huggingface/transformers` + `pg` + `pgvector`)
 
-`@xenova/transformers` runs the same ONNX files chunkshop uses, no model hosting required.
-Pass `quantized: true` to load the int8 variant.
+`@huggingface/transformers` (Xenova's project, now official under Hugging Face) runs the
+same ONNX files chunkshop uses. Pass `dtype: 'q8'` for the int8 variant (the old
+`quantized: true` flag was replaced in v3; Node's WASM default is already `q8` but being
+explicit is safer).
 
 ```typescript
-// npm install @xenova/transformers pg
-import { pipeline } from '@xenova/transformers';
+// npm install @huggingface/transformers pg pgvector
+import { pipeline } from '@huggingface/transformers';
 import { Client } from 'pg';
+import pgvector from 'pgvector/pg';
 
-const MODEL = 'Xenova/bge-base-en-v1.5';   // Xenova repo; quantized flag below picks int8
+const MODEL = 'Xenova/bge-base-en-v1.5';   // Xenova repo; dtype below selects int8
 const QUERY = 'how do we rotate API keys';
 
-// First call downloads ONNX to Transformers.js cache
-const embedder = await pipeline('feature-extraction', MODEL, { quantized: true });
+// First call downloads ONNX to the Transformers.js cache
+const embedder = await pipeline('feature-extraction', MODEL, { dtype: 'q8' });
 const out = await embedder(QUERY, { pooling: 'cls', normalize: true });
 const qvec: number[] = Array.from(out.data as Float32Array);   // length 768
 
 const pg = new Client({ connectionString: process.env.CHUNKSHOP_DSN });
 await pg.connect();
+await pgvector.registerTypes(pg);     // teaches pg to parse `vector` columns
+
 const res = await pg.query(
   `SELECT doc_id, seq_num, metadata->>'heading' AS heading, original_content,
-          embedding <=> $1::vector AS distance
+          embedding <=> $1 AS distance
    FROM   chunkshop_samples.handbook
-   ORDER  BY embedding <=> $1::vector
+   ORDER  BY embedding <=> $1
    LIMIT  3`,
-  [`[${qvec.join(',')}]`],   // pgvector parses the literal; pg client has no native type
+  [pgvector.toSql(qvec)],
 );
 for (const r of res.rows) {
   console.log(`${r.distance.toFixed(3)}  ${r.doc_id}#${r.seq_num}  ${r.heading}  ${r.original_content.slice(0, 80)}`);
@@ -104,8 +109,10 @@ for (const r of res.rows) {
 await pg.end();
 ```
 
-Caveat: `@xenova/transformers` expects `cls` pooling + `normalize: true` to match BGE's
-ingest-side convention. Both flags above are required.
+Caveats:
+- `pooling: 'cls'` and `normalize: true` are required to match BGE's ingest-side convention.
+- `pgvector.toSql(qvec)` handles the vector-literal encoding so you don't hand-roll
+  `` `[${qvec.join(',')}]` `` strings.
 
 ## Rust (`fastembed-rs` + `sqlx`)
 
@@ -115,10 +122,11 @@ pooling conventions.
 ```toml
 # Cargo.toml
 [dependencies]
-fastembed = "4"                                 # pulls ort + tokenizers
+fastembed = "5"                                 # pulls ort + tokenizers
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres"] }
 pgvector = { version = "0.4", features = ["sqlx"] }
 tokio = { version = "1", features = ["full"] }
+anyhow = "1"
 ```
 
 ```rust
@@ -171,10 +179,11 @@ client-side and accept the small distance drift, or (b) point `fastembed-rs` at 
 `Xenova/bge-base-en-v1.5-int8` ONNX file via `TextEmbedding::try_new_from_user_defined()`
 with a custom `UserDefinedEmbeddingModel`.
 
-## Go (`hugot` + `pgx`)
+## Go (`hugot` + `pgx` + `pgvector-go`)
 
-`hugot` (Knights-Analytics) wraps ONNX Runtime and HF tokenizers. Loads any
-sentence-transformers-compatible model from HF Hub.
+`hugot` (Knights-Analytics) wraps ONNX Runtime (optionally) and HF tokenizers. Three
+session backends: `NewGoSession` (pure-Go, default), `NewORTSession` (C++ ORT, needs build
+tag), `NewXLASession` (XLA).
 
 ```go
 // go get github.com/knights-analytics/hugot
@@ -194,32 +203,39 @@ import (
 )
 
 func main() {
+    ctx := context.Background()
     dsn := os.Getenv("CHUNKSHOP_DSN")
     query := "how do we rotate API keys"
 
-    sess, err := hugot.NewSession()
+    sess, err := hugot.NewGoSession(ctx)
     must(err)
     defer sess.Destroy()
 
+    // hugot downloads ONNX + tokenizer files into ./models/
+    modelPath, err := hugot.DownloadModel(ctx,
+        "Xenova/bge-base-en-v1.5", "./models/", hugot.NewDownloadOptions())
+    must(err)
+
     cfg := hugot.FeatureExtractionConfig{
-        ModelPath: "Xenova/bge-base-en-v1.5",     // hugot downloads from HF
-        Name:      "bge-base",
-        Options:   []pipelines.PipelineOption[*pipelines.FeatureExtractionPipeline]{
+        ModelPath:    modelPath,
+        Name:         "bge-base",
+        OnnxFilename: "model_quantized.onnx",     // int8 variant (match chunkshop default)
+        Options: []hugot.FeatureExtractionOption{
             pipelines.WithNormalization(),         // BGE expects L2-normalized output
         },
     }
     embedder, err := hugot.NewPipeline(sess, cfg)
     must(err)
 
-    out, err := embedder.RunPipeline([]string{query})
+    out, err := embedder.RunPipeline(ctx, []string{query})
     must(err)
     qvec := pgvector.NewVector(out.Embeddings[0])   // []float32 length 768
 
-    conn, err := pgx.Connect(context.Background(), dsn)
+    conn, err := pgx.Connect(ctx, dsn)
     must(err)
-    defer conn.Close(context.Background())
+    defer conn.Close(ctx)
 
-    rows, err := conn.Query(context.Background(),
+    rows, err := conn.Query(ctx,
         `SELECT doc_id, seq_num, metadata->>'heading', original_content,
                 embedding <=> $1 AS distance
          FROM   chunkshop_samples.handbook
@@ -241,9 +257,11 @@ func main() {
 func must(err error) { if err != nil { panic(err) } }
 ```
 
-Caveat: `hugot` uses the HF path (`Xenova/bge-base-en-v1.5`) with `WithNormalization()`. If
-you need the int8 variant specifically, hugot v0.3+ supports quantized models via the
-`hugot.WithOnnxFilename("model_quantized.onnx")` option — check your version.
+Caveats:
+- `hugot.NewGoSession(ctx)` takes a `context.Context` and is pure Go. Use `NewORTSession` if
+  you want the C++ ONNX Runtime backend — requires the `ORT` build tag and a local libonnxruntime.
+- `OnnxFilename: "model_quantized.onnx"` is the Xenova convention for the int8 file. Drop
+  this field to use the default `model.onnx` (fp32).
 
 ---
 
