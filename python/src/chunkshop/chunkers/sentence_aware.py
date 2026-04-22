@@ -2,36 +2,25 @@ from __future__ import annotations
 import re
 
 from chunkshop.chunkers.base import Chunk
+from chunkshop.chunkers._splitting import split_to_max_chars
 from chunkshop.config import SentenceAwareChunker as Cfg
 from chunkshop.sources.base import Document
 
 
-_MAX_CHARS = 3000  # ~750 tokens for BAAI/bge-small-en-v1.5
-_MIN_CHARS = 200
-
 _MD_HEADING = re.compile(r"^#{1,6}\s+.+$", re.MULTILINE)
 
 
-def _hard_split(text: str) -> list[str]:
-    if len(text) <= _MAX_CHARS:
-        return [text]
-    out: list[str] = []
-    for i in range(0, len(text), _MAX_CHARS):
-        out.append(text[i : i + _MAX_CHARS])
-    return out
-
-
-def _split_plain(text: str) -> list[str]:
+def _split_plain(text: str, max_chars: int, min_chars: int) -> list[str]:
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
     result: list[str] = []
     buffer = ""
     for para in paragraphs:
-        if len(para) > _MAX_CHARS:
+        if len(para) > max_chars:
             if buffer:
                 result.append(buffer.strip())
                 buffer = ""
-            result.extend(_hard_split(para))
-        elif len(buffer) + len(para) + 2 > _MAX_CHARS and buffer:
+            result.extend(split_to_max_chars(para, max_chars))
+        elif len(buffer) + len(para) + 2 > max_chars and buffer:
             result.append(buffer.strip())
             buffer = para
         else:
@@ -41,24 +30,24 @@ def _split_plain(text: str) -> list[str]:
     return result
 
 
-def _split_prose(text: str) -> list[str]:
+def _split_prose(text: str, max_chars: int, min_chars: int) -> list[str]:
     headings = list(_MD_HEADING.finditer(text))
     if not headings:
-        return _split_plain(text)
+        return _split_plain(text, max_chars, min_chars)
     result: list[str] = []
     for i, match in enumerate(headings):
         start = match.start()
         end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
         section = text[start:end].strip()
         if section:
-            result.extend(_hard_split(section))
+            result.extend(split_to_max_chars(section, max_chars))
     if headings[0].start() > 0:
         prefix = text[: headings[0].start()].strip()
         if prefix:
-            result = _hard_split(prefix) + result
-    if len(text) <= _MAX_CHARS:
+            result = split_to_max_chars(prefix, max_chars) + result
+    if len(text) <= max_chars:
         return [s for s in result if s]
-    return [s for s in result if len(s) >= _MIN_CHARS]
+    return [s for s in result if len(s) >= min_chars]
 
 
 class SentenceAwareChunker:
@@ -67,9 +56,9 @@ class SentenceAwareChunker:
 
     def chunk(self, doc: Document) -> list[Chunk]:
         if self.cfg.doc_type == "code":
-            splits = _split_plain(doc.content)
+            splits = _split_plain(doc.content, self.cfg.max_chars, self.cfg.min_chars)
         else:
-            splits = _split_prose(doc.content)
+            splits = _split_prose(doc.content, self.cfg.max_chars, self.cfg.min_chars)
         return [
             Chunk(
                 doc_id=doc.id,

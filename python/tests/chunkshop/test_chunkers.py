@@ -47,6 +47,19 @@ def test_hierarchy_prefixes_heading():
     assert not chunks[0].original_content.startswith("Section One")
 
 
+def test_sentence_aware_respects_configured_max_chars():
+    # 10 KB doc with many sentences
+    sentences = [f"Sentence number {i} with some filler words here." for i in range(400)]
+    doc_text = " ".join(sentences)
+    assert len(doc_text) > 10_000
+    chunker = load_chunker(SentenceAwareChunker(max_chars=500, min_chars=50))
+    chunks = chunker.chunk(_doc(doc_text))
+    assert len(chunks) >= 10
+    for c in chunks:
+        assert len(c.embedded_content) <= 500
+        assert len(c.original_content) <= 500
+
+
 def test_neighbor_expand_wraps_base():
     chunker = load_chunker(
         NeighborExpandChunker(
