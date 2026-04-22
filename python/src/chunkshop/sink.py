@@ -12,6 +12,18 @@ from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
 
 
+def _advisory_lock_key(schema_name: str) -> int:
+    """Deterministic 64-bit signed int key for pg_advisory_xact_lock.
+
+    Python's built-in hash() is PYTHONHASHSEED-randomized per process, so two
+    concurrent cells would compute DIFFERENT keys for the same schema name and
+    fail to serialize. blake2b gives a stable digest across processes.
+    """
+    import hashlib
+    digest = hashlib.blake2b(schema_name.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big", signed=True)
+
+
 def _jsonb_path_get(meta: dict, path: str):
     """Traverse a dotted path through nested dicts; return None if any segment missing.
 
@@ -52,6 +64,13 @@ class PgVectorSink:
           - create_if_missing: CREATE IF NOT EXISTS; ensures source + promoted cols present.
         """
         with psycopg.connect(self._dsn) as conn, conn.cursor() as cur:
+            # Postgres CREATE EXTENSION / CREATE SCHEMA IF NOT EXISTS are not race-safe
+            # across concurrent sessions (two sessions can both see it missing, both
+            # attempt the create, one fails on the pg_namespace unique index). Serialize
+            # via a transaction-scoped advisory lock keyed on the schema name.
+            lock_key = _advisory_lock_key(self.cfg.schema_name)
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
+
             cur.execute(sql.SQL("CREATE EXTENSION IF NOT EXISTS vector"))
             cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
                 sql.Identifier(self.cfg.schema_name)

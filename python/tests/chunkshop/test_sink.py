@@ -59,6 +59,48 @@ def test_create_and_write_roundtrip(ensure_pg):
         conn.commit()
 
 
+def test_concurrent_create_table_same_schema(ensure_pg):
+    """Regression: two cells targeting the same schema used to race on
+    CREATE SCHEMA IF NOT EXISTS and one would fail with a pg_namespace unique
+    violation. Fixed via pg_advisory_xact_lock in sink.create_table.
+    """
+    import concurrent.futures as cf
+
+    schema = "chunkshop_concur"
+
+    # Pre-clean so the test is idempotent
+    with psycopg.connect(ensure_pg) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        conn.commit()
+
+    def _create_one(idx: int) -> None:
+        cfg = TargetConfig(
+            dsn_env=DSN_ENV,
+            **{"schema": schema},
+            table=f"concur_t{idx}",
+            overwrite=True,
+            hnsw=False,
+        )
+        sink = PgVectorSink(cfg, embed_dim=4)
+        sink.create_table()
+
+    # 6 concurrent creators into the same schema
+    N = 6
+    with cf.ThreadPoolExecutor(max_workers=N) as pool:
+        futures = [pool.submit(_create_one, i) for i in range(N)]
+        for f in futures:
+            f.result()  # re-raises if any cell failed
+
+    # Verify all N tables exist under the one schema
+    with psycopg.connect(ensure_pg) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM pg_tables WHERE schemaname=%s", (schema,)
+        )
+        assert cur.fetchone()[0] == N
+        cur.execute(f"DROP SCHEMA {schema} CASCADE")
+        conn.commit()
+
+
 def test_write_rejects_length_mismatch(ensure_pg):
     cfg = TargetConfig(
         dsn_env=DSN_ENV,
