@@ -26,6 +26,10 @@ dependencies = [
 
 [project.optional-dependencies]
 extractors = ["rake-nltk>=1.0.6", "nltk>=3.8"]
+keybert = ["keybert>=0.8", "sentence-transformers>=3.0"]
+spacy = ["spacy>=3.7"]
+lang = ["langdetect>=1.0.9"]
+nlp = ["keybert>=0.8", "sentence-transformers>=3.0", "spacy>=3.7", "langdetect>=1.0.9"]
 quantize = ["onnx>=1.14"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 
