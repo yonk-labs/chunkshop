@@ -183,12 +183,21 @@ class KeyBertPhrasesExtractor(_Base):
     keyphrase_ngram_range: tuple[int, int] = (1, 2)
 
 
+class SpacyEntitiesExtractor(_Base):
+    type: Literal["spacy_entities"]
+    model: str = "en_core_web_sm"
+    label_whitelist: list[str] = Field(
+        default_factory=lambda: ["ORG", "PERSON", "GPE", "DATE", "LAW"]
+    )
+
+
 ExtractorConfig = Annotated[
     Union[
         NoneExtractor,
         RakeKeywordsExtractor,
         LangDetectExtractor,
         KeyBertPhrasesExtractor,
+        SpacyEntitiesExtractor,
     ],
     Field(discriminator="type"),
 ]
