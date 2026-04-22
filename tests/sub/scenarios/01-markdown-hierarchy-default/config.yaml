@@ -1,0 +1,33 @@
+# Scenario 01 — canonical default path.
+# files source + hierarchy chunker + no extractor + overwrite mode.
+cell_name: sub_md_hierarchy_default
+
+source:
+  type: files
+  glob: tests/sub/scenarios/01-markdown-hierarchy-default/data/*.md
+  id_from: stem
+  encoding: utf-8
+
+chunker:
+  type: hierarchy
+  prefix_heading: true
+  min_section_chars: 100
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 2
+  batch_size: 32
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_sub_scenarios
+  table: md_hierarchy
+  mode: overwrite
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop_sub_01_md_hierarchy.log

@@ -1,0 +1,6 @@
+{
+  "table": "framer_jsonpath",
+  "min_rows": 5,
+  "min_docs": 5,
+  "metadata_keys_required": ["strategy"]
+}

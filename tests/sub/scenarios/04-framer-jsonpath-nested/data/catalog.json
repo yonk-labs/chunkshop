@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "id": "item-001",
+      "title": "Ripple clearing times",
+      "body": "Large interbank transfers previously settled overnight; with the new rails they clear in under ninety seconds. Fees scale with throughput tier rather than per-transaction, which favors high-volume corridors.",
+      "language": "en"
+    },
+    {
+      "id": "item-002",
+      "title": "Custody tradeoffs",
+      "body": "Self-custody shifts key management risk to the holder. Institutional custody trades that risk for counterparty risk and regulatory exposure. Hybrid threshold schemes split the difference at the cost of operational complexity.",
+      "language": "en"
+    },
+    {
+      "id": "item-003",
+      "title": "Data residency",
+      "body": "Several jurisdictions require customer data to reside within national borders. Replica topology should be planned up front; retrofitting residency constraints onto an existing cluster is expensive and error-prone.",
+      "language": "en"
+    },
+    {
+      "id": "item-004",
+      "title": "Throughput vs. latency",
+      "body": "Batching increases throughput at the cost of per-request latency. For user-facing systems, a short queue with adaptive batching often wins over either extreme. Measure tail latency, not averages.",
+      "language": "en"
+    },
+    {
+      "id": "item-005",
+      "title": "Cost allocation",
+      "body": "Tagging every resource with cost center metadata at provision time is cheap. Reconstructing tags after the fact is not. Bake the allocation model into the platform and refuse untagged deployments.",
+      "language": "en"
+    }
+  ]
+}

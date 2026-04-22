@@ -1,0 +1,40 @@
+# Scenario 02 — json_corpus source + sentence_aware chunker + rake keywords.
+cell_name: sub_json_sentence_rake
+
+source:
+  type: json_corpus
+  path: tests/sub/scenarios/02-json-corpus-sentence-aware/data/corpus.json
+  documents_key: documents
+  id_field: id
+  content_field: content
+  title_field: title
+
+chunker:
+  type: sentence_aware
+  doc_type: prose
+  max_chars: 400
+  min_chars: 80
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 2
+  batch_size: 32
+
+extractor:
+  type: rake_keywords
+  top_k: 5
+  min_chars: 3
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_sub_scenarios
+  table: json_sentence
+  mode: overwrite
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop_sub_02_json_sentence.log

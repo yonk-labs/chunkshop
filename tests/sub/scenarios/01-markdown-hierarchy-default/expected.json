@@ -1,0 +1,6 @@
+{
+  "table": "md_hierarchy",
+  "min_rows": 6,
+  "min_docs": 3,
+  "metadata_keys_required": ["strategy", "heading"]
+}

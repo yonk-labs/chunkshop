@@ -1,0 +1,29 @@
+{
+  "documents": [
+    {
+      "id": "note_001",
+      "title": "Vector search index tuning",
+      "content": "HNSW build parameters matter less than the recall target suggests. The ef_construction value drives build cost linearly, while ef_search dominates query latency. Measure on a held-out query set before choosing, not on random samples."
+    },
+    {
+      "id": "note_002",
+      "title": "Embedding model selection",
+      "content": "The BGE family strikes a practical balance between retrieval quality and throughput. Int8 quantization trims memory by a factor of four with negligible recall loss on most English corpora. Always benchmark with your own data."
+    },
+    {
+      "id": "note_003",
+      "title": "Chunk size heuristics",
+      "content": "Short chunks improve precision but lose surrounding context. Long chunks carry context but dilute the embedding. A section-aware chunker that prepends headings often outperforms both fixed-window and naive sentence splitters."
+    },
+    {
+      "id": "note_004",
+      "title": "Metadata promotion",
+      "content": "Promoting JSONB metadata into typed columns pays off when you filter frequently on the same key. Postgres can use a btree index on the promoted column and skip the JSONB path extraction overhead entirely."
+    },
+    {
+      "id": "note_005",
+      "title": "Evaluation harnesses",
+      "content": "A small gold question set beats a large noisy one. Thirty hand-labeled queries produce stable rankings across chunker and embedder variants. Automate the harness so re-running takes minutes, not hours."
+    }
+  ]
+}
