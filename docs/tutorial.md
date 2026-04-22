@@ -385,6 +385,25 @@ Edit `embedder.model_name` and `embedder.dim` in your YAML. Popular options:
 After changing the embedder, use `overwrite: true` (or a different table) — you can't mix
 vectors from different models in one table, they're not comparable.
 
+### Tune chunk size
+
+Both `hierarchy` and `sentence_aware` accept a `max_chars` field (default `2000`, ≈500
+tokens — safe for bge-small/bge-base's 512-token limit). If your corpus has long sections
+(a 134 KB "About topic X" block, say), the chunker now hard-splits on
+paragraph → sentence → character boundaries instead of silently feeding the embedder a
+truncated chunk. Split children from one hierarchy section share `metadata.heading` and
+carry `metadata.section_part: 0, 1, ...` so you can reconstruct order.
+
+Raise `max_chars` if you swap to a larger-context embedder:
+
+```yaml
+chunker:
+  type: hierarchy
+  max_chars: 6000   # ~1500 tokens; safe for text-embedding-3-small
+```
+
+Full tuning table per embedder in [`chunkers.md`](chunkers.md#tuning-max_chars-for-your-embedder).
+
 ### Switch chunkers
 
 Edit `chunker.type` and its fields. Decision tree lives in

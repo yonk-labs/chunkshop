@@ -29,9 +29,10 @@ flowchart TB
 
     subgraph providers[Pluggable providers]
       SRC[sources/<br/>files · json_corpus<br/>pg_table · http · s3]
+      FRM[framers/<br/>identity · heading_boundary<br/>regex_boundary · jsonpath]
       CHK[chunkers/<br/>sentence_aware<br/>fixed_overlap<br/>hierarchy<br/>neighbor_expand]
       EMB[embedders/<br/>fastembed_provider<br/>+ int8 _registry]
-      EXT[extractors/<br/>none · rake_keywords]
+      EXT[extractors/<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · composite]
     end
 
     subgraph sink[Sink]
@@ -48,6 +49,7 @@ flowchart TB
     Y --> P
     P --> R
     R --> SRC
+    R --> FRM
     R --> CHK
     R --> EMB
     R --> EXT
@@ -58,8 +60,14 @@ flowchart TB
 ```
 
 Each provider type is a `Protocol` with one method. `load_*()` factories dispatch on the
-pydantic discriminator. Adding a new source/chunker/embedder/extractor = drop a file and add
-one branch in the loader.
+pydantic discriminator. Adding a new source/framer/chunker/embedder/extractor = drop a file
+and add one branch in the loader.
+
+The **Framer** sits between Source and Chunker. A source row is frequently NOT the logical
+ingest unit — a giant markdown dump holds many topics, a JSON API response nests docs under
+`items[*]`. Framers split one raw source row into one-or-more framed `Document`s before
+chunking. The default `identity` framer is a no-op pass-through, preserving backward
+compatibility for every existing cell.
 
 ## Key files
 
@@ -71,6 +79,7 @@ one branch in the loader.
 | Parallel orchestration  | `python/src/chunkshop/orchestrator.py`                     |
 | pgvector writer         | `python/src/chunkshop/sink.py`                             |
 | Source protocol + impls | `python/src/chunkshop/sources/`                            |
+| Framer protocol + impls | `python/src/chunkshop/framers/`                            |
 | Chunker protocol + impls| `python/src/chunkshop/chunkers/`                           |
 | Embedder protocol + impls | `python/src/chunkshop/embedders/`                        |
 | int8 model registration | `python/src/chunkshop/embedders/_registry.py`              |
@@ -84,6 +93,7 @@ sequenceDiagram
     participant CLI as chunkshop ingest
     participant R as runner.run_cell
     participant S as Source
+    participant F as Framer
     participant C as Chunker
     participant E as Embedder
     participant X as Extractor
@@ -95,8 +105,10 @@ sequenceDiagram
     R->>R: cap OMP/MKL/OPENBLAS threads
     R->>K: create_table (schema + HNSW index)
     K->>DB: CREATE EXTENSION vector<br/>CREATE TABLE / INDEX
-    loop for each document in source
-      R->>S: iter_documents → Document
+    loop for each raw row from source
+      R->>S: iter_documents → RawDoc
+      R->>F: frame(raw) → [Document ...]
+      loop for each framed doc
       R->>C: chunk(doc) → list[Chunk]
       R->>E: embed([c.embedded_content ...]) → np.ndarray
       R->>X: extract(c.original_content) per chunk
@@ -104,6 +116,7 @@ sequenceDiagram
       K->>DB: INSERT ... ON CONFLICT DO UPDATE (one txn per doc)
       alt every heartbeat_every docs
         R-->>U: stdout heartbeat
+      end
       end
     end
     R-->>CLI: CellResult (docs, chunks, wall_seconds)
@@ -239,6 +252,7 @@ See [`embedders.md`](embedders.md) for how to add a new model.
 | You want to…                     | Add a file in…                              | Register it in…                                              |
 |----------------------------------|---------------------------------------------|--------------------------------------------------------------|
 | New source type (e.g. S3)        | `python/src/chunkshop/sources/`             | `sources/__init__.py` + new pydantic model in `config.py`    |
+| New framer (doc-boundary splitter)| `python/src/chunkshop/framers/`            | `framers/__init__.py` + new pydantic model in `config.py`    |
 | New chunker                      | `python/src/chunkshop/chunkers/`            | `chunkers/__init__.py` + new pydantic model in `config.py`   |
 | New embedder backend             | `python/src/chunkshop/embedders/`           | `embedders/__init__.py` + new pydantic model in `config.py`  |
 | New extractor                    | `python/src/chunkshop/extractors/`          | `extractors/__init__.py` + new pydantic model in `config.py` |

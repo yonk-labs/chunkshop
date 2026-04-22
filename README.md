@@ -18,9 +18,10 @@ One YAML config = one end-to-end ingest ("cell"). Multiple YAMLs run in parallel
 
 ```mermaid
 flowchart LR
-    S[Source<br/>files · json_corpus<br/>pg_table · http · s3] --> C[Chunker<br/>sentence_aware<br/>fixed_overlap<br/>hierarchy<br/>neighbor_expand]
+    S[Source<br/>files · json_corpus<br/>pg_table · http · s3] --> F[Framer<br/>identity · heading_boundary<br/>regex_boundary · jsonpath]
+    F --> C[Chunker<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand]
     C --> E[Embedder<br/>fastembed<br/>ONNX · int8 or fp32]
-    E --> X[Extractor<br/>none · rake_keywords]
+    E --> X[Extractor<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · composite]
     X --> T[(pgvector table<br/>HNSW index)]
 ```
 
@@ -88,14 +89,15 @@ same target table layout — so vectors produced by any of them are interchangea
 
 ## YAML shape
 
-One YAML = one cell = one end-to-end ingest. Five sections:
+One YAML = one cell = one end-to-end ingest. Six sections (framer optional, defaults to identity):
 
 | Section   | Types                                                                        |
 |-----------|------------------------------------------------------------------------------|
 | source    | files · json_corpus · pg_table · http (stub) · s3 (stub)                     |
+| framer    | identity (default) · heading_boundary · regex_boundary · jsonpath            |
 | chunker   | sentence_aware · fixed_overlap · hierarchy · neighbor_expand                 |
 | embedder  | fastembed (Python); onnx_direct (Rust, Go, optional in Python)               |
-| extractor | none · rake_keywords (Python)                                                |
+| extractor | none · rake_keywords · keybert_phrases · spacy_entities · lang_detect · composite (opt-in extras) |
 | target    | pgvector table `{schema}.{table}`; `mode: overwrite \| append \| create_if_missing`; `source_tag` + `promote_metadata` for multi-source tables; HNSW index |
 
 Full field-by-field reference in [`python/README.md`](python/README.md).
@@ -123,11 +125,18 @@ CREATE TABLE {schema}.{table} (
 |------------------------------------------------|------------------------------------------------------------------|
 | [`docs/tutorial.md`](docs/tutorial.md)         | **Start here.** Zero-to-retrieval end-to-end walkthrough.        |
 | [`docs/tutorial-multi-source.md`](docs/tutorial-multi-source.md) | Multi-source ingest: two cells, one table, filter by source. |
+| [`docs/tutorial-framers.md`](docs/tutorial-framers.md) | DocFramer walkthrough: markdown heading splits + nested-JSON expansion. |
+| [`docs/tutorial-metadata.md`](docs/tutorial-metadata.md) | Metadata extraction: composite extractor + promoted columns + filtered queries. |
+| [`docs/quickstart-multi-source.md`](docs/quickstart-multi-source.md) | Recipe card: schema-flex modes + append pre-flight. |
+| [`docs/quickstart-framers.md`](docs/quickstart-framers.md) | Recipe card: which framer for which source shape. |
+| [`docs/quickstart-extractors.md`](docs/quickstart-extractors.md) | Recipe card: copy-paste YAML per extractor. |
 | [`python/README.md`](python/README.md)         | Reference: install, CLI flags, YAML field-by-field, troubleshooting. |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit: components, data flow, extension points.     |
-| [`docs/chunkers.md`](docs/chunkers.md)         | Each chunker: what it does, when to pick it, knobs.              |
-| [`docs/embedders.md`](docs/embedders.md)       | Model catalogue, int8 registry, A/B testing embedders.           |
-| [`docs/samples/`](docs/samples/)               | Sample markdown + four runnable configs.                         |
+| [`docs/chunkers.md`](docs/chunkers.md)         | Each chunker: what it does, when to pick it, knobs incl. `max_chars`. |
+| [`docs/embedders.md`](docs/embedders.md)       | Model catalogue, int8 registry, A/B testing embedders, measured bench. |
+| [`docs/extractors.md`](docs/extractors.md)     | Each extractor: why use it, config, promoted-column pairing.     |
+| [`docs/query-clients.md`](docs/query-clients.md) | Query the ingested table from Python, JS/TS, Rust, Go.          |
+| [`docs/samples/`](docs/samples/)               | Sample markdown + runnable configs + framer demo fixtures.       |
 
 ## Monorepo layout
 

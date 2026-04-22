@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- **DocFramer** — pluggable Source-to-Chunker framing layer. New `framer:`
+  section in YAML between `source` and `chunker`. Four framers:
+  - `identity` (default, no-op pass-through — preserves backward compatibility).
+  - `heading_boundary` — split a markdown blob on heading level (e.g. every
+    `##` becomes its own logical doc).
+  - `regex_boundary` — split on arbitrary regex with optional title capture.
+  - `jsonpath` — expand nested JSON arrays (`items[*]`) into framed docs with
+    configurable title/body paths.
+  Each framed doc carries `metadata.framer` + `metadata.frame_seq` for
+  provenance. See `docs/tutorial-framers.md` + `docs/quickstart-framers.md`.
+
+- **Metadata extractors** — three new opt-in extractors plus a `composite`
+  combinator:
+  - `keybert_phrases` — embedding-based keyphrases (higher quality than RAKE).
+  - `spacy_entities` — NER entities grouped by label (ORG/PERSON/GPE/DATE…).
+  - `lang_detect` — ISO-639-1 language code + confidence.
+  - `composite` — chains extractors, merges metadata dicts (last-wins on
+    collision), concatenates tag lists. Surfaces child failures; does not swallow.
+  Each ships as a pip extra: `[keybert]`, `[spacy]`, `[lang]`, or `[nlp]`
+  umbrella. spaCy model auto-downloads on first use. See `docs/extractors.md`,
+  `docs/quickstart-extractors.md`, and `docs/tutorial-metadata.md`.
+
 ### Changed
 
 - **Default embedder flipped from `Xenova/bge-small-en-v1.5-int8` (384 dim) to
