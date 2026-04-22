@@ -75,8 +75,15 @@ def run_cell(cfg: CellConfig) -> CellResult:
                 embeddings = embedder.embed(texts)
                 results = [extractor.extract(c.original_content) for c in chunks]
                 tags = [r.tags for r in results]
+                # Layered metadata merge with chunker-wins semantics:
+                #   1. doc.metadata — framer-produced (framer, frame_seq)
+                #   2. r.metadata   — extractor-produced
+                #   3. c.metadata   — chunker-produced (wins on collision)
+                # So chunker keys (strategy, heading, section_part) override lower
+                # layers, and framer/extractor keys survive when not overridden.
+                doc_meta = doc.metadata or {}
                 chunks = [
-                    _replace(c, metadata={**r.metadata, **c.metadata})
+                    _replace(c, metadata={**doc_meta, **r.metadata, **c.metadata})
                     for c, r in zip(chunks, results)
                 ]
                 sink.write_document(doc.id, chunks, embeddings, tags)

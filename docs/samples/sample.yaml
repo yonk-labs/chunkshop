@@ -9,9 +9,6 @@
 #   docs/samples/sample-sentence-aware.yaml   — prose splitter, fp32
 #   docs/samples/sample-neighbor-expand.yaml  — hierarchy wrapped with ±1 neighbor context
 #
-# NOTE: this config uses the legacy `overwrite: true` field (still honored). For the new
-# schema-flex shape — `mode` / `source_tag` / `promote_metadata` — see
-# docs/samples/sample-multi-source.yaml or docs/tutorial-multi-source.md.
 cell_name: samples_hierarchy_int8
 
 source:
@@ -39,7 +36,7 @@ target:
   dsn_env: CHUNKSHOP_DSN
   schema: chunkshop_samples
   table: handbook
-  overwrite: true           # drop+recreate each run — this is a demo table
+  mode: overwrite           # drop+recreate each run — this is a demo table
   hnsw: false               # 4 docs is too small for HNSW to beat seq scan
 
 runtime:

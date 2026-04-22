@@ -2,5 +2,5 @@
   "table": "framer_heading",
   "min_rows": 4,
   "min_docs": 4,
-  "metadata_keys_required": ["strategy", "heading"]
+  "metadata_keys_required": ["strategy", "heading", "framer", "frame_seq"]
 }

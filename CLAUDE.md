@@ -74,7 +74,7 @@ The pipeline is `Source → Chunker → Embedder → Extractor → Sink`. Every 
 - **`skill-output/` is gitignored.** Mission briefs live there, not in git. Plans are tracked in `docs/superpowers/plans/`.
 - **Sample corpus glob is `docs/samples/*-*.md`, not `*.md`** — the latter silently picks up `docs/samples/README.md` and pollutes the corpus. Stick with `*-*.md` for the four dash-named fixtures (`handbook-*`, `release-notes`).
 - **Tests that use the sample corpus** use the absolute path from `test_end_to_end_samples_corpus.py::SAMPLES_GLOB` — don't hardcode relative paths from test files.
-- **`docs/samples/sample-multi-source.yaml`** is the reference for the new schema-flex shape. The three legacy sample YAMLs (`sample.yaml`, `sample-sentence-aware.yaml`, `sample-neighbor-expand.yaml`) still use the legacy `overwrite: true` field — both coexist.
+- **All four sample YAMLs** (`sample.yaml`, `sample-sentence-aware.yaml`, `sample-neighbor-expand.yaml`, `sample-multi-source.yaml`) now use the schema-flex `mode:` shape. The legacy `overwrite: true` field is still accepted by the pydantic model (internal `factorial*/` configs and a few test fixtures still use it) but user-facing docs and samples are all on `mode: overwrite`.
 - **Worktree pattern for feature work:** `git worktree add ../chunkshop-<feature> -b feat/<feature>` from main. Each feature gets its own worktree; merge back via `superpowers:finishing-a-development-branch` when tests pass.
 
 ## Active work

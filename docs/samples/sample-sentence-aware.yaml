@@ -4,9 +4,6 @@
 # Run with:
 #   chunkshop ingest --config docs/samples/sample-sentence-aware.yaml
 #
-# NOTE: this config uses the legacy `overwrite: true` field (still honored). For the new
-# schema-flex shape — `mode` / `source_tag` / `promote_metadata` — see
-# docs/samples/sample-multi-source.yaml or docs/tutorial-multi-source.md.
 cell_name: samples_sentence_aware_fp32
 
 source:
@@ -33,7 +30,7 @@ target:
   dsn_env: CHUNKSHOP_DSN
   schema: chunkshop_samples
   table: handbook_sentence_aware
-  overwrite: true
+  mode: overwrite
   hnsw: false
 
 runtime:

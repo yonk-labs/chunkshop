@@ -1,5 +1,6 @@
-# Schema-flex demo: same sample corpus, but written via the new `mode` / `source_tag` /
-# `promote_metadata` shape instead of legacy `overwrite: true`.
+# Schema-flex demo: same sample corpus, written via `mode: create_if_missing` +
+# `source_tag` + `promote_metadata`. Pair with `mode: append` from another cell to
+# layer in a second source.
 #
 # Run with:
 #   chunkshop ingest --config docs/samples/sample-multi-source.yaml

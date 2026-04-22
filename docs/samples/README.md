@@ -13,9 +13,9 @@ without hunting for a corpus.
 | `release-notes.md`                | Headingless prose — exercises the hierarchy fallback path.  |
 | `framer_demo_handbook.md`         | Giant-markdown fixture for [`../tutorial-framers.md`](../tutorial-framers.md) Scenario A. Underscore-named to stay outside the `*-*.md` corpus globs. |
 | `framer_demo_news.json`           | Nested-JSON fixture for [`../tutorial-framers.md`](../tutorial-framers.md) Scenario B. |
-| `sample.yaml`                     | Default recipe: `hierarchy` + int8 `bge-small`.             |
+| `sample.yaml`                     | Default recipe: `hierarchy` + int8 `bge-base`.              |
 | `sample-sentence-aware.yaml`      | Alternative: `sentence_aware` + fp32 `bge-small`.           |
-| `sample-neighbor-expand.yaml`     | Alternative: `neighbor_expand` wrapping `hierarchy`.        |
+| `sample-neighbor-expand.yaml`     | Alternative: `neighbor_expand` wrapping `hierarchy`, int8 `bge-base`. |
 | `sample-multi-source.yaml`        | Schema-flex demo: `mode: create_if_missing` + `source_tag` + `promote_metadata`. |
 
 ## Run it
@@ -44,7 +44,7 @@ FROM chunkshop_samples.handbook
 ORDER BY doc_id, seq_num;
 ```
 
-All three YAMLs set `overwrite: true` so re-runs are safe; `hnsw: false` because 4 docs
+All three YAMLs set `mode: overwrite` so re-runs are safe; `hnsw: false` because 4 docs
 is well under the point where HNSW beats a sequential scan.
 
 ## What each recipe demonstrates
@@ -90,7 +90,9 @@ top-k results. A quick approximation using the Postgres CLI:
 
 ```sql
 -- Replace the vector literal with the embedding of your query string,
--- produced by the same model the cell used (bge-small = 384 dims).
+-- produced by the same model each cell used (bge-base = 768 dims for hierarchy +
+-- neighbor_expand; bge-small = 384 dims for sentence_aware). See
+-- ../query-clients.md for copy-paste query samples in Python/JS/Rust/Go.
 SELECT
   (SELECT doc_id || '::' || seq_num || ' — ' || (metadata->>'heading') FROM chunkshop_samples.handbook                 ORDER BY embedding <=> '[...]'::vector LIMIT 1) AS hierarchy_top1,
   (SELECT doc_id || '::' || seq_num || ' — ' || (metadata->>'heading') FROM chunkshop_samples.handbook_sentence_aware  ORDER BY embedding <=> '[...]'::vector LIMIT 1) AS sentence_aware_top1,
