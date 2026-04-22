@@ -1,0 +1,6 @@
+{
+  "table": "legal_clause_review",
+  "min_rows": 3,
+  "min_docs": 3,
+  "metadata_keys_required": ["strategy", "entities", "language"]
+}

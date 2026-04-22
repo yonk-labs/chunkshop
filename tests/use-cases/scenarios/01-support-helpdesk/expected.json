@@ -1,0 +1,6 @@
+{
+  "table": "support_helpdesk",
+  "min_rows": 8,
+  "min_docs": 4,
+  "metadata_keys_required": ["strategy", "heading"]
+}

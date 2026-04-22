@@ -1,0 +1,41 @@
+# Scenario 01 — Support helpdesk KB search.
+# files source + hierarchy chunker + bge-small-int8 + rake keywords.
+# Latency-first pick: bge-small is ~35 MB, 384 dims, sub-50ms lookup at
+# catalog scale. hierarchy prepends the section heading to embedded_content
+# so "how do I raise my API limit" matches the "Raising the limit" H2 cleanly.
+cell_name: usecase_support_helpdesk
+
+source:
+  type: files
+  glob: tests/use-cases/scenarios/01-support-helpdesk/data/*.md
+  id_from: stem
+  encoding: utf-8
+
+chunker:
+  type: hierarchy
+  prefix_heading: true
+  min_section_chars: 80
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 2
+  batch_size: 32
+
+extractor:
+  type: rake_keywords
+  top_k: 8
+  min_chars: 3
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_use_cases
+  table: support_helpdesk
+  mode: overwrite
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop_usecase_support_helpdesk.log

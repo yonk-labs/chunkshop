@@ -1,0 +1,22 @@
+{
+  "documents": [
+    {
+      "id": "nda_acme_beacon_2024",
+      "title": "Mutual NDA — Acme Corporation and Beacon Analytics",
+      "parties": ["Acme Corporation", "Beacon Analytics"],
+      "content": "This Mutual Non-Disclosure Agreement is entered into on March fourteenth, 2024 between Acme Corporation, a Delaware corporation with offices in San Francisco, and Beacon Analytics, an Ontario corporation headquartered in Toronto. Each party may disclose Confidential Information to the other solely for the purpose of evaluating a potential commercial relationship. The receiving party shall protect such Confidential Information with the same degree of care it uses for its own information of similar sensitivity, and in no event less than reasonable care. Neither party shall be liable for any failure to perform its obligations hereunder to the extent such failure is caused by events beyond its reasonable control, including without limitation acts of God, earthquakes, pandemics, widespread public health emergencies, government-ordered shutdowns, and comparable force majeure events. The parties acknowledge that the COVID-19 pandemic and any substantially similar future public health event shall constitute a force majeure event for purposes of this section. This Agreement shall remain in effect for three years from the Effective Date, and the confidentiality obligations shall survive termination for five additional years."
+    },
+    {
+      "id": "saas_terraquill_northwind_2024",
+      "title": "SaaS Master Services Agreement — Terraquill Labs and Northwind Holdings",
+      "parties": ["Terraquill Labs", "Northwind Holdings"],
+      "content": "Terraquill Labs, an Illinois limited liability company with its principal place of business in Chicago, shall provide the Terraquill Platform to Northwind Holdings, a Texas corporation based in Houston, on a subscription basis commencing July first, 2024. Terraquill warrants that the Platform will perform materially in accordance with the Documentation. Each party represents that it is in compliance with the California Consumer Privacy Act, the EU General Data Protection Regulation, and such other data protection laws as are applicable to its performance. Force majeure shall excuse performance where prevented by circumstances beyond a party's reasonable control, including labor actions, armed conflict, declared pandemics, and binding governmental orders restricting operations; provided that the affected party provides prompt written notice to the other. The parties shall endeavor to resume performance as soon as practicable once the force majeure condition abates. Either party may terminate for convenience upon ninety days' written notice delivered to the notice address set forth in Exhibit A."
+    },
+    {
+      "id": "msa_fieldstone_orion_2023",
+      "title": "Vendor MSA — Fieldstone Engineering and Orion Semiconductor",
+      "parties": ["Fieldstone Engineering", "Orion Semiconductor"],
+      "content": "This Master Services Agreement is made as of November twelfth, 2023 between Fieldstone Engineering, a Massachusetts professional corporation located in Boston, and Orion Semiconductor, a California corporation with offices in Santa Clara. Fieldstone will perform professional engineering services on a statement-of-work basis. All deliverables shall constitute work made for hire and, to the extent any deliverable does not qualify as such, Fieldstone hereby assigns to Orion all right, title, and interest therein. Fieldstone shall indemnify and hold Orion harmless from and against any third-party claims arising from Fieldstone's gross negligence or willful misconduct. Orion shall pay undisputed invoices within forty-five days of receipt. This Agreement shall be governed by the laws of the State of California, without regard to its conflict-of-laws principles, and the state and federal courts located in Santa Clara County shall have exclusive jurisdiction over any disputes."
+    }
+  ]
+}
