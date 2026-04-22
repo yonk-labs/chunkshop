@@ -1,0 +1,36 @@
+{
+  "documents": [
+    {
+      "id": "mtg_2024_q1_01",
+      "title": "Discovery — Westridge Logistics",
+      "rep": "Janelle Ortiz",
+      "customer": "Westridge Logistics",
+      "language_hint": "en",
+      "content": "Kicked off with their VP of Ops. Current state: three warehouses, two disconnected inventory systems, lots of tribal knowledge in spreadsheets. They did a Salesforce implementation two years ago that stalled at the pilot phase. The VP was candid that leadership will push back on anything that smells like another big migration. We talked through our phased rollout and he relaxed a little. He asked about cost, twice. First time I gave the list price range and he said that's more than we expected. I didn't hold the line — I moved straight to the ROI framing and he engaged, but I should have let the silence sit. Next step: technical discovery with their warehouse IT lead next Tuesday, and I'll send a one-pager that walks through the phased pricing tiers so he can socialize it with finance before we talk again."
+    },
+    {
+      "id": "mtg_2024_q1_02",
+      "title": "Pricing pushback — Harbor Valley Medical",
+      "rep": "Daniel Kim",
+      "customer": "Harbor Valley Medical",
+      "language_hint": "en",
+      "content": "Third conversation with their CFO. She opened with pricing objections. Her exact words: that's too expensive for what we'd be getting in year one. She compared us to a competitor she had looked at last quarter who came in at roughly sixty percent of our list. I acknowledged the delta and asked what outcomes she was scoring the competitor on. She said compliance reporting. I walked her through the HIPAA attestation workflow and the vendor audit trail — both features the competitor does not have — and she softened. She asked for a revised quote that shows a multi-year ramp: year one at a discount, year two and three at list. I'll coordinate with deal desk and send it by Friday. Her CIO wants to be on the next call; he is the technical champion and has been quiet so far."
+    },
+    {
+      "id": "mtg_2024_q1_03",
+      "title": "Descubrimiento — Cafeteria Buenavista",
+      "rep": "Mariana Reyes",
+      "customer": "Cafeteria Buenavista",
+      "language_hint": "es",
+      "content": "Reunion inicial con el dueno y su hija que maneja la parte financiera. Tienen cinco sucursales en Monterrey y estan creciendo hacia Guadalajara. Actualmente usan un punto de venta heredado que no se integra con su contabilidad. La hija fue directa sobre el precio: eso es demasiado caro para nosotros en este momento del ano. Respire y la deje terminar. Despues le mostre como calcular el retorno con base en las horas que su equipo dedica hoy a conciliar manualmente. Se interesaron y pidieron una prueba de dos semanas en una sola sucursal. El dueno pregunto si podiamos facturar en pesos mexicanos para simplificar su contabilidad. Proximo paso: enviar contrato piloto el lunes y programar la capacitacion inicial para el quince."
+    },
+    {
+      "id": "mtg_2024_q1_04",
+      "title": "Expansion — Altitude Hospitality Group",
+      "rep": "Theo Blackwell",
+      "customer": "Altitude Hospitality Group",
+      "language_hint": "mixed",
+      "content": "Quarterly business review with the hotel group. They operate twelve properties across the southwest US and three in northern Mexico. We went through the current-contract metrics — attach rate on our upsell module is at forty-one percent, below the sixty percent they budgeted. The CRO, who joined from LATAM, switched into Spanish with her ops lead a couple of times during the call. Que te parece si subimos el descuento para el modulo premium? she said, and the ops lead agreed that a deeper discount for the upsell would help adoption. Back in English, she said it is too expensive as priced for our midmarket properties — we will not get to sixty percent without a better number. I committed to bringing a modified pricing tier for midmarket-sized properties to the next call. Action: work with deal desk on a property-size-banded discount grid, circulate for legal review, send in two weeks."
+    }
+  ]
+}

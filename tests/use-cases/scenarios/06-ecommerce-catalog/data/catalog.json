@@ -1,0 +1,45 @@
+{
+  "store": "basecamp-gear",
+  "products": [
+    {
+      "id": "sku_boots_summit_mid_m12",
+      "name": "Summit Mid Waterproof Hiking Boot — Men's Size 12",
+      "description": "Full-grain leather upper with a Gore-Tex membrane that keeps water out on stream crossings and still breathes on long climbs. Vibram rubber outsole with 4mm lugs grips wet rock, loose scree, and packed snow without the stiffness of a mountaineering boot. Padded collar and tongue for a quick break-in. Suited for three-season backpacking and day hikes up to twenty miles with a moderate load."
+    },
+    {
+      "id": "sku_tent_threeseason_2p",
+      "name": "Fieldline Three-Season Two-Person Tent",
+      "description": "Freestanding two-pole geometry pitches in under four minutes even in wind. Silicone-treated 20-denier ripstop nylon fly, fully taped floor seams, and a bathtub floor rated to 3000mm. Two doors and two vestibules so both occupants can enter and exit without climbing over each other. Minimum trail weight is two pounds fourteen ounces. Best for backpacking trips where weight matters but you still want room for two full-length pads side by side."
+    },
+    {
+      "id": "sku_backpack_65l_frame",
+      "name": "Traverse 65L Internal-Frame Backpack",
+      "description": "Load-lifting aluminum stay frame pairs with a contoured hip belt that carries up to thirty-five pounds without shoulder hot spots. Top-loading main compartment plus a zippered sleeping-bag chamber at the base for quick access at camp. External hydration sleeve fits a three-liter reservoir. Front stretch pocket swallows a wet rain jacket without taking it inside the pack. Designed for multi-day loads on trails where weight distribution matters more than panel access."
+    },
+    {
+      "id": "sku_stove_canister_pocket",
+      "name": "Micro Canister Backpacking Stove",
+      "description": "Piezo ignition fires the burner without matches in ninety percent of field conditions — the remaining ten percent is why you still carry a backup lighter. Boils a liter of water in under three minutes at sea level, closer to four at altitude. Folds to fit in the bottom of a nested cook pot. Screws onto standard isobutane-propane canisters. Ideal for solo and two-person trips where pack volume beats simmer control."
+    },
+    {
+      "id": "sku_sleepbag_down_20f",
+      "name": "Ridgeline 20 Degree Down Sleeping Bag",
+      "description": "850-fill-power down with a hydrophobic treatment that retains loft when humidity is high. Anatomical footbox and a draft collar that stops heat loss on cold shoulder seasons. Twelve-ounce total weight for a regular size. Stuffs to the volume of a one-liter water bottle. Pairs well with a three-season tent and a closed-cell foam pad for three-season backpacking down to the rated temperature."
+    },
+    {
+      "id": "sku_waterfilter_hollowfiber",
+      "name": "Hollow-Fiber Squeeze Water Filter",
+      "description": "Removes 99.9999 percent of bacteria and protozoa down to 0.1 microns. Flow rate starts at 1.75 liters per minute and slows as the hollow fibers load up — backflush with clean water every couple of days to keep throughput high. Threads onto standard disposable water bottles as well as the included squeeze pouch. Cannot remove viruses; for viral threats pair with chemical treatment or a purifier."
+    },
+    {
+      "id": "sku_rainjacket_25l_mens",
+      "name": "Cirrus 2.5-Layer Men's Rain Jacket",
+      "description": "Waterproof-breathable 2.5-layer fabric with fully sealed seams and pit zips for dumping heat on uphill efforts. Adjustable hood fits over a ball cap or a climbing helmet. Packs into its own chest pocket to the size of a soda can. A general-purpose shell for shoulder-season hiking, trail running, and travel. Not insulated — layer a fleece or puffy underneath for cold days."
+    },
+    {
+      "id": "sku_headlamp_400lm",
+      "name": "Trail 400 Rechargeable Headlamp",
+      "description": "400 lumens on high, a 2.5-meter proximity flood for camp chores, and a red mode that preserves night vision. USB-C rechargeable with roughly five hours of runtime on high and thirty hours on low. IPX7 rated — submersible to one meter if you drop it crossing a creek. Tilt adjustment at the housing so the beam sits where you're actually looking."
+    }
+  ]
+}

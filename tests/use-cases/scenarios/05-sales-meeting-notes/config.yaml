@@ -1,0 +1,54 @@
+# Scenario 05 — Sales meeting notes.
+# json_corpus + neighbor_expand(sentence_aware) + bge-base-int8 + composite(lang + rake).
+# Context-preserving pick: meeting transcripts lack headings, and pricing
+# objections ("that's too expensive") only make sense with the turn before and
+# after. neighbor_expand window=1 glues each sentence chunk to its neighbors
+# before embedding, giving the embedder the framing context for free.
+cell_name: usecase_sales_meeting_notes
+
+source:
+  type: json_corpus
+  path: tests/use-cases/scenarios/05-sales-meeting-notes/data/meetings.json
+  documents_key: documents
+  id_field: id
+  content_field: content
+  title_field: title
+
+chunker:
+  type: neighbor_expand
+  window: 1
+  base:
+    type: sentence_aware
+    doc_type: prose
+    max_chars: 600
+    min_chars: 120
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 2
+  batch_size: 32
+
+extractor:
+  type: composite
+  extractors:
+    - type: lang_detect
+    - type: rake_keywords
+      top_k: 8
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_use_cases
+  table: sales_meeting_notes
+  mode: overwrite
+  source_tag: sales_notes_q1_2024
+  promote_metadata:
+    - path: language
+      type: text
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop_usecase_sales_meeting_notes.log

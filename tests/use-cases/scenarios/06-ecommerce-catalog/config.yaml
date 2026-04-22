@@ -1,0 +1,50 @@
+# Scenario 06 — E-commerce product search.
+# files source (single JSON catalog) + jsonpath framer (fan-out to 8 products)
+# + sentence_aware + bge-small-int8 + keybert_phrases.
+# Low-latency search-as-you-type pick: 384-dim vectors keep pgvector index
+# small enough that HNSW or seq scan both stay under 50ms at catalog scale.
+# keybert phrases land in tags[] for UI badge rendering next to each hit.
+cell_name: usecase_ecommerce_catalog
+
+source:
+  type: files
+  glob: tests/use-cases/scenarios/06-ecommerce-catalog/data/*.json
+  id_from: stem
+  encoding: utf-8
+
+framer:
+  type: jsonpath
+  row_path: products.*
+  title_path: name
+  body_path: description
+
+chunker:
+  type: sentence_aware
+  doc_type: prose
+  max_chars: 2000
+  min_chars: 80
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 2
+  batch_size: 32
+
+extractor:
+  type: keybert_phrases
+  top_k: 5
+  model_name: all-MiniLM-L6-v2
+  keyphrase_ngram_range: [1, 2]
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_use_cases
+  table: ecommerce_catalog
+  mode: overwrite
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop_usecase_ecommerce_catalog.log

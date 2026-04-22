@@ -1,0 +1,6 @@
+{
+  "table": "sales_meeting_notes",
+  "min_rows": 4,
+  "min_docs": 4,
+  "metadata_keys_required": ["strategy", "language"]
+}

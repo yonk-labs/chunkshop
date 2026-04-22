@@ -1,0 +1,6 @@
+{
+  "table": "ecommerce_catalog",
+  "min_rows": 8,
+  "min_docs": 8,
+  "metadata_keys_required": ["strategy"]
+}
