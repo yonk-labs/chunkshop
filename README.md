@@ -79,7 +79,8 @@ Swap to `Xenova/bge-small-en-v1.5-int8` for a smaller footprint (~35 MB, 384 dim
 or `nomic-ai/nomic-embed-text-v1.5-Q` for long-context (8k tokens). Run the
 factorial configs against your own corpus to confirm. Full pg-raggraph benchmark
 data in the sibling repo. See [`docs/embedders.md`](docs/embedders.md) for the
-catalogue and A/B recipe.
+catalogue and A/B recipe. See [`docs/embedders.md#benchmark-on-docssamples`](docs/embedders.md#benchmark-on-docssamples)
+for measured numbers on this repo's corpus.
 
 All three implementations share the same YAML config schema, the same ONNX Runtime-based
 embedder (via `fastembed` in Python; via `ort` in Rust; via `onnxruntime_go` in Go), and the
