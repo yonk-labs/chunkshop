@@ -1,0 +1,22 @@
+# 14 hand-written gold queries against docs/samples/*-*.md.
+# Each entry = one user-plausible question paired with the doc that should
+# rank #1. MVP scoring is doc-id-level only (gold_chunk_id is out of scope).
+#
+# Note on statistical power: 14 queries is a low floor. One query flipping
+# moves aggregate recall by ~0.07. Add more queries before treating the
+# leaderboard as a tournament result.
+
+- {query: "what does Northwind Co. actually build", gold_doc_id: "handbook-intro"}
+- {query: "how is the handbook organized", gold_doc_id: "handbook-intro"}
+- {query: "who approves a pull request", gold_doc_id: "handbook-engineering"}
+- {query: "should I mock the database in tests", gold_doc_id: "handbook-engineering"}
+- {query: "how long does staging bake before production", gold_doc_id: "handbook-engineering"}
+- {query: "what should I do if I see a production regression while on call", gold_doc_id: "handbook-engineering"}
+- {query: "when does on-call rotation change over", gold_doc_id: "handbook-engineering"}
+- {query: "how do we rotate API keys", gold_doc_id: "handbook-security"}
+- {query: "where should credentials be stored", gold_doc_id: "handbook-security"}
+- {query: "are post-mortems blameless", gold_doc_id: "handbook-security"}
+- {query: "principle of least privilege audit cadence", gold_doc_id: "handbook-security"}
+- {query: "what changed in the April release", gold_doc_id: "release-notes"}
+- {query: "audit log retention period", gold_doc_id: "release-notes"}
+- {query: "SKU search ranking change", gold_doc_id: "release-notes"}
