@@ -1,0 +1,86 @@
+name: Bug report
+description: Something in chunkshop's ingest pipeline doesn't work as documented.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. For security-sensitive issues, see
+        [`SECURITY.md`](../blob/main/SECURITY.md) — don't file them here.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did chunkshop do that it shouldn't have, or fail to do that it should have?
+      placeholder: |
+        Running `chunkshop ingest --config my.yaml` against a 200-doc JSON corpus
+        crashes with `KeyError: 'title'` on the third doc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproducer
+      description: |
+        Paste your YAML config (redact any DSN creds) and a one-document fragment of the input
+        that triggers the bug. Smaller is better — we'll run it locally.
+      render: yaml
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: chunkshop version
+      description: Output of `chunkshop --version` or the commit SHA you're on.
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      placeholder: "3.12.x"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Ubuntu 24.04 / macOS 14.4 / Windows 11"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output / traceback
+      description: Paste the full traceback or relevant log lines.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submit checks
+      options:
+        - label: I'm running the latest released chunkshop (or reproduced on `main`).
+          required: true
+        - label: My reproducer does not include real credentials or PII.
+          required: true
+        - label: I've checked existing issues for duplicates.
+          required: true

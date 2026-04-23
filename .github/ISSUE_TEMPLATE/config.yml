@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/yonk-labs/chunkshop/security/advisories/new
+    about: Report security issues privately via the Security tab, not as public issues. See SECURITY.md for the process.
+  - name: Question or discussion
+    url: https://github.com/yonk-labs/chunkshop/discussions
+    about: For usage questions, design discussions, or "is this in scope?" conversations.

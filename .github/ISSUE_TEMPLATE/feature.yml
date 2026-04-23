@@ -1,0 +1,59 @@
+name: Feature request
+description: Propose a new chunker, framer, extractor, embedder, or pipeline capability.
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for thinking about chunkshop's shape. Keep in mind — chunkshop is
+        an ingest tool, not a retrieval framework. See
+        [`docs/executive-summary.md`](../blob/main/docs/executive-summary.md) for
+        what's in scope.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem you're trying to solve?
+      description: What are you trying to do that chunkshop doesn't help with today?
+      placeholder: |
+        I'm ingesting Slack exports and the default sentence_aware chunker
+        doesn't understand Slack's thread structure — messages in a thread
+        end up in the wrong chunk.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you're proposing
+      description: The feature or change you'd like. Be concrete — "a `slack_thread` chunker that splits on thread_ts boundaries" is better than "better chunking for Slack."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: What would you do without this? Custom preprocessing? A different tool?
+    validations:
+      required: false
+
+  - type: textarea
+    id: sketch
+    attributes:
+      label: YAML or API sketch (optional)
+      description: Draft what the user-facing config or API would look like.
+      render: yaml
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submit checks
+      options:
+        - label: I've checked existing issues + discussions for duplicate proposals.
+          required: true
+        - label: I've read the [executive summary](../blob/main/docs/executive-summary.md) and confirmed this is in chunkshop's scope.
+          required: true
