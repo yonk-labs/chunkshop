@@ -62,3 +62,27 @@ def test_scoring_defaults():
     assert cfg.scoring.k == [1, 3, 5]
     assert cfg.scoring.include_mrr is True
     assert cfg.scoring.top_k == 5
+
+
+def test_load_gold_queries_from_yaml_file(tmp_path):
+    from chunkshop.bakeoff.gold import load_gold_queries
+    p = tmp_path / "gold.yaml"
+    p.write_text("- {query: 'q1', gold_doc_id: 'd1'}\n- {query: 'q2', gold_doc_id: 'd2'}\n")
+    out = load_gold_queries(str(p))
+    assert len(out) == 2
+    assert out[0].query == "q1"
+
+
+def test_load_gold_queries_from_json_file(tmp_path):
+    from chunkshop.bakeoff.gold import load_gold_queries
+    p = tmp_path / "gold.json"
+    p.write_text('[{"query":"q1","gold_doc_id":"d1"}]')
+    out = load_gold_queries(str(p))
+    assert out[0].gold_doc_id == "d1"
+
+
+def test_load_gold_queries_passes_through_inline():
+    from chunkshop.bakeoff.config import GoldQuery
+    from chunkshop.bakeoff.gold import load_gold_queries
+    inline = [GoldQuery(query="q1", gold_doc_id="d1")]
+    assert load_gold_queries(inline) is inline
