@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest + scenarios (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+
+    env:
+      # The CI Postgres lives on the default port; override the sink default
+      # so both the pytest fixtures and the run-all.sh scripts find it.
+      CHUNKSHOP_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      # Pin fastembed cache to a path we can persist across runs.
+      FASTEMBED_CACHE_DIR: ${{ github.workspace }}/.cache/fastembed
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "python/uv.lock"
+
+      - name: Set up Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Cache fastembed models
+        uses: actions/cache@v4
+        with:
+          path: .cache/fastembed
+          # Bust cache when the embedder registry changes — that's the
+          # thing that dictates which ONNX files we pull.
+          key: fastembed-${{ runner.os }}-${{ hashFiles('python/src/chunkshop/embedders/_registry.py') }}
+          restore-keys: |
+            fastembed-${{ runner.os }}-
+
+      - name: Install project + dev + nlp extras
+        working-directory: python
+        run: uv sync --extra dev --extra extractors --extra nlp
+
+      - name: Verify pgvector extension available
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres \
+            -c "CREATE EXTENSION IF NOT EXISTS vector; SELECT extversion FROM pg_extension WHERE extname='vector';"
+
+      - name: pytest (unit + integration)
+        working-directory: python
+        run: uv run pytest -q --tb=short
+
+      - name: Run functional scenarios (tests/sub)
+        run: bash tests/sub/run-all.sh
+
+      - name: Assert functional scenario row counts
+        run: uv run --project python python tests/sub/assert-row-counts.py
+
+      - name: Run use-case scenarios (tests/use-cases)
+        run: bash tests/use-cases/run-all.sh
+
+      - name: Assert use-case scenario row counts
+        run: uv run --project python python tests/use-cases/assert-row-counts.py

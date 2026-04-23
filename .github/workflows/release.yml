@@ -1,0 +1,94 @@
+name: Release to PyPI
+
+# Triggered by pushing a semver tag (e.g. `v0.3.0`). Uses PyPI's Trusted
+# Publishing (OIDC) — no API token to manage. One-time maintainer setup on
+# PyPI: Settings → Publishing → Add trusted publisher → GitHub
+#   Owner:   yonk-labs
+#   Repo:    chunkshop
+#   Workflow: release.yml
+#   Environment: pypi
+#
+# The tag must match python/pyproject.toml's `version` — we verify before
+# building to avoid publishing a mismatch.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  verify:
+    name: Verify tag matches pyproject version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract versions and compare
+        id: get
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PYPROJECT_VERSION=$(grep -E '^version\s*=' python/pyproject.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+          echo "tag=$TAG_VERSION"
+          echo "pyproject=$PYPROJECT_VERSION"
+          if [[ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]]; then
+            echo "ERROR: tag v$TAG_VERSION does not match python/pyproject.toml version $PYPROJECT_VERSION"
+            exit 1
+          fi
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build sdist + wheel
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "python/uv.lock"
+
+      - name: Build distributions
+        working-directory: python
+        run: uv build --sdist --wheel
+
+      - name: List dist contents
+        working-directory: python
+        run: ls -la dist/
+
+      - name: Upload distributions as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: python/dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+
+    # Isolate the trusted-publisher environment — maintainers add this as a
+    # protected environment on GitHub (optionally with required reviewers) so
+    # release pushes are deliberate.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/chunkshop/${{ needs.verify.outputs.version }}
+
+    permissions:
+      # Required for PyPI Trusted Publishing (OIDC).
+      id-token: write
+
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
