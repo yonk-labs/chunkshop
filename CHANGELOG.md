@@ -4,6 +4,13 @@
 
 ### Added
 
+- **`chunkshop bakeoff` CLI.** Config-driven chunker x embedder matrix
+  evaluation against a user's corpus. Outputs a leaderboard + a
+  `recommended.yaml` that's a runnable `chunkshop ingest` cell pre-filled
+  with the top-MRR combo. Config schema in `python/src/chunkshop/bakeoff/
+  config.py`; sample at `docs/samples/bakeoff.yaml`; tutorial at
+  `docs/tutorial-bakeoff.md`; recipes at `docs/quickstart-bakeoff.md`.
+
 - **DocFramer** — pluggable Source-to-Chunker framing layer. New `framer:`
   section in YAML between `source` and `chunker`. Four framers:
   - `identity` (default, no-op pass-through — preserves backward compatibility).

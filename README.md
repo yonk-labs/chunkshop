@@ -128,9 +128,11 @@ CREATE TABLE {schema}.{table} (
 | [`docs/tutorial-multi-source.md`](docs/tutorial-multi-source.md) | Multi-source ingest: two cells, one table, filter by source. |
 | [`docs/tutorial-framers.md`](docs/tutorial-framers.md) | DocFramer walkthrough: markdown heading splits + nested-JSON expansion. |
 | [`docs/tutorial-metadata.md`](docs/tutorial-metadata.md) | Metadata extraction: composite extractor + promoted columns + filtered queries. |
+| [`docs/tutorial-bakeoff.md`](docs/tutorial-bakeoff.md) | Bakeoff walkthrough: pick the best chunker+embedder for your corpus. |
 | [`docs/quickstart-multi-source.md`](docs/quickstart-multi-source.md) | Recipe card: schema-flex modes + append pre-flight. |
 | [`docs/quickstart-framers.md`](docs/quickstart-framers.md) | Recipe card: which framer for which source shape. |
 | [`docs/quickstart-extractors.md`](docs/quickstart-extractors.md) | Recipe card: copy-paste YAML per extractor. |
+| [`docs/quickstart-bakeoff.md`](docs/quickstart-bakeoff.md) | Recipe card: common bakeoff shapes (embedder-only, chunker-only, full factorial). |
 | [`python/README.md`](python/README.md)         | Reference: install, CLI flags, YAML field-by-field, troubleshooting. |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit: components, data flow, extension points.     |
 | [`docs/chunkers.md`](docs/chunkers.md)         | Each chunker: what it does, when to pick it, knobs incl. `max_chars`. |
