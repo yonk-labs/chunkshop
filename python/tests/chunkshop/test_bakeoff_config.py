@@ -86,3 +86,30 @@ def test_load_gold_queries_passes_through_inline():
     from chunkshop.bakeoff.gold import load_gold_queries
     inline = [GoldQuery(query="q1", gold_doc_id="d1")]
     assert load_gold_queries(inline) is inline
+
+
+def test_bakeoff_results_round_trip():
+    from chunkshop.bakeoff.config import BakeoffResults, ComboResult
+    results = BakeoffResults(
+        run_name="test",
+        started_at="2026-04-23",
+        corpus_label="samples",
+        n_queries=2,
+        n_combos=1,
+        gold_queries=[{"query": "q", "gold_doc_id": "d1"}],
+        combos=[ComboResult(
+            chunker_key="hierarchy",
+            embedder_key="bge_base",
+            chunker_label="hierarchy",
+            embedder_label="bge-base",
+            table="hierarchy__bge_base",
+            ingest_chunks=10,
+            ingest_wall_seconds=1.2,
+            aggregate={"recall_at_1": 1.0, "mrr": 1.0},
+            per_query=[],
+        )],
+    )
+    dumped = results.model_dump_json()
+    parsed = BakeoffResults.model_validate_json(dumped)
+    assert parsed.run_name == "test"
+    assert parsed.combos[0].ingest_chunks == 10
