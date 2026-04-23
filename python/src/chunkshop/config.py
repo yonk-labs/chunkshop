@@ -84,11 +84,97 @@ class NeighborExpandChunker(_Base):
     window: int = 1  # seq ± window
 
 
+# --- Summarizer config (origin-agnostic; see brief SC-002, SC-005) ---
+
+
+class ExternalSummarizer(_Base):
+    """Pull summary from a source document's metadata field (upstream-computed)."""
+    mode: Literal["external"]
+    field: str = "summary"
+
+
+class CallableSummarizer(_Base):
+    """Import a module lazily at first use; call ``function(text, **kwargs) -> str``."""
+    mode: Literal["callable"]
+    module: str
+    function: str = "summarize"
+    kwargs: dict = Field(default_factory=dict)
+
+
+class PassthroughSummarizer(_Base):
+    """Baseline: summary = original chunk. For A/B comparisons."""
+    mode: Literal["passthrough"]
+
+
+SummarizerConfig = Annotated[
+    Union[ExternalSummarizer, CallableSummarizer, PassthroughSummarizer],
+    Field(discriminator="mode"),
+]
+
+
+# --- Grouping strategies for HierarchicalSummaryChunker (SC-004) ---
+
+
+class FixedNGrouping(_Base):
+    strategy: Literal["fixed_n"] = "fixed_n"
+    n: int = Field(default=5, ge=1)
+
+
+class WordBudgetGrouping(_Base):
+    strategy: Literal["word_budget"] = "word_budget"
+    max_words: int = Field(default=2000, ge=50)
+
+
+class SectionAwareGrouping(_Base):
+    strategy: Literal["section_aware"] = "section_aware"
+
+
+GroupingConfig = Annotated[
+    Union[FixedNGrouping, WordBudgetGrouping, SectionAwareGrouping],
+    Field(discriminator="strategy"),
+]
+
+
+class SummaryEmbedChunker(_Base):
+    """Wrap any base chunker; replace each chunk's embedded_content with a summary."""
+    type: Literal["summary_embed"]
+    base: "ChunkerConfig"
+    summarizer: SummarizerConfig
+
+
+class HierarchicalSummaryChunker(_Base):
+    """Emit base (fine) chunks plus coarse summary chunks linked by group_id."""
+    type: Literal["hierarchical_summary"]
+    base: "ChunkerConfig"
+    summarizer: SummarizerConfig
+    grouping: GroupingConfig = Field(default_factory=lambda: FixedNGrouping())
+
+    @model_validator(mode="after")
+    def _section_aware_requires_hierarchy_base(self):
+        if getattr(self.grouping, "strategy", None) == "section_aware":
+            base_type = getattr(self.base, "type", None)
+            if base_type != "hierarchy":
+                raise ValueError(
+                    f"hierarchical_summary with strategy='section_aware' requires "
+                    f"base.type='hierarchy', got {base_type!r}"
+                )
+        return self
+
+
 ChunkerConfig = Annotated[
-    Union[SentenceAwareChunker, FixedOverlapChunker, HierarchyChunker, NeighborExpandChunker],
+    Union[
+        SentenceAwareChunker,
+        FixedOverlapChunker,
+        HierarchyChunker,
+        NeighborExpandChunker,
+        SummaryEmbedChunker,
+        HierarchicalSummaryChunker,
+    ],
     Field(discriminator="type"),
 ]
 NeighborExpandChunker.model_rebuild()
+SummaryEmbedChunker.model_rebuild()
+HierarchicalSummaryChunker.model_rebuild()
 
 
 class IdentityFramerConfig(_Base):
