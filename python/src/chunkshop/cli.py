@@ -1,6 +1,7 @@
-"""chunkshop CLI — ingest and (later) orchestrate."""
+"""chunkshop CLI — ingest, orchestrate, bakeoff."""
 from __future__ import annotations
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -18,8 +19,11 @@ def cli():
     Run one cell:
         chunkshop ingest --config cell.yaml
 
-    Run many cells in parallel (coming in Task 8):
+    Run many cells in parallel:
         chunkshop orchestrate --config-dir configs/
+
+    Rank a chunker x embedder matrix against your corpus:
+        chunkshop bakeoff --config bakeoff.yaml
     """
 
 
@@ -137,6 +141,100 @@ def orchestrate(config_dir, config, concurrency, checkpoints, timeout, smoke):
         "cells": result.cells,
     }, indent=2))
     sys.exit(1 if result.failed else 0)
+
+
+@cli.command()
+@click.option(
+    "--config", "config_path",
+    required=True, type=click.Path(exists=True, path_type=Path),
+    help="Path to the bakeoff YAML config (see docs/samples/bakeoff.yaml).",
+)
+@click.option(
+    "--dsn", envvar="CHUNKSHOP_DSN", required=True,
+    help="Postgres DSN (or set $CHUNKSHOP_DSN). Bakeoff tables land under target.schema.",
+)
+@click.option(
+    "--yes", is_flag=True,
+    help="Bypass the >50-cell matrix confirmation prompt.",
+)
+@click.option(
+    "--keep-schema", is_flag=True,
+    help="Keep the bakeoff schema after run (default: DROP SCHEMA CASCADE on exit).",
+)
+def bakeoff(config_path: Path, dsn: str, yes: bool, keep_schema: bool):
+    """Run a chunker x embedder matrix bakeoff against a corpus.
+
+    The config file names the corpus, the gold queries, the combo matrix, and
+    the target DB. chunkshop ingests every combo into its own table, embeds
+    each gold query with each embedder, scores recall@k + MRR per combo, and
+    writes a leaderboard + recommended cell YAML to the output dir.
+
+    Outputs (under output_dir, default `skill-output/bakeoff/{name}/`):
+      - results.json      — raw scored data
+      - report.md         — leaderboard + per-query detail + honesty note
+      - recommended.yaml  — runnable `chunkshop ingest` cell for the top combo
+    """
+    # Keep bakeoff imports inside the command so the `chunkshop` CLI stays fast
+    # to load for users who only run `ingest` / `orchestrate`.
+    import yaml
+    import psycopg
+    from psycopg import sql
+
+    from chunkshop.bakeoff.config import BakeoffConfig
+    from chunkshop.bakeoff.output import (
+        write_recommended_yaml,
+        write_report_md,
+        write_results_json,
+    )
+    from chunkshop.bakeoff.runner import run_bakeoff
+
+    cfg = BakeoffConfig.model_validate(yaml.safe_load(config_path.read_text()))
+
+    n_embedders = len(cfg.matrix.embedders)
+    n_chunkers = len(cfg.matrix.chunkers)
+    n_combos = n_embedders * n_chunkers
+    if n_combos > 50 and not yes:
+        click.echo(
+            f"WARNING: {n_combos} combos is large "
+            f"({n_embedders} embedders x {n_chunkers} chunkers). "
+            "Each combo ingests the full corpus into its own table."
+        )
+        if not click.confirm("Proceed?", default=False):
+            click.echo("Aborted.")
+            raise click.Abort()
+
+    os.environ[cfg.target.dsn_env] = dsn
+
+    click.echo(f"Running bakeoff '{cfg.name}' — {n_combos} combos")
+    results = run_bakeoff(cfg)
+
+    out_dir = Path(cfg.output_dir or f"skill-output/bakeoff/{cfg.name}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    json_path = write_results_json(results, out_dir)
+    md_path = write_report_md(cfg, results, out_dir)
+    yaml_path = write_recommended_yaml(cfg, results, out_dir)
+
+    if not keep_schema:
+        with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                    sql.Identifier(cfg.target.schema_name)
+                )
+            )
+
+    # Top-line summary: rank-1 combo + output paths.
+    ranked = sorted(results.combos, key=lambda c: -c.aggregate.get("mrr", 0))
+    top = ranked[0]
+    click.echo("")
+    click.echo(
+        f"Winner: {top.chunker_label} + {top.embedder_label} "
+        f"(MRR={top.aggregate.get('mrr', 0):.3f}, "
+        f"r@1={top.aggregate.get('recall_at_1', 0):.3f})"
+    )
+    click.echo(f"Results: {json_path}")
+    click.echo(f"Report:  {md_path}")
+    click.echo(f"Recommended cell: {yaml_path}")
 
 
 if __name__ == "__main__":
