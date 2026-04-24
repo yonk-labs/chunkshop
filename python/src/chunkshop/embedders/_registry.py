@@ -49,6 +49,25 @@ _INT8_VARIANTS: list[dict] = [
             "config.json",
         ],
     },
+    {
+        # Used by SemanticChunker as the dedicated small boundary model.
+        # MiniLM uses mean pooling (unlike BGE which uses CLS).
+        "model": "sentence-transformers/all-MiniLM-L6-v2-int8",
+        "dim": 384,
+        "pooling": PoolingType.MEAN,
+        "normalization": True,
+        "sources": ModelSource(hf="Xenova/all-MiniLM-L6-v2"),
+        "model_file": "onnx/model_quantized.onnx",
+        "description": "all-MiniLM-L6-v2 pre-quantized to int8 (Xenova upload)",
+        "license": "apache-2.0",
+        "size_in_gb": 0.022,
+        "additional_files": [
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "config.json",
+        ],
+    },
 ]
 
 

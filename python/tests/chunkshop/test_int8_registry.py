@@ -10,6 +10,8 @@ _EXPECTED_INT8 = [
     # nomic -Q ships with fastembed itself; we don't register it, but the
     # chunkshop contract says these three names all resolve.
     ("nomic-ai/nomic-embed-text-v1.5-Q", 768),
+    # MiniLM int8 — dedicated boundary model for SemanticChunker.
+    ("sentence-transformers/all-MiniLM-L6-v2-int8", 384),
 ]
 
 
