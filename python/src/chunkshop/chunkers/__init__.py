@@ -5,6 +5,7 @@ from chunkshop.chunkers.hierarchy import HierarchyChunker
 from chunkshop.chunkers.neighbor_expand import NeighborExpandChunker
 from chunkshop.chunkers.sentence_aware import SentenceAwareChunker
 from chunkshop.chunkers.summary_embed import SummaryEmbedChunker
+from chunkshop.chunkers.hierarchical_summary import HierarchicalSummaryChunker
 from chunkshop.config import (
     ChunkerConfig,
     FixedOverlapChunker as FixedCfg,
@@ -30,7 +31,6 @@ def load_chunker(cfg: ChunkerConfig) -> Chunker:
         base = load_chunker(cfg.base)
         return SummaryEmbedChunker(cfg, base)
     if isinstance(cfg, HierSummaryCfg):
-        from chunkshop.chunkers.hierarchical_summary import HierarchicalSummaryChunker
         base = load_chunker(cfg.base)
         return HierarchicalSummaryChunker(cfg, base)
     raise ValueError(f"unknown chunker type: {type(cfg).__name__}")
