@@ -36,6 +36,7 @@ skill-output/
 # ONNX model cache
 .cache/
 fastembed_cache/
+.fastembed_cache/
 
 # ONNX quantize_dynamic / preprocessing scratch artifacts (often written to CWD)
 *.onnx
