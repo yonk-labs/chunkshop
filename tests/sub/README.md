@@ -24,6 +24,25 @@ tests/sub/
         └── expected.json     # row-count assertions for the asserter
 ```
 
+## What's here
+
+11 feature-axis scenarios, one per distinct capability. Each folder has a
+`README.md` with more detail.
+
+| # | Scenario | Exercises |
+|---|---|---|
+| 01 | `markdown-hierarchy-default` | default path: `hierarchy` chunker, no framer, no extractor |
+| 02 | `json-corpus-sentence-aware` | `json_corpus` source + `sentence_aware` + `rake_keywords` |
+| 03 | `framer-heading-boundary` | `HeadingBoundaryFramer` (1 source row → N framed docs) |
+| 04 | `framer-jsonpath-nested` | `JSONPathFramer` expanding `items[*]` |
+| 05 | `composite-extractor-lang-plus-rake` | `composite` extractor + `promote_metadata` → `text` column |
+| 06 | `max-chars-oversized-sections` | hierarchy splitting a 10 KB section on paragraph/sentence/char |
+| 07 | `multi-source-schema-flex` | two configs, one table, `mode: append` + `source_tag` |
+| 08 | `neighbor-expand-wrapper` | chunker composition via `neighbor_expand(window=1)` |
+| 09 | `semantic-topic-shift` | `semantic` chunker on a headingless monologue with topic pivots |
+| 10 | `summary-embed-passthrough` | `summary_embed` wrapper with baseline `passthrough` summarizer |
+| 11 | `hierarchical-fine-coarse` | `hierarchical_summary` emitting fine+coarse rows linked by `group_id` |
+
 ## How to run one scenario
 
 From repo root:

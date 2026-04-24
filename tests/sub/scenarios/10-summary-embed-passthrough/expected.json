@@ -1,0 +1,6 @@
+{
+  "table": "summary_embed_passthrough",
+  "min_rows": 2,
+  "min_docs": 1,
+  "metadata_keys_required": ["strategy", "summarizer"]
+}

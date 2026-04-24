@@ -1,0 +1,26 @@
+cell_name: sub_summary_embed_passthrough
+source:
+  type: files
+  glob: tests/sub/scenarios/10-summary-embed-passthrough/data/*.md
+  id_from: stem
+framer:
+  type: identity
+chunker:
+  type: summary_embed
+  base:
+    type: hierarchy
+  summarizer:
+    mode: passthrough
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 2
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_sub_scenarios
+  table: summary_embed_passthrough
+  mode: overwrite
+  hnsw: false
+runtime:
+  log_path: /tmp/chunkshop_sub_summary_passthrough.log

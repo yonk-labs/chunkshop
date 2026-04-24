@@ -1,0 +1,6 @@
+{
+  "table": "semantic_topic_shift",
+  "min_rows": 2,
+  "min_docs": 1,
+  "metadata_keys_required": ["strategy", "framer", "frame_seq"]
+}

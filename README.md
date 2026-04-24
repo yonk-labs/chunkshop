@@ -135,6 +135,8 @@ CREATE TABLE {schema}.{table} (
 | [`docs/quickstart-multi-source.md`](docs/quickstart-multi-source.md) | Recipe card: schema-flex modes + append pre-flight. |
 | [`docs/quickstart-framers.md`](docs/quickstart-framers.md) | Recipe card: which framer for which source shape. |
 | [`docs/quickstart-extractors.md`](docs/quickstart-extractors.md) | Recipe card: copy-paste YAML per extractor. |
+| [`docs/quickstart-semantic.md`](docs/quickstart-semantic.md) | Recipe card: semantic chunker knobs (percentile tuning, memory-tight, neighbor-expand). |
+| [`docs/quickstart-summaries.md`](docs/quickstart-summaries.md) | Recipe card: summary_embed + hierarchical_summary across all three summarizer modes. |
 | [`docs/quickstart-bakeoff.md`](docs/quickstart-bakeoff.md) | Recipe card: common bakeoff shapes (embedder-only, chunker-only, full factorial). |
 | [`python/README.md`](python/README.md)         | Reference: install, CLI flags, YAML field-by-field, troubleshooting. |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit: components, data flow, extension points.     |

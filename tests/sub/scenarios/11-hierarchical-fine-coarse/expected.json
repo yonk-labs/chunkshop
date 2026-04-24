@@ -1,0 +1,6 @@
+{
+  "table": "hierarchical_fine_coarse",
+  "min_rows": 6,
+  "min_docs": 1,
+  "metadata_keys_required": ["strategy", "granularity", "group_id"]
+}
