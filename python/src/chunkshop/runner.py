@@ -51,8 +51,18 @@ def run_cell(cfg: CellConfig) -> CellResult:
     try:
         source = load_source(cfg.source)
         framer = load_framer(cfg.framer)
-        chunker = load_chunker(cfg.chunker)
         embedder = load_embedder(cfg.embedder)
+        # SemanticChunker(boundary_model="same") reuses the main embedder's
+        # TextEmbedding instance to avoid doubling RAM (SC-002). Grab it via the
+        # private attr — FastembedProvider holds its model at `_model`. This is a
+        # deliberate coupling between runner and provider; cheaper than a public
+        # accessor that only one caller would use.
+        shared_boundary_model = getattr(embedder, "_model", None)
+        chunker = load_chunker(
+            cfg.chunker,
+            main_embedder=cfg.embedder,
+            shared_boundary_model=shared_boundary_model,
+        )
         extractor = load_extractor(cfg.extractor)
         sink = PgVectorSink(cfg.target, embed_dim=cfg.embedder.dim)
 

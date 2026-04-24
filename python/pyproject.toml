@@ -56,3 +56,6 @@ skimr = { path = "../../extractive_summary", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: tests that download models or run long benchmarks",
+]
