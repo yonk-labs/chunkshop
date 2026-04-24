@@ -84,6 +84,24 @@ class NeighborExpandChunker(_Base):
     window: int = 1  # seq ± window
 
 
+class SemanticChunker(_Base):
+    """Split a document at topic shifts detected by sentence-embedding similarity drops.
+
+    `boundary_model` names a fastembed model for the small per-sentence embed pass;
+    the special value `"same"` reuses the cell's main embedder instance so RAM doesn't
+    double. `breakpoint_percentile` picks the distance threshold — higher = fewer
+    splits, larger chunks. See `docs/chunkers.md` for tuning guidance.
+    """
+    type: Literal["semantic"]
+    boundary_model: str = "sentence-transformers/all-MiniLM-L6-v2-int8"
+    breakpoint_percentile: int = Field(default=95, ge=1, le=99)
+    min_sentences_per_chunk: int = Field(default=3, ge=1)
+    # Default 2000 (not 3000) — aligns with the 2026-04-21 chunker-max-chars hotfix
+    # so semantic chunks respect the 512-token ceiling on bge-small/bge-base.
+    max_chunk_chars: int = Field(default=2000, ge=100)
+    sentence_splitter: Literal["naive", "nltk"] = "naive"
+
+
 # --- Summarizer config (origin-agnostic; see brief SC-002, SC-005) ---
 
 
@@ -169,6 +187,7 @@ ChunkerConfig = Annotated[
         NeighborExpandChunker,
         SummaryEmbedChunker,
         HierarchicalSummaryChunker,
+        SemanticChunker,
     ],
     Field(discriminator="type"),
 ]
