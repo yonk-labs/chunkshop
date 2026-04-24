@@ -4,6 +4,20 @@
 
 ### Added
 
+- **`semantic` chunker.** Splits documents on topic shifts detected by
+  sentence-embedding similarity drops. No markdown headings or paragraph
+  boundaries required — works on raw transcripts, interviews,
+  auto-transcribed audio, headingless blog posts. Ships with a dedicated
+  small boundary model (`sentence-transformers/all-MiniLM-L6-v2-int8`,
+  ~22 MB, registered in `embedders/_registry.py`), or pass
+  `boundary_model: "same"` to reuse the cell's main embedder. Config
+  knobs: `breakpoint_percentile` (default 95), `min_sentences_per_chunk`
+  (3), `max_chunk_chars` (2000 — matches hierarchy/sentence_aware), and
+  `sentence_splitter` (`"naive"` default or `"nltk"`). SC-003 speed gate
+  passes at 1.16x on a 5000-word doc (test:
+  `tests/chunkshop/test_chunker_semantic_benchmark.py`). See
+  `docs/tutorial-semantic.md` + the semantic section in `docs/chunkers.md`.
+
 - **`chunkshop bakeoff` CLI.** Config-driven chunker x embedder matrix
   evaluation against a user's corpus. Outputs a leaderboard + a
   `recommended.yaml` that's a runnable `chunkshop ingest` cell pre-filled

@@ -19,7 +19,7 @@ One YAML config = one end-to-end ingest ("cell"). Multiple YAMLs run in parallel
 ```mermaid
 flowchart LR
     S[Source<br/>files · json_corpus<br/>pg_table · http · s3] --> F[Framer<br/>identity · heading_boundary<br/>regex_boundary · jsonpath]
-    F --> C[Chunker<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand]
+    F --> C[Chunker<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand<br/>semantic · summary_embed<br/>hierarchical_summary]
     C --> E[Embedder<br/>fastembed<br/>ONNX · int8 or fp32]
     E --> X[Extractor<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · composite]
     X --> T[(pgvector table<br/>HNSW index)]
@@ -95,7 +95,7 @@ One YAML = one cell = one end-to-end ingest. Six sections (framer optional, defa
 |-----------|------------------------------------------------------------------------------|
 | source    | files · json_corpus · pg_table · http (stub) · s3 (stub)                     |
 | framer    | identity (default) · heading_boundary · regex_boundary · jsonpath            |
-| chunker   | sentence_aware · fixed_overlap · hierarchy · neighbor_expand                 |
+| chunker   | sentence_aware · fixed_overlap · hierarchy · neighbor_expand · semantic · summary_embed · hierarchical_summary |
 | embedder  | fastembed (Python); onnx_direct (Rust, Go, optional in Python)               |
 | extractor | none · rake_keywords · keybert_phrases · spacy_entities · lang_detect · composite (opt-in extras) |
 | target    | pgvector table `{schema}.{table}`; `mode: overwrite \| append \| create_if_missing`; `source_tag` + `promote_metadata` for multi-source tables; HNSW index |
@@ -129,6 +129,7 @@ CREATE TABLE {schema}.{table} (
 | [`docs/tutorial-framers.md`](docs/tutorial-framers.md) | DocFramer walkthrough: markdown heading splits + nested-JSON expansion. |
 | [`docs/tutorial-metadata.md`](docs/tutorial-metadata.md) | Metadata extraction: composite extractor + promoted columns + filtered queries. |
 | [`docs/tutorial-bakeoff.md`](docs/tutorial-bakeoff.md) | Bakeoff walkthrough: pick the best chunker+embedder for your corpus. |
+| [`docs/tutorial-semantic.md`](docs/tutorial-semantic.md) | Semantic chunker walkthrough: split on topic shifts when your corpus has no headings. |
 | [`docs/quickstart-multi-source.md`](docs/quickstart-multi-source.md) | Recipe card: schema-flex modes + append pre-flight. |
 | [`docs/quickstart-framers.md`](docs/quickstart-framers.md) | Recipe card: which framer for which source shape. |
 | [`docs/quickstart-extractors.md`](docs/quickstart-extractors.md) | Recipe card: copy-paste YAML per extractor. |

@@ -16,13 +16,16 @@ flowchart TB
     Q --> PROSE[Plain prose<br/>no structure]
     Q --> CODE[Code or logs<br/>line-based]
     Q --> QA[QA / FAQ / turns<br/>short discrete items]
+    Q --> UNSTRUCTURED[Transcript / interview /<br/>auto-transcribed audio]
     HAS_HEADINGS --> H[hierarchy<br/>default; prepends heading]
     PROSE --> SA[sentence_aware<br/>paragraph-respecting]
     CODE --> SA_CODE[sentence_aware<br/>doc_type: code]
     QA --> FO[fixed_overlap<br/>window/step by word count]
+    UNSTRUCTURED --> SEM[semantic<br/>embedding-drift boundaries]
     H -.wrap for recall.-> NE[neighbor_expand<br/>± window]
     SA -.wrap for recall.-> NE
     FO -.wrap for recall.-> NE
+    SEM -.wrap for recall.-> NE
 ```
 
 ## Tuning `max_chars` for your embedder
@@ -248,6 +251,69 @@ Base: 5 chunks from `sentence_aware`. `window=1`:
 | 2   | chunk 2            | chunk 1 + chunk 2 + chunk 3            |
 | 3   | chunk 3            | chunk 2 + chunk 3 + chunk 4            |
 | 4   | chunk 4            | chunk 3 + chunk 4                      |
+
+## 5. `semantic` — embedding-drift boundary detection
+
+### What it does
+
+For each sentence in the document, embed it with a small dedicated model (the boundary
+model), compute pairwise cosine similarity between consecutive sentences, and cut the
+document wherever similarity drops below a percentile threshold (default: 95th percentile
+of drops = break at the top-5% most dramatic topic shifts).
+
+Below-threshold runs (< `min_sentences_per_chunk`) merge forward so tiny chunks don't
+clutter the output. Oversized spans hard-split at `max_chunk_chars` on a sentence
+boundary. Unlike `hierarchy` or `sentence_aware`, this chunker doesn't rely on any
+syntactic cue — headings, paragraphs, sentence counts — only on meaning drift.
+
+### Knobs
+
+| YAML key | Default | Notes |
+|---|---|---|
+| `boundary_model` | `sentence-transformers/all-MiniLM-L6-v2-int8` | Small ONNX model (~22 MB). Chunkshop registers it in `embedders/_registry.py`. |
+| `boundary_model: "same"` | (literal string) | Reuse the cell's main embedder — no second model load. Trades speed (main model is usually larger) for memory. |
+| `breakpoint_percentile` | `95` | Higher = fewer, bigger chunks. Lower = more, smaller chunks. |
+| `min_sentences_per_chunk` | `3` | Below-threshold spans merge with neighbors. |
+| `max_chunk_chars` | `2000` | Hard upper bound; oversized spans hard-split on sentence boundary. Matches the `hierarchy`/`sentence_aware` default — safe for bge's 512-token limit. |
+| `sentence_splitter` | `"naive"` | `"naive"` = regex on `.?!` + whitespace. `"nltk"` = NLTK's Punkt (needs the `punkt_tab` corpus, auto-downloaded on first use). |
+
+### When to pick it
+
+- Meeting transcripts, interview dumps, live-captioning output — no headings, no paragraphs.
+- Long auto-generated summaries where topic shifts are real but not marked.
+- Mixed-topic FAQ pages where one page conflates unrelated questions.
+
+### When not to
+
+- Structured markdown with real headings — `hierarchy` wins at no runtime cost.
+- Code files — semantic drift tracks natural-language topicality, not function boundaries.
+- Very short docs (< 10 sentences) — similarity stats are too noisy to pick meaningful breaks.
+
+### Sample output
+
+Fictitious interview transcript, `breakpoint_percentile=95`:
+
+```
+Input (328 sentences, ~5000 words, one continuous blob):
+  "So I started at Datadog in 2018. Most of that time I was on observability...
+   ...by late 2022 I had shipped three major releases. ... Moving on to salary
+   expectations, I'm looking for $X + equity. ... On weekends I mostly hike
+   the PCT with my dog."
+
+Output (3 semantic chunks):
+  Chunk 0: career history at Datadog (87 sentences)
+  Chunk 1: salary + logistics (34 sentences)
+  Chunk 2: hobbies (207 sentences)
+```
+
+### Speed
+
+On CPU with the default MiniLM int8 boundary model, semantic chunking a 5000-word
+document costs roughly **1.2x a main-cell bge-base embed pass** on the same doc
+(measured in `tests/chunkshop/test_chunker_semantic_benchmark.py`, gate: ≤ 2x).
+Boundary embedding is the bottleneck — ~300 short forward passes vs ~15 longer
+ones on the main model. The `boundary_model: "same"` variant skips the second
+load but the main model is usually larger, so it trades memory for speed.
 
 ## Benchmark takeaway
 

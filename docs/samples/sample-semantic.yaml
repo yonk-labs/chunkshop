@@ -1,0 +1,51 @@
+# Semantic chunker demo: splits an unstructured transcript on topic shifts
+# detected by sentence-embedding similarity drops. No headings required.
+#
+# Run with:
+#   chunkshop ingest --config docs/samples/sample-semantic.yaml
+#
+# The input is docs/samples/semantic_demo_interview.md — a single-blob
+# interview transcript with three clear topic shifts (career history →
+# compensation/logistics → hobbies). hierarchy/sentence_aware would emit
+# it as one giant chunk; semantic cuts it into topical segments.
+
+cell_name: samples_semantic
+
+source:
+  type: files
+  glob: docs/samples/semantic_demo_interview.md
+  id_from: stem
+
+framer:
+  type: identity
+
+chunker:
+  type: semantic
+  # Dedicated small boundary model — ~22 MB, fast. Swap to "same" to reuse
+  # the main embedder below (trades speed for memory).
+  boundary_model: sentence-transformers/all-MiniLM-L6-v2-int8
+  breakpoint_percentile: 95
+  min_sentences_per_chunk: 3
+  max_chunk_chars: 2000
+  sentence_splitter: naive
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 4
+  batch_size: 64
+
+extractor:
+  type: none
+
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: chunkshop_samples
+  table: interview_semantic
+  mode: overwrite
+  hnsw: false
+
+runtime:
+  omp_num_threads: 4
+  heartbeat_every: 1

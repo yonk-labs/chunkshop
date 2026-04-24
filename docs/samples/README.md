@@ -13,9 +13,11 @@ without hunting for a corpus.
 | `release-notes.md`                | Headingless prose — exercises the hierarchy fallback path.  |
 | `framer_demo_handbook.md`         | Giant-markdown fixture for [`../tutorial-framers.md`](../tutorial-framers.md) Scenario A. Underscore-named to stay outside the `*-*.md` corpus globs. |
 | `framer_demo_news.json`           | Nested-JSON fixture for [`../tutorial-framers.md`](../tutorial-framers.md) Scenario B. |
+| `semantic_demo_interview.md`      | Headingless interview transcript with three topic regions. Fixture for [`../tutorial-semantic.md`](../tutorial-semantic.md). Underscore-named to stay outside the `*-*.md` corpus globs. |
 | `sample.yaml`                     | Default recipe: `hierarchy` + int8 `bge-base`.              |
 | `sample-sentence-aware.yaml`      | Alternative: `sentence_aware` + fp32 `bge-small`.           |
 | `sample-neighbor-expand.yaml`     | Alternative: `neighbor_expand` wrapping `hierarchy`, int8 `bge-base`. |
+| `sample-semantic.yaml`            | Semantic chunker against the interview transcript — topic-shift detection with no headings required. |
 | `sample-multi-source.yaml`        | Schema-flex demo: `mode: create_if_missing` + `source_tag` + `promote_metadata`. |
 
 ## Run it
