@@ -4,6 +4,25 @@
 
 ### Added
 
+- **`chunkshop-rs` v0.1.0 MVP** (new `rust/` crate). Minimal Rust port that
+  proves the cross-language wire-format claim: same YAML, same pgvector
+  table, interchangeable chunk ordering. **In:** `files` source,
+  `sentence_aware` chunker (byte-for-byte with Python on prose),
+  `fastembed` embedder via Anush008's fastembed-rs crate, pgvector sink
+  with `overwrite` + `create_if_missing` modes, `chunkshop-rs ingest`
+  CLI, library+binary crate, integration test that skips without
+  `CHUNKSHOP_TEST_DSN`. **Out (deliberate):** every other chunker
+  (`hierarchy`, `fixed_overlap`, `neighbor_expand`, `semantic`,
+  `summary_embed`, `hierarchical_summary`), framers, extractors, other
+  sources, `append` mode, promoted columns, orchestrator, bakeoff.
+  **Known drift:** fastembed-rs's `BGEBaseENV15Q` maps to Qdrant's
+  fp32-optimized ONNX, not Xenova's int8-quantized one. On the shipped
+  sample corpus `scripts/parity_check.py` reports 100% identical chunks
+  and identical top-5 retrieval ordering, with ~0.01 cosine distance
+  between matched embeddings (expected fp32-vs-int8 drift). See
+  `rust/README.md` for the full feature matrix and the manual parity
+  check script.
+
 - **`semantic` chunker.** Splits documents on topic shifts detected by
   sentence-embedding similarity drops. No markdown headings or paragraph
   boundaries required — works on raw transcripts, interviews,

@@ -5,7 +5,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue)](python/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python v0.2.0](https://img.shields.io/badge/python--impl-v0.2.0-blueviolet)](python/)
-[![Rust: planned](https://img.shields.io/badge/rust--impl-planned-lightgrey)](rust/)
+[![Rust v0.1.0 MVP](https://img.shields.io/badge/rust--impl-v0.1.0_MVP-blueviolet)](rust/)
 [![Go: planned](https://img.shields.io/badge/go--impl-planned-lightgrey)](go/)
 
 A small, standalone, embeddable ingestion tool. Pulls text from a source, chunks it, embeds it,
@@ -54,7 +54,7 @@ line for pgvector and a copy-paste query script.
 | Impl             | Path       | State                                                |
 |------------------|------------|------------------------------------------------------|
 | Python reference | `python/`  | v0.2.0, runs end-to-end. int8 default.               |
-| Rust             | `rust/`    | Planned. `ort` + `tokenizers` crates.                |
+| Rust             | `rust/`    | v0.1.0 MVP. One source, chunker, embedder, sink. Parity-checked. |
 | Go               | `go/`      | Planned. `onnxruntime_go` + HF tokenizer bindings.   |
 
 ## Defaults
