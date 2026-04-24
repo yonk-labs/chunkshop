@@ -1,11 +1,39 @@
 # Chunking strategies
 
-chunkshop ships four chunkers. Every one produces a list of `Chunk` objects with two text
-fields: `original_content` (raw, for grep / fact-match / audit) and `embedded_content` (what
-the embedder sees, possibly with extra context prepended or appended).
+chunkshop ships seven chunkers in two groups:
 
-All four accept any `Document` from any `Source`. Pick one per cell; you can also wrap any of
-them with `neighbor_expand`.
+**Four structural chunkers** split on syntactic cues (headings, paragraphs, word
+counts). Each produces a list of `Chunk` objects with two text fields:
+`original_content` (raw, for grep / fact-match / audit) and `embedded_content`
+(what the embedder sees, possibly with extra context prepended or appended).
+
+- `sentence_aware` — paragraph-respecting prose splitter.
+- `hierarchy` — splits on markdown headings; prepends the heading to the
+  embedded content. **Shipped default.**
+- `fixed_overlap` — dumb-but-predictable word-count windows with overlap.
+- `neighbor_expand` — wraps any base chunker, glues ±N neighbor chunks into
+  each row's embedded content for extra retrieval context.
+
+**One semantic chunker** splits on topic-drift embeddings when your source has
+no syntactic structure:
+
+- `semantic` — embedding-drift boundary detection. Handles transcripts,
+  interviews, auto-captioned audio where heading-based chunkers fail.
+
+**Two summary-layer chunkers** wrap any base chunker and change what gets
+embedded vs. what gets stored — see [`summaries.md`](summaries.md) for the
+deep dive:
+
+- `summary_embed` — base chunker emits rows; each row's `embedded_content`
+  is replaced with a summary (external / callable / passthrough source).
+  `original_content` stays raw.
+- `hierarchical_summary` — emits base "fine" rows plus extra coarse summary
+  rows, linked by `metadata.group_id`. Enables match-coarse / return-fine
+  retrieval.
+
+Pick one per cell. Structural and semantic chunkers can be wrapped by
+`neighbor_expand`; summary-layer chunkers wrap any base chunker in their own
+config.
 
 ## Quick pick
 
@@ -30,20 +58,22 @@ flowchart TB
 
 ## Tuning `max_chars` for your embedder
 
-`max_chars` on `sentence_aware` and `hierarchy` enforces an upper bound so chunks never exceed
-the embedder's token limit. Defaults target `bge-small-en-v1.5` (512 tokens). If you're using
-a larger-context embedder, raise it to match.
+`max_chars` on `sentence_aware`, `hierarchy`, and `semantic` enforces an upper
+bound so chunks never exceed the embedder's token limit. Defaults target the
+BGE family (`bge-small`/`bge-base` share a 512-token limit). If you swap to a
+larger-context embedder, raise it to match.
 
 | Embedder                 | Token limit | Recommended `max_chars` |
 |--------------------------|-------------|-------------------------|
-| `bge-small-en-v1.5`      | 512         | `2000` (default)        |
-| `bge-base-en-v1.5`       | 512         | `2000`                  |
+| `bge-small-en-v1.5-int8` | 512         | `2000`                  |
+| `bge-base-en-v1.5-int8`  | 512         | `2000` (**default**)    |
+| `nomic-embed-text-v1.5`  | 8192        | `6000`                  |
 | `text-embedding-3-small` | 8192        | `6000`                  |
 | `text-embedding-3-large` | 8192        | `6000`                  |
 
-Character-to-token ratio is corpus-dependent (~4 chars/token for English prose; less for code,
-URLs, or non-Latin scripts). Defaults leave headroom. If you see truncation warnings from the
-embedder, lower `max_chars`.
+Character-to-token ratio is corpus-dependent (~4 chars/token for English prose;
+less for code, URLs, or non-Latin scripts). Defaults leave headroom. If you see
+truncation warnings from the embedder, lower `max_chars`.
 
 ## 1. `sentence_aware` — paragraph-respecting prose splitter
 

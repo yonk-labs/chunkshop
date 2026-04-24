@@ -1,5 +1,6 @@
 # chunkshop
 
+[![CI](https://github.com/yonk-labs/chunkshop/actions/workflows/ci.yml/badge.svg)](https://github.com/yonk-labs/chunkshop/actions/workflows/ci.yml)
 [![PyPI status](https://img.shields.io/badge/status-alpha-orange)](python/pyproject.toml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue)](python/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -130,6 +131,7 @@ CREATE TABLE {schema}.{table} (
 | [`docs/tutorial-metadata.md`](docs/tutorial-metadata.md) | Metadata extraction: composite extractor + promoted columns + filtered queries. |
 | [`docs/tutorial-bakeoff.md`](docs/tutorial-bakeoff.md) | Bakeoff walkthrough: pick the best chunker+embedder for your corpus. |
 | [`docs/tutorial-semantic.md`](docs/tutorial-semantic.md) | Semantic chunker walkthrough: split on topic shifts when your corpus has no headings. |
+| [`docs/tutorial-summaries.md`](docs/tutorial-summaries.md) | Summary-embed + hierarchical walkthrough: skimr/sumy integration, fine+coarse retrieval. |
 | [`docs/quickstart-multi-source.md`](docs/quickstart-multi-source.md) | Recipe card: schema-flex modes + append pre-flight. |
 | [`docs/quickstart-framers.md`](docs/quickstart-framers.md) | Recipe card: which framer for which source shape. |
 | [`docs/quickstart-extractors.md`](docs/quickstart-extractors.md) | Recipe card: copy-paste YAML per extractor. |
@@ -137,6 +139,7 @@ CREATE TABLE {schema}.{table} (
 | [`python/README.md`](python/README.md)         | Reference: install, CLI flags, YAML field-by-field, troubleshooting. |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit: components, data flow, extension points.     |
 | [`docs/chunkers.md`](docs/chunkers.md)         | Each chunker: what it does, when to pick it, knobs incl. `max_chars`. |
+| [`docs/summaries.md`](docs/summaries.md)       | Summary-embed + hierarchical chunker reference, summarizer modes, grouping strategies. |
 | [`docs/embedders.md`](docs/embedders.md)       | Model catalogue, int8 registry, A/B testing embedders, measured bench. |
 | [`docs/extractors.md`](docs/extractors.md)     | Each extractor: why use it, config, promoted-column pairing.     |
 | [`docs/query-clients.md`](docs/query-clients.md) | Query the ingested table from Python, JS/TS, Rust, Go.          |

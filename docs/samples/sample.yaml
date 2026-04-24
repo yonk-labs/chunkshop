@@ -4,10 +4,14 @@
 #   export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
 #   chunkshop ingest --config docs/samples/sample.yaml
 #
-# This uses the production-sweet-spot defaults (hierarchy + int8 bge-small). For
+# This uses the production-sweet-spot defaults (hierarchy + int8 bge-base). For
 # alternative recipes that target the same data, see:
-#   docs/samples/sample-sentence-aware.yaml   — prose splitter, fp32
-#   docs/samples/sample-neighbor-expand.yaml  — hierarchy wrapped with ±1 neighbor context
+#   docs/samples/sample-sentence-aware.yaml    — prose splitter, fp32
+#   docs/samples/sample-neighbor-expand.yaml   — hierarchy wrapped with ±1 neighbor context
+#   docs/samples/sample-semantic.yaml          — topic-drift boundaries for unstructured text
+#   docs/samples/sample-summary-embed.yaml     — embed summaries, keep raw for audit
+#   docs/samples/sample-hierarchical.yaml      — fine + coarse rows linked by group_id
+#   docs/samples/sample-multi-source.yaml      — schema-flex: mode + source_tag + promote
 #
 cell_name: samples_hierarchy_int8
 

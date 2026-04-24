@@ -30,9 +30,10 @@ flowchart TB
     subgraph providers[Pluggable providers]
       SRC[sources/<br/>files · json_corpus<br/>pg_table · http · s3]
       FRM[framers/<br/>identity · heading_boundary<br/>regex_boundary · jsonpath]
-      CHK[chunkers/<br/>sentence_aware<br/>fixed_overlap<br/>hierarchy<br/>neighbor_expand]
+      CHK[chunkers/<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand<br/>semantic<br/>summary_embed · hierarchical_summary]
       EMB[embedders/<br/>fastembed_provider<br/>+ int8 _registry]
       EXT[extractors/<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · composite]
+      SUM[summarizers/<br/>skimr · sumy shims]
     end
 
     subgraph sink[Sink]
@@ -40,8 +41,9 @@ flowchart TB
       DB[(pgvector table<br/>+ HNSW)]
     end
 
-    subgraph orch[Orchestrator]
+    subgraph orch[Orchestrator + bakeoff]
       OR[orchestrator.py<br/>subprocess pool]
+      BO[bakeoff/<br/>matrix eval + leaderboard]
     end
 
     I --> Y
@@ -53,10 +55,12 @@ flowchart TB
     R --> CHK
     R --> EMB
     R --> EXT
+    CHK -.summary_embed · hierarchical_summary.-> SUM
     R --> SK
     SK --> DB
     O -.spawns N.-> I
     OR --- O
+    BO -.N combos × run_cell.-> R
 ```
 
 Each provider type is a `Protocol` with one method. `load_*()` factories dispatch on the
@@ -68,6 +72,23 @@ ingest unit — a giant markdown dump holds many topics, a JSON API response nes
 `items[*]`. Framers split one raw source row into one-or-more framed `Document`s before
 chunking. The default `identity` framer is a no-op pass-through, preserving backward
 compatibility for every existing cell.
+
+**Chunkers come in three families.** The four *structural* chunkers
+(`sentence_aware`, `fixed_overlap`, `hierarchy`, `neighbor_expand`) split on
+syntactic cues. The *semantic* chunker (`semantic`) cuts on sentence-embedding
+similarity drops — use when your source has no syntactic structure (transcripts,
+interviews, auto-captioned audio). The two *summary-layer* chunkers
+(`summary_embed`, `hierarchical_summary`) wrap any base chunker and change what
+gets embedded vs. what gets stored; they dispatch summary generation to an
+external source column, a callable module (skimr, sumy), or passthrough.
+`chunkshop.summarizers.*` ships adapter shims so libraries with non-matching
+APIs integrate via one YAML line.
+
+The **bakeoff** module (`chunkshop.bakeoff.*`) sits next to the orchestrator.
+It takes a YAML config naming a corpus, a gold-queries file, and a matrix of
+chunker × embedder combos, then drives every combo through `run_cell` and
+scores the results. Users get a leaderboard and a `recommended.yaml` they can
+run directly.
 
 ## Key files
 
@@ -81,9 +102,11 @@ compatibility for every existing cell.
 | Source protocol + impls | `python/src/chunkshop/sources/`                            |
 | Framer protocol + impls | `python/src/chunkshop/framers/`                            |
 | Chunker protocol + impls| `python/src/chunkshop/chunkers/`                           |
+| Summarizer dispatch + shims | `python/src/chunkshop/chunkers/_summarizer.py` + `python/src/chunkshop/summarizers/` |
 | Embedder protocol + impls | `python/src/chunkshop/embedders/`                        |
 | int8 model registration | `python/src/chunkshop/embedders/_registry.py`              |
 | Extractor protocol + impls | `python/src/chunkshop/extractors/`                      |
+| Bakeoff matrix runner   | `python/src/chunkshop/bakeoff/`                            |
 
 ## One ingest, step by step
 
@@ -254,6 +277,7 @@ See [`embedders.md`](embedders.md) for how to add a new model.
 | New source type (e.g. S3)        | `python/src/chunkshop/sources/`             | `sources/__init__.py` + new pydantic model in `config.py`    |
 | New framer (doc-boundary splitter)| `python/src/chunkshop/framers/`            | `framers/__init__.py` + new pydantic model in `config.py`    |
 | New chunker                      | `python/src/chunkshop/chunkers/`            | `chunkers/__init__.py` + new pydantic model in `config.py`   |
+| New summarizer shim (for a callable-mode library) | `python/src/chunkshop/summarizers/` | Nothing — referenced from YAML by `module` + `function` path  |
 | New embedder backend             | `python/src/chunkshop/embedders/`           | `embedders/__init__.py` + new pydantic model in `config.py`  |
 | New extractor                    | `python/src/chunkshop/extractors/`          | `extractors/__init__.py` + new pydantic model in `config.py` |
 | New pre-quantized fastembed model| edit `embedders/_registry.py` `_INT8_VARIANTS` | nothing — it's picked up at import                        |
@@ -263,9 +287,18 @@ signature. No inheritance. No base class to subclass.
 
 ## What chunkshop is not
 
-- Not a retrieval layer. It writes to pgvector; you bring the query side.
+- Not a retrieval layer. It writes to pgvector; you bring the query side. See
+  [`query-clients.md`](query-clients.md) for Python/JS/Rust/Go examples.
 - Not a streaming ingest. It's a batch tool — runs to completion, exits, writes a summary.
-- Not an LLM wrapper. The default extractor is `none`; the optional `rake_keywords` is purely
-  local. There is no LLM in the ingest path.
+- Not an LLM wrapper. The default extractor is `none`; the built-in
+  `rake_keywords`, `keybert_phrases`, `spacy_entities`, `lang_detect`, and
+  `composite` extractors are all local. The optional `summary_embed`/
+  `hierarchical_summary` chunkers accept a `callable` summarizer module —
+  users can wire an LLM there if they want, but nothing in chunkshop's core
+  ever calls one.
 - Not opinionated about schemas beyond the target table layout. Source docs can be anything
   with an id and content field.
+- Not a tournament-winner for retrieval quality. Use `chunkshop bakeoff` to
+  measure combos on **your** corpus — the defaults are empirically sound
+  (factorial bench at 772 docs + 15-combo matrix at `docs/samples/`) but
+  your data may favor a different combo.

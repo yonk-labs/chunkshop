@@ -28,11 +28,17 @@ chunkshop = { path = "../chunkshop/python", editable = true }
 
 Optional extras:
 
-| Extra        | What you get                                  |
-|--------------|-----------------------------------------------|
-| `extractors` | `rake-nltk` + `nltk` for the RAKE extractor.  |
-| `quantize`   | `onnx` for on-the-fly quantization scratch.   |
-| `dev`        | `pytest`, `pytest-asyncio`, `onnx`.           |
+| Extra        | What you get                                                         |
+|--------------|----------------------------------------------------------------------|
+| `extractors` | `rake-nltk` + `nltk` for the RAKE extractor.                         |
+| `keybert`    | `keybert` + `sentence-transformers` for the `keybert_phrases` extractor. |
+| `spacy`      | `spacy` for the `spacy_entities` NER extractor.                      |
+| `lang`       | `langdetect` for the `lang_detect` extractor.                        |
+| `nlp`        | Umbrella: `keybert` + `spacy` + `lang` in one install.               |
+| `skimr`      | Sibling `extractive_summary` repo as a path dep — enables `summary_embed` with `skimr.tfidf.summarize`. |
+| `sumy`       | `sumy` + NLTK corpora for the sumy adapter shim (`chunkshop.summarizers.sumy`). |
+| `quantize`   | `onnx` for on-the-fly quantization scratch.                          |
+| `dev`        | `pytest`, `pytest-asyncio`, `onnx`.                                  |
 
 Python ≥ 3.12 required.
 
@@ -113,6 +119,34 @@ chunkshop orchestrate (--config-dir DIR | --config PATH [--config PATH ...])
 
 Stdout = checkpoint reports during the run, JSON summary at the end.
 
+### `chunkshop bakeoff`
+
+Runs a chunker × embedder matrix against a corpus with hand-written gold
+queries, scores recall@k + MRR per combo, writes a leaderboard + a
+runnable `recommended.yaml`. Config-driven — the matrix lives in YAML,
+not on the command line.
+
+```
+chunkshop bakeoff --config PATH [--dsn DSN] [--yes] [--keep-schema]
+```
+
+| Flag            | Default                 | Purpose                                                       |
+|-----------------|-------------------------|---------------------------------------------------------------|
+| `--config`      | —                       | Path to the bakeoff YAML. Required.                           |
+| `--dsn`         | `$CHUNKSHOP_DSN`        | Postgres DSN. Required (env var or flag).                     |
+| `--yes`         | off                     | Bypass the >50-cell matrix confirmation prompt.               |
+| `--keep-schema` | off                     | Keep the bakeoff schema after run — useful for debugging.     |
+
+Outputs land in `skill-output/bakeoff/{name}/`:
+- `results.json` — raw per-combo + per-query data.
+- `report.md` — leaderboard sorted by MRR, per-query detail, statistical-
+  power caveat.
+- `recommended.yaml` — top combo pre-filled as a runnable
+  `chunkshop ingest` cell.
+
+Full walkthrough: [`../docs/tutorial-bakeoff.md`](../docs/tutorial-bakeoff.md).
+Recipe card: [`../docs/quickstart-bakeoff.md`](../docs/quickstart-bakeoff.md).
+
 ## YAML reference
 
 Every cell config has five sections plus an optional `runtime`. Extra keys are rejected
@@ -140,12 +174,41 @@ runtime:  { ... }    # optional, sensible defaults below
 
 ### `chunker`
 
+Seven chunkers in three families. Pick one per cell.
+
+**Structural** — split on headings, paragraphs, or word counts:
+
 | `type`            | Required                  | Defaults                                     |
 |-------------------|---------------------------|----------------------------------------------|
-| `sentence_aware`  | —                         | `doc_type: prose` (or `code`)                |
+| `sentence_aware`  | —                         | `doc_type: prose` (or `code`), `max_chars: 2000`, `min_chars: 200` |
 | `fixed_overlap`   | —                         | `window_words: 300`, `step_words: 150`       |
-| `hierarchy`       | —                         | `prefix_heading: true`, `min_section_chars: 100` |
+| `hierarchy`       | —                         | `prefix_heading: true`, `min_section_chars: 100`, `max_chars: 2000` |
 | `neighbor_expand` | `base:` (nested chunker)  | `window: 1`                                  |
+
+**Semantic** — splits on embedding-drift boundaries (no heading needed):
+
+| `type`     | Required | Defaults                                                           |
+|------------|----------|--------------------------------------------------------------------|
+| `semantic` | —        | `boundary_model: "sentence-transformers/all-MiniLM-L6-v2-int8"`, `breakpoint_percentile: 95`, `min_sentences_per_chunk: 3`, `max_chunk_chars: 2000`, `sentence_splitter: "naive"` |
+
+Pass `boundary_model: "same"` to reuse the cell's main embedder (trades
+speed for memory). See [`../docs/tutorial-semantic.md`](../docs/tutorial-semantic.md).
+
+**Summary-layer** — wrap any base chunker and change what gets embedded
+vs. what gets stored (`summary_embed`) or emit fine+coarse rows linked by
+`group_id` (`hierarchical_summary`):
+
+| `type`                   | Required                           | Defaults                             |
+|--------------------------|------------------------------------|--------------------------------------|
+| `summary_embed`          | `base:`, `summarizer:`             | —                                    |
+| `hierarchical_summary`   | `base:`, `summarizer:`, `grouping:` | `grouping: {strategy: fixed_n, n: 5}` |
+
+The `summarizer` config is a discriminated union: `{mode: external, field: ...}`
+pulls a pre-computed summary from a source document metadata field; `{mode:
+callable, module: "skimr.tfidf", function: "summarize", kwargs: {...}}`
+imports lazily at first use; `{mode: passthrough}` reuses the raw chunk as
+the summary (baseline). See [`../docs/summaries.md`](../docs/summaries.md)
+and [`../docs/tutorial-summaries.md`](../docs/tutorial-summaries.md).
 
 Full per-chunker guidance: [`../docs/chunkers.md`](../docs/chunkers.md).
 

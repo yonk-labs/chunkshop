@@ -159,7 +159,7 @@ class SemanticChunker(_Base):
     sentence_splitter: Literal["naive", "nltk"] = "naive"
 ```
 
-> **Note (2026-04-21):** When Brief 3 is implemented, default `max_chunk_chars` should be `2000` to align with the hierarchy/sentence_aware hotfix (see `Mission-Brief-chunker-max-chars.md`). 3000 was specified before that hotfix landed; keeping 3000 would re-introduce the same silent-truncation bug on bge-small.
+> **Note (2026-04-21 / resolved 2026-04-23):** Default `max_chunk_chars` dropped to `2000` at implementation time (not the plan's original `3000`) to align with the hierarchy/sentence_aware hotfix (see `Mission-Brief-chunker-max-chars.md`). 3000 would have re-introduced the same silent-truncation bug on bge-small. Brief 3 shipped on 2026-04-23 with `max_chunk_chars: 2000`.
 
 Add `SemanticChunker` to the `ChunkerConfig` union.
 

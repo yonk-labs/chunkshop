@@ -33,12 +33,21 @@ that a knowledgeable engineer would have picked anyway.
   (default), `heading_boundary`, `regex_boundary`, `jsonpath`. A JSON API
   dump becomes per-item documents in 4 lines of YAML instead of a 30-line
   Python splitter.
-- **4 chunkers:** `sentence_aware`, `fixed_overlap`, `hierarchy` (default,
-  heading-aware), `neighbor_expand` (wraps any base chunker, glues ±N
-  neighbor context into the embedding).
-- **6 embedder options** via `fastembed` (ONNX Runtime + HF tokenizers):
-  fp32 and int8 variants of BGE-small, BGE-base, and Nomic-embed. Int8
-  variants are pre-registered; swap with one YAML line.
+- **7 chunkers** in three families:
+  - Structural: `sentence_aware`, `fixed_overlap`, `hierarchy` (default),
+    `neighbor_expand` (wraps any base).
+  - Semantic: `semantic` — splits on embedding-drift boundaries when
+    there's no heading structure (transcripts, interviews, auto-captioned
+    audio). Ships with a dedicated small boundary model (MiniLM int8,
+    ~22 MB); SC-003 speed gate: 1.16× main-embed cost.
+  - Summary-layer: `summary_embed` replaces embedded content with a summary
+    (external source column / callable like skimr or sumy / passthrough).
+    `hierarchical_summary` emits fine+coarse rows linked by `group_id` for
+    match-coarse / return-fine retrieval.
+- **7 embedder options** via `fastembed` (ONNX Runtime + HF tokenizers):
+  fp32 and int8 variants of BGE-small, BGE-base, and Nomic-embed, plus the
+  MiniLM int8 boundary model registered by chunkshop. Int8 BGE variants
+  are pre-registered; swap with one YAML line.
 - **5 extractors:** `none`, `rake_keywords` (built-in), plus three opt-in
   pip extras: `keybert_phrases`, `spacy_entities`, `lang_detect`, and a
   `composite` that chains them.
@@ -48,6 +57,15 @@ that a knowledgeable engineer would have picked anyway.
 - **Parallel orchestration:** `chunkshop orchestrate --concurrency N`
   spawns cells as subprocesses — ONNX Runtime's process-global state makes
   this the safe default.
+- **`chunkshop bakeoff` CLI** — config-driven chunker × embedder matrix
+  evaluation against a user's corpus. Ingests every combo into its own
+  table, scores recall@k + MRR against hand-written gold queries, writes
+  a leaderboard + a `recommended.yaml` ready to drive real ingest. Built
+  on top of the same `run_cell` pipeline used by single-cell ingest.
+- **CI + release pipelines:** `.github/workflows/ci.yml` runs pytest +
+  both scenario libraries on PR and push (pgvector service container).
+  `.github/workflows/release.yml` publishes to PyPI on tag push via
+  Trusted Publishing (no API token).
 
 **Planned (not shipped):** Rust (`ort` + `tokenizers`) and Go
 (`onnxruntime_go` + `hugot`) ports, sharing the same YAML schema and
