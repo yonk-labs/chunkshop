@@ -1,0 +1,23 @@
+# Top-Level Title
+
+Intro paragraph that comes before the first nested heading. It is long enough to clear the default min_section_chars threshold of 100. Two sentences make this clearer.
+
+## Section A
+
+Body of Section A. This section is short on purpose to exercise normal flow. Still over the 100-char minimum.
+
+## Section B
+
+Body of Section B. Longer than A so that the section_part metadata reads zero throughout because we stay under max_chars. Adding a second sentence to comfortably exceed min_section_chars.
+
+### Section B.1
+
+Subsection body. Also over the min_section_chars threshold. The chunker treats this like any other heading — same section_part counter, same metadata shape.
+
+## Section Tiny
+
+Below threshold.
+
+## Section Big
+
+This section is going to be padded so it exceeds the configured max_chars and triggers split_to_max_chars recursion. Repeat content next: Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit.
