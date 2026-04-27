@@ -16,7 +16,7 @@
 use regex::Regex;
 use serde_json::json;
 
-use crate::config::SentenceAwareChunkerConfig;
+use crate::config::{HierarchyChunkerConfig, SentenceAwareChunkerConfig};
 use crate::source::Document;
 
 /// Chunk emitted by the chunker. `embedded_content` is what gets embedded;
@@ -63,6 +63,14 @@ fn md_heading_re() -> Regex {
     // Python: `r"^#{1,6}\s+.+$"` with re.MULTILINE.
     // Rust `regex` uses (?m) inline flag for multi-line.
     Regex::new(r"(?m)^#{1,6}\s+.+$").unwrap()
+}
+
+/// Heading regex with capture groups — group 1 = `#` count, group 2 = heading
+/// text. Used by `HierarchyChunker` to extract heading text for the embedded-
+/// content prefix and the `metadata.heading` field. Mirrors Python's
+/// `r"^(#{1,6})\s+(.+?)$"`.
+fn heading_with_text_re() -> Regex {
+    Regex::new(r"(?m)^(#{1,6})\s+(.+?)$").unwrap()
 }
 
 fn para_break_re() -> Regex {
@@ -276,6 +284,113 @@ fn split_sentences(text: &str, max_chars: usize) -> Vec<String> {
         out.push(buf);
     }
     out
+}
+
+/// Hierarchy chunker — direct port of
+/// `python/src/chunkshop/chunkers/hierarchy.py`. Splits a markdown doc on its
+/// `^#{1,6}` headings, emits one chunk per section (skipping sections shorter
+/// than `min_section_chars`), recursing into `split_to_max_chars` for sections
+/// exceeding `max_chars`. When `prefix_heading` is true, the heading text is
+/// prepended to `embedded_content` (separated by `\n\n`) — the bakeoff-winning
+/// trick that turns each section's heading into free framing context for the
+/// embedder.
+pub struct HierarchyChunker {
+    cfg: HierarchyChunkerConfig,
+}
+
+impl HierarchyChunker {
+    pub fn new(cfg: HierarchyChunkerConfig) -> Self {
+        Self { cfg }
+    }
+
+    pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        let text = &doc.content;
+        let re = heading_with_text_re();
+        let headings: Vec<(usize, usize, String)> = re
+            .captures_iter(text)
+            .map(|c| {
+                let m0 = c.get(0).unwrap();
+                let h_text = c
+                    .get(2)
+                    .map(|m| m.as_str().trim().to_string())
+                    .unwrap_or_default();
+                (m0.start(), m0.end(), h_text)
+            })
+            .collect();
+
+        if headings.is_empty() {
+            let body = text.trim();
+            if body.is_empty() {
+                return Vec::new();
+            }
+            let title = doc.title.clone().unwrap_or_default();
+            return self.emit_section_chunks(body, &title, &doc.id, 0);
+        }
+
+        let mut chunks: Vec<Chunk> = Vec::new();
+
+        if headings[0].0 > 0 {
+            let body = text[..headings[0].0].trim();
+            if body.chars().count() >= self.cfg.min_section_chars {
+                let title = doc.title.clone().unwrap_or_default();
+                let start_seq = chunks.len();
+                chunks.extend(self.emit_section_chunks(body, &title, &doc.id, start_seq));
+            }
+        }
+
+        for (i, (_h_start, h_end, h_text)) in headings.iter().enumerate() {
+            let start = *h_end;
+            let end = if i + 1 < headings.len() {
+                headings[i + 1].0
+            } else {
+                text.len()
+            };
+            let body = text[start..end].trim();
+            if body.chars().count() < self.cfg.min_section_chars {
+                continue;
+            }
+            let start_seq = chunks.len();
+            chunks.extend(self.emit_section_chunks(body, h_text, &doc.id, start_seq));
+        }
+
+        chunks
+    }
+
+    fn emit_section_chunks(
+        &self,
+        body: &str,
+        heading_text: &str,
+        doc_id: &str,
+        start_seq: usize,
+    ) -> Vec<Chunk> {
+        let parts: Vec<String> = if body.chars().count() > self.cfg.max_chars {
+            split_to_max_chars(body, self.cfg.max_chars)
+        } else {
+            vec![body.to_string()]
+        };
+        parts
+            .into_iter()
+            .enumerate()
+            .map(|(i, part)| {
+                let embedded = if !heading_text.is_empty() && self.cfg.prefix_heading {
+                    format!("{heading_text}\n\n{part}")
+                } else {
+                    part.clone()
+                };
+                Chunk {
+                    doc_id: doc_id.to_string(),
+                    seq_num: start_seq + i,
+                    original_content: part,
+                    embedded_content: embedded,
+                    metadata: json!({
+                        "strategy": "hierarchy",
+                        "heading": heading_text,
+                        "section_part": i,
+                    }),
+                }
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]

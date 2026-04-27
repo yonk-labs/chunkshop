@@ -5,11 +5,30 @@ use std::time::Instant;
 use anyhow::Result;
 use tracing::info;
 
-use crate::chunker::SentenceAwareChunker;
+use crate::chunker::{Chunk, HierarchyChunker, SentenceAwareChunker};
 use crate::config::{CellConfig, ChunkerConfig, EmbedderConfig, SourceConfig};
+use crate::source::Document;
 use crate::embedder::FastembedEmbedder;
 use crate::sink::PgVectorSink;
 use crate::source::FilesSource;
+
+/// Runtime dispatch over the supported chunkers. Mirrors the
+/// discriminated-union `ChunkerConfig` so each YAML branch maps to a single
+/// concrete implementation. Adding a new chunker = one variant + one match arm
+/// in the `match cfg.chunker` block above + one match arm in `chunk()` below.
+enum AnyChunker {
+    SentenceAware(SentenceAwareChunker),
+    Hierarchy(HierarchyChunker),
+}
+
+impl AnyChunker {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        match self {
+            AnyChunker::SentenceAware(c) => c.chunk(doc),
+            AnyChunker::Hierarchy(c) => c.chunk(doc),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct CellResult {
@@ -26,8 +45,9 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     let source = match cfg.source {
         SourceConfig::Files(fc) => FilesSource::new(fc),
     };
-    let chunker = match cfg.chunker {
-        ChunkerConfig::SentenceAware(cc) => SentenceAwareChunker::new(cc),
+    let chunker: AnyChunker = match cfg.chunker {
+        ChunkerConfig::SentenceAware(cc) => AnyChunker::SentenceAware(SentenceAwareChunker::new(cc)),
+        ChunkerConfig::Hierarchy(cc) => AnyChunker::Hierarchy(HierarchyChunker::new(cc)),
     };
     let mut embedder = match cfg.embedder {
         EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,

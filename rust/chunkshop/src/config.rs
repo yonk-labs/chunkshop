@@ -59,6 +59,7 @@ fn default_encoding() -> String {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChunkerConfig {
     SentenceAware(SentenceAwareChunkerConfig),
+    Hierarchy(HierarchyChunkerConfig),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -71,6 +72,16 @@ pub struct SentenceAwareChunkerConfig {
     pub min_chars: usize,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct HierarchyChunkerConfig {
+    #[serde(default = "default_prefix_heading")]
+    pub prefix_heading: bool,
+    #[serde(default = "default_min_section_chars")]
+    pub min_section_chars: usize,
+    #[serde(default = "default_max_chars")]
+    pub max_chars: usize,
+}
+
 fn default_doc_type() -> String {
     "prose".to_string()
 }
@@ -79,6 +90,12 @@ fn default_max_chars() -> usize {
 }
 fn default_min_chars() -> usize {
     200
+}
+fn default_prefix_heading() -> bool {
+    true
+}
+fn default_min_section_chars() -> usize {
+    100
 }
 
 #[derive(Debug, Clone, Deserialize)]
