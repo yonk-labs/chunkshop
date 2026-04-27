@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+blake2 = { version = "0.10", default-features = false }
 clap = { version = "4", features = ["derive"] }
 fastembed = "5"
 glob = "0.3"

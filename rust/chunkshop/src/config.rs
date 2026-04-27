@@ -13,6 +13,78 @@ use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 use serde::Deserialize;
 
+const ALLOWED_PROMOTE_TYPES: &[&str] = &[
+    "text",
+    "text[]",
+    "int",
+    "bigint",
+    "boolean",
+    "jsonb",
+    "timestamptz",
+    "date",
+];
+
+/// One promoted jsonb path → typed Postgres column. Mirrors Python's
+/// `chunkshop.config.PromoteColumn`. The `path` is dot-separated; each segment
+/// must match `^[A-Za-z_][A-Za-z0-9_]*$`. The `type_` must be in
+/// `ALLOWED_PROMOTE_TYPES` — this is SQL-injection-prevention by allowlist:
+/// `_ensure_promote_columns` interpolates the type as a literal into DDL.
+#[derive(Debug, Clone)]
+pub struct PromoteColumn {
+    pub path: String,
+    pub type_: String,
+}
+
+impl PromoteColumn {
+    /// Postgres column identifier — dots → double-underscore, lowercased.
+    /// Mirrors Python's `PromoteColumn.column_name`.
+    pub fn column_name(&self) -> String {
+        self.path.replace('.', "__").to_lowercase()
+    }
+
+    fn validate_path(path: &str) -> std::result::Result<(), String> {
+        if path.is_empty() {
+            return Err("path must not be empty".into());
+        }
+        let seg_re = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap();
+        for seg in path.split('.') {
+            if !seg_re.is_match(seg) {
+                return Err(format!(
+                    "path segments must match ^[A-Za-z_][A-Za-z0-9_]*$ separated by '.', got {path:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_type(t: &str) -> std::result::Result<(), String> {
+        if !ALLOWED_PROMOTE_TYPES.contains(&t) {
+            return Err(format!(
+                "promote_metadata type must be one of {ALLOWED_PROMOTE_TYPES:?}, got {t:?}"
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PromoteColumn {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            path: String,
+            #[serde(rename = "type")]
+            type_: String,
+        }
+        let r = Raw::deserialize(d)?;
+        Self::validate_path(&r.path).map_err(serde::de::Error::custom)?;
+        Self::validate_type(&r.type_).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            path: r.path,
+            type_: r.type_,
+        })
+    }
+}
+
 /// One YAML = one cell. Matches `python/src/chunkshop/config.py::CellConfig`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CellConfig {
@@ -129,19 +201,30 @@ pub struct TargetConfig {
     pub overwrite: bool,
     #[serde(default = "default_hnsw")]
     pub hnsw: bool,
-    /// `overwrite` (default), `append`, or `create_if_missing`. Rust MVP only
-    /// implements `overwrite` and `create_if_missing`; `append` returns an
-    /// error at runtime directing the user to the Python implementation.
+    /// `overwrite` (default), `append`, or `create_if_missing`. All three are
+    /// implemented in Rust as of MB-3 (sink full-mode parity).
     #[serde(default = "default_mode")]
     pub mode: String,
     #[serde(default)]
     pub source_tag: Option<String>,
-    /// Accepted in YAML but unused by the Rust MVP (no promoted-column writes).
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    pub promote_metadata: Option<serde_yml::Value>,
+    #[serde(default)]
+    pub promote_metadata: Vec<PromoteColumn>,
     #[serde(default)]
     pub force_overwrite: bool,
+}
+
+impl TargetConfig {
+    /// Post-deserialize validation that crosses field boundaries (e.g.
+    /// mode/source_tag coupling). Identifier safety is enforced separately in
+    /// `load_config` via `validate_ident`.
+    fn validate(&self) -> Result<()> {
+        if self.mode == "append" && self.source_tag.is_none() {
+            return Err(anyhow!(
+                "target.mode='append' requires target.source_tag to identify this cell"
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn default_dsn_env() -> String {
@@ -187,5 +270,120 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
     if let Some(tag) = &cfg.target.source_tag {
         validate_ident(tag, "target.source_tag")?;
     }
+    cfg.target.validate()?;
     Ok(cfg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_yaml(body: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "chunkshop-rs-cfg-{}.yaml",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn rejects_append_without_source_tag() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { dsn_env: D, schema: s, table: t, mode: append, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("source_tag"),
+            "expected source_tag mention, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_promote_type() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  dsn_env: D
+  schema: s
+  table: t
+  mode: overwrite
+  hnsw: false
+  promote_metadata:
+    - { path: entities.ORG, type: bogus_type }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("type"),
+            "expected promote_metadata type complaint, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_promote_path() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  dsn_env: D
+  schema: s
+  table: t
+  mode: overwrite
+  hnsw: false
+  promote_metadata:
+    - { path: "0entities.ORG", type: text }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("path"),
+            "expected promote_metadata path complaint, got: {err}"
+        );
+    }
+
+    #[test]
+    fn promote_column_name_lowercases_and_double_underscores() {
+        let pc: PromoteColumn =
+            serde_yml::from_str("{ path: entities.ORG, type: \"text[]\" }").unwrap();
+        assert_eq!(pc.column_name(), "entities__org");
+    }
+
+    #[test]
+    fn parses_promote_metadata_into_typed_vec() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  dsn_env: D
+  schema: s
+  table: t
+  mode: overwrite
+  hnsw: false
+  promote_metadata:
+    - { path: heading, type: text }
+    - { path: entities.ORG, type: "text[]" }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        assert_eq!(cfg.target.promote_metadata.len(), 2);
+        assert_eq!(cfg.target.promote_metadata[0].path, "heading");
+        assert_eq!(cfg.target.promote_metadata[0].type_, "text");
+        assert_eq!(cfg.target.promote_metadata[1].column_name(), "entities__org");
+    }
 }
