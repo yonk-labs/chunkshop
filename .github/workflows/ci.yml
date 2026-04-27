@@ -66,7 +66,10 @@ jobs:
 
       - name: Install project + dev + nlp extras
         working-directory: python
-        run: uv sync --extra dev --extra extractors --extra nlp
+        # --frozen installs strictly from the committed lockfile and skips
+        # validation of editable path sources that aren't selected (the
+        # `skimr` extra points at a sibling repo that isn't present on CI).
+        run: uv sync --frozen --extra dev --extra extractors --extra nlp
 
       - name: Verify pgvector extension available
         run: |
