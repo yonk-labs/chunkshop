@@ -68,6 +68,19 @@
 
 ### Changed
 
+- **`chunkshop-rs` now ships the `hierarchy` chunker** — Python's shipped
+  default and the bakeoff winner. Same logic: heading prefix prepended to
+  `embedded_content` (`{heading}\n\n{body}`), per-`section_part` metadata,
+  `min_section_chars` filter, recursion through `split_to_max_chars` for
+  oversized sections. Cross-language **byte-identical chunk text** verified
+  by `rust/chunkshop/tests/hierarchy_parity.rs` against a committed Python
+  reference (`scripts/produce_rust_hierarchy_reference.py`). With this plus
+  the int8 BGE embedder parity (below), the canonical
+  `hierarchy + bge-base-int8` config now runs end-to-end on Rust and is
+  retrieval-equivalent to Python on the sample corpus
+  (`scripts/parity_check.py`: top-1 match True, 100% byte-identical chunk
+  text, max cosine drift 7e-3).
+
 - **`chunkshop-rs` embedder now matches Python on the same Xenova int8 ONNX**
   for `Xenova/bge-base-en-v1.5-int8` and `Xenova/bge-small-en-v1.5-int8`. The
   Rust embedder now downloads `onnx/model_quantized.onnx` (and four tokenizer

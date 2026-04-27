@@ -60,10 +60,14 @@ def write_config(
         "  id_from: stem\n"
         "  encoding: utf-8\n"
         "\n"
+        # Hierarchy is Python's shipped default and the bakeoff winner. Both
+        # implementations now produce byte-identical chunks here (verified by
+        # rust/chunkshop/tests/hierarchy_parity.rs).
         "chunker:\n"
-        "  type: sentence_aware\n"
+        "  type: hierarchy\n"
+        "  prefix_heading: true\n"
+        "  min_section_chars: 100\n"
         "  max_chars: 2000\n"
-        "  min_chars: 0\n"
         "\n"
         "embedder:\n"
         "  type: fastembed\n"
