@@ -2031,19 +2031,20 @@ wheels = [
 
 [[package]]
 name = "skimr"
-version = "0.2.0.dev0"
+version = "0.2.1"
 source = { editable = "../../extractive_summary" }
 
 [package.metadata]
 requires-dist = [
-    { name = "networkx", marker = "extra == 'textrank'", specifier = ">=3.0" },
+    { name = "networkx", marker = "extra == 'textrank'", specifier = ">=3.0,<3.5" },
     { name = "numpy", marker = "extra == 'bench'", specifier = ">=1.24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
     { name = "pytest-subtests", marker = "extra == 'dev'", specifier = ">=0.10" },
     { name = "sumy", marker = "extra == 'bench'", specifier = ">=0.11" },
     { name = "text2num", marker = "extra == 'wordforms'", specifier = ">=3.0" },
+    { name = "yake", marker = "extra == 'yake'", specifier = ">=0.4.8" },
 ]
-provides-extras = ["textrank", "wordforms", "dev", "bench"]
+provides-extras = ["textrank", "wordforms", "yake", "dev", "bench"]
 
 [[package]]
 name = "smart-open"

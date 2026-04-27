@@ -12,10 +12,17 @@ use anyhow::{Context, Result};
 use hf_hub::api::sync::Api;
 
 /// Files needed to construct `fastembed::UserDefinedEmbeddingModel`.
+///
+/// `special_tokens_map` is fetched (because fastembed-py reads it) but
+/// chunkshop-rs's hand-rolled embedder only needs `tokenizer.json` for
+/// tokenization — the special-tokens table is already baked into the
+/// tokenizer.json the BGE Xenova repos ship. The field is kept for
+/// future-proofing and to keep the file-set parallel to fastembed-py.
 pub struct HfModelFiles {
     pub onnx: Vec<u8>,
     pub tokenizer: Vec<u8>,
     pub tokenizer_config: Vec<u8>,
+    #[allow(dead_code)]
     pub special_tokens_map: Vec<u8>,
     pub config: Vec<u8>,
 }
