@@ -71,7 +71,7 @@ The pipeline is `Source → Chunker → Embedder → Extractor → Sink`. Every 
 
 ## Repo conventions
 
-- **`skill-output/` is gitignored.** Mission briefs live there, not in git. Plans are tracked in `docs/superpowers/plans/`.
+- **`skill-output/` is gitignored.** Mission briefs live there, not in git. Active plans live in `docs/superpowers/plans/`; completed plans are moved to `archive/docs/superpowers/plans/` once their feature ships.
 - **Sample corpus glob is `docs/samples/*-*.md`, not `*.md`** — the latter silently picks up `docs/samples/README.md` and pollutes the corpus. Stick with `*-*.md` for the four dash-named fixtures (`handbook-*`, `release-notes`).
 - **Tests that use the sample corpus** use the absolute path from `test_end_to_end_samples_corpus.py::SAMPLES_GLOB` — don't hardcode relative paths from test files.
 - **All four sample YAMLs** (`sample.yaml`, `sample-sentence-aware.yaml`, `sample-neighbor-expand.yaml`, `sample-multi-source.yaml`) now use the schema-flex `mode:` shape. The legacy `overwrite: true` field is still accepted by the pydantic model (internal `factorial*/` configs and a few test fixtures still use it) but user-facing docs and samples are all on `mode: overwrite`.
@@ -79,7 +79,9 @@ The pipeline is `Source → Chunker → Embedder → Extractor → Sink`. Every 
 
 ## Active work
 
-`docs/superpowers/plans/` has four implementation plans ready to execute (metadata extractors, semantic chunker, summary-embed, DocFramer). `skill-output/mission-brief/` (gitignored) has the matching mission briefs. Check `git worktree list` for any in-flight feature branches that haven't merged yet — at the time of writing, `feat/docframer` at `../chunkshop-docframer/` has code for Tasks 1-5 done but tutorial + quickstart (Tasks 8-9) pending before merge.
+No in-flight implementation plans. The seven plans for v0.2.0 features (metadata extractors, semantic chunker, summary-embed, DocFramer, schema-flexibility, chunker `max_chars` hotfix, bakeoff CLI) all shipped and were moved to `archive/docs/superpowers/plans/` for historical reference. Mission briefs in `skill-output/mission-brief/` (gitignored) sit alongside the now-archived plans.
+
+When new work starts, run `/mission-brief` then `superpowers:writing-plans` to produce the next plan into `docs/superpowers/plans/`. Check `git worktree list` for any in-flight feature branches before assuming the working state is `main`.
 
 ## Sibling repos this one interacts with
 
