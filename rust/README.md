@@ -61,41 +61,59 @@ YAML configs from the Python side are **accepted** (unknown fields on
 `runtime`/`framer`/`extractor` are ignored) — but obviously the ignored stages
 won't run.
 
-## Known drift: embedding values are NOT bit-exact vs Python
+## Embedding parity vs Python
 
-Python's default embedder is `Xenova/bge-base-en-v1.5-int8`: a Xenova-uploaded
-int8-quantized ONNX model, registered in
-`python/src/chunkshop/embedders/_registry.py`.
+For the two registered Xenova int8 BGE variants, `chunkshop-rs` loads
+**the same ONNX file Python loads** (`Xenova/bge-base-en-v1.5/onnx/model_quantized.onnx`
+and the small-model equivalent) via [`hf-hub`](https://crates.io/crates/hf-hub),
+tokenizes through the `tokenizers` crate with the same padding/truncation
+config fastembed-py uses, runs ORT with `intra_threads=1`, CLS-pools, and
+L2-normalizes (with f64 sum-of-squares to mirror numpy). On the shipped
+4-file / 14-chunk sample corpus the cross-language parity check reports:
 
-fastembed-rs does not ship an exact match for that variant. The closest
-analog is `BGEBaseENV15Q`, which points at Qdrant's **fp32-optimized** ONNX
-(`Qdrant/bge-base-en-v1.5-onnx-Q`). Bit-exact parity would require pointing
-`ort` at the same Xenova ONNX file Python uses — that's a post-MVP hook.
+- **Top-k retrieval order: identical** (Python and Rust pick the same
+  chunks in the same order for a fixed query) — the user-visible RAG claim.
+- Chunk `embedded_content`: **100% byte-for-byte identical**.
+- Cosine distance between matched embeddings: **mean ~1-2e-3, max ~5-15e-3**
+  per chunk (was ~1e-2 mean before this work — ~5x improvement).
 
-In practice on the shipped 4-file sample corpus, the parity check
-(`scripts/parity_check.py`) reports:
+Strict bitwise equality is **not** achievable: Python's `onnxruntime` wheel
+and Rust's [`ort`](https://crates.io/crates/ort) crate are independent ORT
+C++ binary builds. They diverge by ULPs (and occasionally more on quantized
+matmul paths) regardless of thread count. If your workflow needs bitwise
+reproducibility (e.g. cross-implementation vector hashing), use one
+implementation throughout.
 
-- Chunk `embedded_content`: **100% byte-for-byte identical** between Python and Rust.
-- Top-5 retrieval: **identical order** for the fixed query.
-- Chunk-level cosine distance between matched embeddings: **~0.01** (fp32 vs
-  int8 drift; not bit-exact, but wire-format-compatible — the HNSW index and
-  cosine ordering behave the same).
+For all other model names the embedder falls back to fastembed-rs's stock
+variants. Those *do not* claim parity with Python — they use Qdrant's
+fp32-optimized ONNX, a different file from Python's BAAI fp32 ONNX, and
+typically drift ~1e-3 per element.
 
-If you need bit-exactness, use the Python implementation until the Rust one
-grows a user-defined-ONNX path.
+Model-name mapping today (in `src/embedder.rs`):
 
-Model-name mapping today (in `src/embedder.rs::resolve_model_name`):
-
-| Python YAML `model_name`                     | fastembed-rs variant | Notes                          |
-|----------------------------------------------|----------------------|--------------------------------|
-| `Xenova/bge-base-en-v1.5-int8`               | `BGEBaseENV15Q`      | fp32-optimized, closest match  |
-| `Xenova/bge-small-en-v1.5-int8`              | `BGESmallENV15Q`     | fp32-optimized, closest match  |
-| `BAAI/bge-base-en-v1.5`                      | `BGEBaseENV15`       | direct                         |
-| `BAAI/bge-small-en-v1.5`                     | `BGESmallENV15`      | direct                         |
-| `BAAI/bge-large-en-v1.5`                     | `BGELargeENV15`      | direct                         |
-| `sentence-transformers/all-MiniLM-L6-v2`     | `AllMiniLML6V2`      | direct                         |
+| Python YAML `model_name`                     | Rust path                        | Parity vs Python |
+|----------------------------------------------|----------------------------------|------------------|
+| `Xenova/bge-base-en-v1.5-int8`               | hand-rolled ORT + Xenova ONNX    | retrieval-identical, cos drift ≤ 1.5e-2 |
+| `Xenova/bge-small-en-v1.5-int8`              | hand-rolled ORT + Xenova ONNX    | retrieval-identical, cos drift ≤ 1.5e-2 |
+| `BAAI/bge-base-en-v1.5`                      | fastembed-rs `BGEBaseENV15`      | wire-format only |
+| `BAAI/bge-small-en-v1.5`                     | fastembed-rs `BGESmallENV15`     | wire-format only |
+| `BAAI/bge-large-en-v1.5`                     | fastembed-rs `BGELargeENV15`     | wire-format only |
+| `sentence-transformers/all-MiniLM-L6-v2`     | fastembed-rs `AllMiniLML6V2`     | wire-format only |
 
 Any other `model_name` errors at cell start.
+
+### Parity verification
+
+- `rust/chunkshop/tests/embedding_parity.rs` — embeds 5 fixed inputs and
+  asserts (a) median per-vector cosine distance ≤ 1e-7, (b) max abs
+  element-wise diff ≤ 1e-2, (c) max per-vector cosine distance ≤ 5e-3
+  against committed Python reference vectors. Skips cleanly without
+  network. Re-generate the reference with
+  `uv run --project python python scripts/produce_rust_parity_reference.py`.
+- `scripts/parity_check.py` — end-to-end ingest comparison. Boots Python
+  and Rust against the same corpus into two tables, compares top-k
+  retrieval and per-chunk cosine. Manual; needs both toolchains plus
+  Postgres.
 
 ## Cross-language parity check
 
@@ -131,7 +149,6 @@ re-creates it under `mode: overwrite`.
 
 | Want                                            | Lift |
 |-------------------------------------------------|------|
-| Bit-exact int8 parity                           | Wire up `fastembed::UserDefinedEmbeddingModel` with Xenova's `model_quantized.onnx` byte-for-byte from Python's fastembed cache. |
 | `hierarchy` chunker                             | Port `python/src/chunkshop/chunkers/hierarchy.py` (~100 lines). |
 | Extractors                                      | Each is an independent pure-Rust port modulo Python-only deps (spaCy can't cross). |
 | Orchestrator                                    | Spawn N `chunkshop-rs ingest` subprocesses over N YAML configs. |

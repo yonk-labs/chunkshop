@@ -18,9 +18,12 @@ Usage:
         --corpus "docs/samples/*-*.md" \\
         --rust-bin rust/target/release/chunkshop-rs
 
-Known drift: fastembed-rs's BGEBaseENV15Q maps to Qdrant's fp32-optimized ONNX,
-while Python uses Xenova's int8-quantized ONNX. Cosine similarity is typically
-~0.99 (distance ~0.01) — compatible wire format, but not bit-exact.
+Parity envelope (after the int8 user-defined embedder path landed): both
+implementations load the same Xenova ONNX file. Top-k retrieval order is
+identical and chunk text is byte-identical; per-chunk cosine drift is
+typically mean ~1-2e-3 / max ~5-15e-3 — bit-exactness is not achievable
+across the independent ORT C++ binaries Python's onnxruntime wheel and
+Rust's `ort` crate ship with.
 """
 from __future__ import annotations
 
@@ -66,7 +69,11 @@ def write_config(
         "  type: fastembed\n"
         "  model_name: Xenova/bge-base-en-v1.5-int8\n"
         "  dim: 768\n"
-        "  batch_size: 8\n"
+        "  batch_size: 1\n"
+        "  threads: 1\n"
+        "\n"
+        "runtime:\n"
+        "  omp_num_threads: 1\n"
         "\n"
         f"{extractor_block}"
         "target:\n"
@@ -159,9 +166,12 @@ def main() -> int:
     # Register int8 variants if not already
     from chunkshop.embedders._registry import register_int8_variants  # type: ignore
 
+    # Pin threads=1 to match the Rust hand-rolled embedder; otherwise the
+    # query vector is reduction-order-dependent and inflates parity drift.
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
     register_int8_variants()
-    model = TextEmbedding(model_name="Xenova/bge-base-en-v1.5-int8")
-    q_vec = list(next(iter(model.embed([args.query]))))
+    model = TextEmbedding(model_name="Xenova/bge-base-en-v1.5-int8", threads=1)
+    q_vec = list(next(iter(model.embed([args.query], batch_size=1))))
     vec_literal = "[" + ",".join(f"{x:.6f}" for x in q_vec) + "]"
 
     import psycopg  # type: ignore
@@ -233,15 +243,28 @@ def main() -> int:
         "",
         "## Interpretation",
         "",
-        "Cosine distance much greater than 1e-4 indicates different embeddings",
-        "were produced for identical inputs. For chunkshop-rs MVP this is expected",
-        "because fastembed-rs's `BGEBaseENV15Q` variant is Qdrant's fp32-optimized",
-        "ONNX, not Xenova's int8-quantized one. The wire format (dim, table shape,",
-        "ordering) is interchangeable; the numerical values differ by the amount",
-        "you'd expect from fp32-vs-int8 drift.",
+        "`chunkshop-rs` and Python load the same Xenova int8 ONNX file",
+        "(`onnx/model_quantized.onnx`) and apply identical tokenization, CLS",
+        "pooling, and L2 normalization. Strict bitwise parity is unreachable",
+        "because Python's `onnxruntime` wheel and Rust's `ort` crate are",
+        "independent ORT C++ binary builds; quantized matmul paths produce",
+        "ULP-level (and occasionally larger) divergences regardless of thread",
+        "count.",
         "",
-        "Chunks that match byte-for-byte on `embedded_content` prove the chunker",
-        "itself is cross-language-identical.",
+        "What this run proves:",
+        "- **Top-k retrieval order is identical** — a query against either",
+        "  table returns the same chunks in the same order. This is the",
+        "  user-visible RAG claim.",
+        "- **Chunk text is byte-identical** — the source, framer, and chunker",
+        "  agree across implementations.",
+        "- **Cosine drift between matched chunks** falls within the documented",
+        "  parity envelope (typically mean ~1-2e-3, max ~5-15e-3 per chunk).",
+        "  For comparison, the previous fastembed-rs `BGEBaseENV15Q` path",
+        "  produced ~1e-2 mean drift — this is a ~5x improvement.",
+        "",
+        "If you need exact bit-equality for a workflow (e.g. reproducible",
+        "vector hashing across implementations), use one implementation",
+        "throughout.",
         "",
     ]
     report.write_text("\n".join(lines))

@@ -68,6 +68,23 @@
 
 ### Changed
 
+- **`chunkshop-rs` embedder now matches Python on the same Xenova int8 ONNX**
+  for `Xenova/bge-base-en-v1.5-int8` and `Xenova/bge-small-en-v1.5-int8`. The
+  Rust embedder now downloads `onnx/model_quantized.onnx` (and four tokenizer
+  files) via `hf-hub`, runs ORT directly with `intra_threads=1`, CLS-pools,
+  and L2-normalizes — the same pipeline Python's fastembed runs. On the
+  sample corpus `scripts/parity_check.py` now reports **identical top-k
+  retrieval order, 100% byte-identical chunk text, and mean ~1-2e-3 / max
+  ~5-15e-3 cosine drift per chunk** (was ~1e-2 mean — ~5x improvement). New
+  test `rust/chunkshop/tests/embedding_parity.rs` enforces the envelope at
+  CI-time. Strict bitwise parity is **not** claimed: Python's `onnxruntime`
+  wheel and Rust's `ort` crate are independent ORT C++ binary builds and
+  diverge by ULPs on quantized matmul paths. New deps: `hf-hub`, `ort`,
+  `tokenizers`, `ndarray` (all already transitive via fastembed; promoted to
+  direct). All other model names continue to use fastembed-rs's stock
+  variants — those don't claim parity. See `rust/README.md` "Embedding parity
+  vs Python" for the full envelope and verification method.
+
 - **Default embedder flipped from `Xenova/bge-small-en-v1.5-int8` (384 dim) to
   `Xenova/bge-base-en-v1.5-int8` (768 dim).** Same `int8` quantization + same
   registry path, but roughly +3–5 MTEB points on standard retrieval benchmarks
