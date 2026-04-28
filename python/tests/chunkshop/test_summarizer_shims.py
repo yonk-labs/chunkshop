@@ -16,9 +16,9 @@ SAMPLE = (
 )
 
 
-@pytest.mark.skipif(not _has("skimr"), reason="skimr not installed")
-def test_skimr_shim_returns_string():
-    from chunkshop.summarizers.skimr import summarize
+@pytest.mark.skipif(not _has("lede"), reason="lede not installed")
+def test_lede_shim_returns_string():
+    from chunkshop.summarizers.lede import summarize
     s = summarize(SAMPLE, max_length=200)
     assert isinstance(s, str), f"expected str, got {type(s).__name__}"
     assert s  # non-empty
@@ -26,9 +26,9 @@ def test_skimr_shim_returns_string():
     assert len(s) <= len(SAMPLE)
 
 
-@pytest.mark.skipif(not _has("skimr"), reason="skimr not installed")
-def test_skimr_shim_empty_input_returns_empty():
-    from chunkshop.summarizers.skimr import summarize
+@pytest.mark.skipif(not _has("lede"), reason="lede not installed")
+def test_lede_shim_empty_input_returns_empty():
+    from chunkshop.summarizers.lede import summarize
     assert summarize("") == ""
     assert summarize("   \n  ") == ""
 

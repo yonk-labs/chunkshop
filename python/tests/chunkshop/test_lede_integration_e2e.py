@@ -1,6 +1,6 @@
-"""E2E: SummaryEmbedChunker wrapping hierarchy + skimr.summarize callable (SC-005).
+"""E2E: SummaryEmbedChunker wrapping hierarchy + lede.summarize callable (SC-005).
 
-Skips cleanly if skimr isn't installed or Postgres is unreachable.
+Skips cleanly if lede isn't installed or Postgres is unreachable.
 Also covers SC-006 (external mode with json_corpus) in a sibling test.
 """
 import json
@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-pytest.importorskip("skimr")
+pytest.importorskip("lede")
 import psycopg  # noqa: E402
 
 from chunkshop.config import CellConfig  # noqa: E402
@@ -32,25 +32,25 @@ def ensure_pg():
     os.environ[DSN_ENV] = dsn
     yield dsn
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        cur.execute("DROP SCHEMA IF EXISTS chunkshop_skimr_e2e CASCADE")
+        cur.execute("DROP SCHEMA IF EXISTS chunkshop_lede_e2e CASCADE")
         conn.commit()
 
 
-def test_summary_embed_with_skimr_through_sink(ensure_pg):
-    """End-to-end: files source → hierarchy base + skimr callable → pgvector.
+def test_summary_embed_with_lede_through_sink(ensure_pg):
+    """End-to-end: files source → hierarchy base + lede callable → pgvector.
 
-    Verifies SC-005 (callable mode with real skimr) and confirms the summarizer
+    Verifies SC-005 (callable mode with real lede) and confirms the summarizer
     metadata stamp survives through to the target table.
     """
     cfg = CellConfig(
-        cell_name="skimr_e2e",
+        cell_name="lede_e2e",
         source={"type": "files", "glob": SAMPLES_GLOB, "id_from": "stem"},
         chunker={
             "type": "summary_embed",
             "base": {"type": "hierarchy"},
             "summarizer": {
                 "mode": "callable",
-                "module": "chunkshop.summarizers.skimr",
+                "module": "chunkshop.summarizers.lede",
                 "function": "summarize",
                 "kwargs": {"max_length": 300},
             },
@@ -63,10 +63,10 @@ def test_summary_embed_with_skimr_through_sink(ensure_pg):
         },
         target={
             "dsn_env": DSN_ENV,
-            "schema": "chunkshop_skimr_e2e",
+            "schema": "chunkshop_lede_e2e",
             "table": "summarized",
             "mode": "create_if_missing",
-            "source_tag": "skimr_test",
+            "source_tag": "lede_test",
             "hnsw": False,
         },
     )
@@ -77,7 +77,7 @@ def test_summary_embed_with_skimr_through_sink(ensure_pg):
     with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT original_content, embedded_content, metadata->>'summarizer' "
-            "FROM chunkshop_skimr_e2e.summarized LIMIT 20"
+            "FROM chunkshop_lede_e2e.summarized LIMIT 20"
         )
         rows = cur.fetchall()
         assert len(rows) >= 1
@@ -127,7 +127,7 @@ def test_summary_embed_external_with_json_corpus(ensure_pg, tmp_path):
         },
         target={
             "dsn_env": DSN_ENV,
-            "schema": "chunkshop_skimr_e2e",
+            "schema": "chunkshop_lede_e2e",
             "table": "external_sum",
             "mode": "create_if_missing",
             "source_tag": "external_test",
@@ -141,7 +141,7 @@ def test_summary_embed_external_with_json_corpus(ensure_pg, tmp_path):
     with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT doc_id, embedded_content, metadata->>'summarizer' "
-            "FROM chunkshop_skimr_e2e.external_sum"
+            "FROM chunkshop_lede_e2e.external_sum"
         )
         rows = cur.fetchall()
         by_doc = {r[0]: (r[1], r[2]) for r in rows}

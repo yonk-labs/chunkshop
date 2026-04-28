@@ -41,7 +41,7 @@ that a knowledgeable engineer would have picked anyway.
     audio). Ships with a dedicated small boundary model (MiniLM int8,
     ~22 MB); SC-003 speed gate: 1.16× main-embed cost.
   - Summary-layer: `summary_embed` replaces embedded content with a summary
-    (external source column / callable like skimr or sumy / passthrough).
+    (external source column / callable like lede or sumy / passthrough).
     `hierarchical_summary` emits fine+coarse rows linked by `group_id` for
     match-coarse / return-fine retrieval.
 - **7 embedder options** via `fastembed` (ONNX Runtime + HF tokenizers):

@@ -9,7 +9,7 @@ chunker:
     type: hierarchy
   summarizer:
     mode: callable
-    module: chunkshop.summarizers.skimr
+    module: chunkshop.summarizers.lede
     function: summarize
     kwargs:
       max_length: 300

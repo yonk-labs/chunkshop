@@ -8,7 +8,7 @@ table, linked by `metadata.group_id`.
 - **Source:** one markdown file with three `#` sections.
 - **Base chunker:** `hierarchy` (required for `section_aware` grouping).
 - **Summarizer:** `passthrough` — keeps CI fast + dep-free; in production
-  you'd wire skimr or sumy here.
+  you'd wire lede or sumy here.
 - **Promote:** `metadata.granularity` → `text` and `metadata.group_id` → `text`
   so retrieval can filter `WHERE granularity = 'fine'` with a GIN index.
 

@@ -33,7 +33,7 @@ flowchart TB
       CHK[chunkers/<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand<br/>semantic<br/>summary_embed · hierarchical_summary]
       EMB[embedders/<br/>fastembed_provider<br/>+ int8 _registry]
       EXT[extractors/<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · composite]
-      SUM[summarizers/<br/>skimr · sumy shims]
+      SUM[summarizers/<br/>lede · sumy shims]
     end
 
     subgraph sink[Sink]
@@ -80,7 +80,7 @@ similarity drops — use when your source has no syntactic structure (transcript
 interviews, auto-captioned audio). The two *summary-layer* chunkers
 (`summary_embed`, `hierarchical_summary`) wrap any base chunker and change what
 gets embedded vs. what gets stored; they dispatch summary generation to an
-external source column, a callable module (skimr, sumy), or passthrough.
+external source column, a callable module (lede, sumy), or passthrough.
 `chunkshop.summarizers.*` ships adapter shims so libraries with non-matching
 APIs integrate via one YAML line.
 

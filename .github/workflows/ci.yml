@@ -66,9 +66,9 @@ jobs:
 
       - name: Install project + dev + nlp extras
         working-directory: python
-        # --frozen installs strictly from the committed lockfile and skips
-        # validation of editable path sources that aren't selected (the
-        # `skimr` extra points at a sibling repo that isn't present on CI).
+        # --frozen installs strictly from the committed lockfile and refuses
+        # to update it. Catches "I forgot to commit uv.lock after adding a
+        # dep" before it merges.
         run: uv sync --frozen --extra dev --extra extractors --extra nlp
 
       - name: Verify pgvector extension available

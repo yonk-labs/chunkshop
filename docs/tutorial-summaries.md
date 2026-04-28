@@ -1,4 +1,4 @@
-# Tutorial — summary-embed + hierarchical summaries with skimr and sumy
+# Tutorial — summary-embed + hierarchical summaries with lede and sumy
 
 This walkthrough goes from zero to "fine+coarse rows in the same Postgres
 table, queryable by granularity" using the four bundled sample docs in
@@ -8,35 +8,35 @@ table, queryable by granularity" using the four bundled sample docs in
 
 - Postgres 16 with pgvector installed and reachable. Set
   `CHUNKSHOP_DSN=postgresql://user:pass@host:port/db` in your shell.
-- chunkshop cloned locally; skimr cloned as a sibling directory
+- chunkshop cloned locally; lede cloned as a sibling directory
   (`../extractive_summary/` relative to the chunkshop root).
 - Python 3.12, `uv` installed.
 
 ```bash
 cd chunkshop/python
-uv sync --extra dev --extra extractors --extra skimr --extra sumy
+uv sync --extra dev --extra extractors --extra lede --extra sumy
 ```
 
-`[skimr]` uses the sibling repo as an editable path dep — no PyPI install.
+`[lede]` uses the sibling repo as an editable path dep — no PyPI install.
 `[sumy]` installs sumy + NLTK from PyPI.
 
 Verify both summarizer libraries are reachable through the chunkshop shims:
 
 ```bash
 uv run python -c "
-from chunkshop.summarizers.skimr import summarize as sk
+from chunkshop.summarizers.lede import summarize as sk
 from chunkshop.summarizers.sumy import summarize as su
-print('skimr:', sk('The quick brown fox jumps over the lazy dog. The fox is quick and brown.', max_length=40))
+print('lede:', sk('The quick brown fox jumps over the lazy dog. The fox is quick and brown.', max_length=40))
 print('sumy: ', su('The quick brown fox jumps. The dog slept. Nothing else happened that day.', algorithm='lex_rank', sentences_count=1))
 "
 ```
 
 If either import fails, your extras aren't in sync — re-run `uv sync`.
 
-## Step 1 — ingest with `summary_embed` + skimr (callable mode)
+## Step 1 — ingest with `summary_embed` + lede (callable mode)
 
 The sample config (`docs/samples/sample-summary-embed.yaml`) uses the `hierarchy`
-base chunker, wraps it with `summary_embed`, and hands chunks to skimr:
+base chunker, wraps it with `summary_embed`, and hands chunks to lede:
 
 ```yaml
 chunker:
@@ -45,7 +45,7 @@ chunker:
     type: hierarchy
   summarizer:
     mode: callable
-    module: chunkshop.summarizers.skimr
+    module: chunkshop.summarizers.lede
     function: summarize
     kwargs:
       max_length: 300
@@ -87,7 +87,7 @@ Expected shape:
 - `metadata.summarizer` = `callable` on every row.
 - `original_content` is the raw chunk body from the hierarchy chunker (long,
   paragraph-packed, prefixed by the heading via `prefix_heading: true`).
-- `embedded_content` is shorter — skimr's extractive summary of that raw body.
+- `embedded_content` is shorter — lede's extractive summary of that raw body.
 - `len(embedded_content) <= len(original_content)` on every row (extractive =
   sentences selected from the source; never longer).
 
@@ -224,12 +224,12 @@ LIMIT 5;
 Because `granularity` and `group_id` were promoted via `promote_metadata`, both
 queries use real indexed columns instead of jsonb path extraction.
 
-## Step 6 — swap skimr for sumy (one-line YAML diff)
+## Step 6 — swap lede for sumy (one-line YAML diff)
 
 ```yaml
 summarizer:
   mode: callable
-  module: chunkshop.summarizers.sumy      # was: chunkshop.summarizers.skimr
+  module: chunkshop.summarizers.sumy      # was: chunkshop.summarizers.lede
   function: summarize
   kwargs:
     algorithm: text_rank                  # was: max_length: 300
@@ -269,12 +269,12 @@ corpus — stick with the simpler passthrough.
 
 | Situation                                              | Mode                                                       |
 |--------------------------------------------------------|------------------------------------------------------------|
-| Reproducible, zero-dep, fast                           | `callable` with `chunkshop.summarizers.skimr`              |
+| Reproducible, zero-dep, fast                           | `callable` with `chunkshop.summarizers.lede`              |
 | Want to A/B LexRank, TextRank, LSA, Luhn                | `callable` with `chunkshop.summarizers.sumy`               |
 | Upstream (doctools, ETL) already wrote a `summary`     | `external` with `field: summary`                           |
 | LLM-quality abstractive summaries, cost OK             | `callable` with your own module that hits the LLM          |
 | Just want to prove summarization matters               | `passthrough`                                              |
-| Abstractive without LLM cost (future)                  | `callable` with skimr-neural (when the sibling repo ships) |
+| Abstractive without LLM cost (future)                  | `callable` with lede-neural (when the sibling repo ships) |
 
 ## What to read next
 

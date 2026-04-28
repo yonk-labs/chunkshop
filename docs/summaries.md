@@ -10,7 +10,7 @@ what gets embedded without changing what gets stored.
   `group_id` for fine-plus-coarse retrieval.
 
 Both consume an origin-agnostic summarizer contract — external source-column,
-callable module (skimr, sumy via shim, any user-wired Python function), or
+callable module (lede, sumy via shim, any user-wired Python function), or
 passthrough baseline. chunkshop core imports **zero** summarizers at module
 load; the callable path only imports what your YAML asks for.
 
@@ -41,7 +41,7 @@ chunker:
     type: hierarchy          # or sentence_aware / fixed_overlap / neighbor_expand
   summarizer:
     mode: callable
-    module: chunkshop.summarizers.skimr
+    module: chunkshop.summarizers.lede
     function: summarize
     kwargs:
       max_length: 300
@@ -140,7 +140,7 @@ failures raise a clear "install and retry" message.
 ```yaml
 summarizer:
   mode: callable
-  module: chunkshop.summarizers.skimr   # or sumy, or your own module
+  module: chunkshop.summarizers.lede   # or sumy, or your own module
   function: summarize
   kwargs:
     max_length: 300
@@ -198,16 +198,16 @@ grouping:
 
 | Library / mode   | Determinism  | Speed        | Install cost  | Quality                             | When to pick                                                                 |
 |------------------|--------------|--------------|---------------|-------------------------------------|------------------------------------------------------------------------------|
-| **skimr**        | Deterministic | sub-ms/chunk | zero-dep, sibling repo | Solid extractive (TF-IDF + position + length) | Default for reproducibility, speed, or air-gapped runs                       |
+| **lede**        | Deterministic | sub-ms/chunk | zero-dep, sibling repo | Solid extractive (TF-IDF + position + length) | Default for reproducibility, speed, or air-gapped runs                       |
 | **sumy**         | Deterministic per algo | ms/chunk    | `pip install chunkshop[sumy]` (pulls NLTK) | Multiple algorithms (LexRank, TextRank, LSA, Luhn, KL, Edmundson) | Want to A/B algorithms, or LexRank/TextRank specifically                     |
-| **skimr-neural** | Deterministic (seed)  | tens-ms/chunk | ONNX model download (when released) | Abstractive; can rephrase, compress harder | Want abstractive quality without LLM cost (available when sibling repo ships) |
+| **lede-neural** | Deterministic (seed)  | tens-ms/chunk | ONNX model download (when released) | Abstractive; can rephrase, compress harder | Want abstractive quality without LLM cost (available when sibling repo ships) |
 | **external**     | Whatever upstream produced | free at ingest | upstream tool owns this | Whatever your pipeline wrote | Upstream already summarized (e.g., yonk-doctools adds a `summary` field)     |
 | **callable (LLM)** | Non-deterministic | 100 ms – seconds | API credentials + cost | Highest — abstractive with world knowledge | Quality matters more than cost; small corpus; batch one-time ingest          |
 | **passthrough**  | n/a          | free         | zero           | Baseline                            | A/B test — is summarization helping at all?                                  |
 
 Rules of thumb:
 
-- Start with `skimr` + `hierarchy` base. Ship. Measure.
+- Start with `lede` + `hierarchy` base. Ship. Measure.
 - If retrieval quality is short, try `sumy` with `algorithm: text_rank` or
   `lex_rank` before reaching for an LLM.
 - If upstream (doctools, ETL) already produces summaries, use `external` — zero
@@ -268,21 +268,21 @@ embedder: {type: fastembed, model_name: Xenova/bge-base-en-v1.5-int8, dim: 768}
 target: {dsn_env: CHUNKSHOP_DSN, schema: qs, table: ext_sum, mode: create_if_missing}
 ```
 
-### Callable (skimr, zero-dep, sub-ms/chunk)
+### Callable (lede, zero-dep, sub-ms/chunk)
 
 ```yaml
-cell_name: quickstart_skimr
+cell_name: quickstart_lede
 source: {type: files, glob: docs/samples/*-*.md, id_from: stem}
 chunker:
   type: summary_embed
   base: {type: hierarchy}
   summarizer:
     mode: callable
-    module: chunkshop.summarizers.skimr
+    module: chunkshop.summarizers.lede
     function: summarize
     kwargs: {max_length: 300}
 embedder: {type: fastembed, model_name: Xenova/bge-base-en-v1.5-int8, dim: 768}
-target: {dsn_env: CHUNKSHOP_DSN, schema: qs, table: skimr_sum, mode: create_if_missing}
+target: {dsn_env: CHUNKSHOP_DSN, schema: qs, table: lede_sum, mode: create_if_missing}
 ```
 
 ### Passthrough (baseline — embed raw chunks)
@@ -304,12 +304,12 @@ both tables with the same query vector and comparing top-K overlap.
 ## Install
 
 ```bash
-# base install + skimr sibling path dep + sumy
+# base install + lede sibling path dep + sumy
 cd chunkshop/python
-uv sync --extra dev --extra extractors --extra skimr --extra sumy
+uv sync --extra dev --extra extractors --extra lede --extra sumy
 
-# minimal — skimr only (fast path)
-uv sync --extra skimr
+# minimal — lede only (fast path)
+uv sync --extra lede
 ```
 
 Both extras are opt-in; the base chunkshop install has no summarizer libraries.

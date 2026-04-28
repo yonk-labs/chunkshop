@@ -131,7 +131,7 @@ CREATE TABLE {schema}.{table} (
 | [`docs/tutorial-metadata.md`](docs/tutorial-metadata.md) | Metadata extraction: composite extractor + promoted columns + filtered queries. |
 | [`docs/tutorial-bakeoff.md`](docs/tutorial-bakeoff.md) | Bakeoff walkthrough: pick the best chunker+embedder for your corpus. |
 | [`docs/tutorial-semantic.md`](docs/tutorial-semantic.md) | Semantic chunker walkthrough: split on topic shifts when your corpus has no headings. |
-| [`docs/tutorial-summaries.md`](docs/tutorial-summaries.md) | Summary-embed + hierarchical walkthrough: skimr/sumy integration, fine+coarse retrieval. |
+| [`docs/tutorial-summaries.md`](docs/tutorial-summaries.md) | Summary-embed + hierarchical walkthrough: lede/sumy integration, fine+coarse retrieval. |
 | [`docs/quickstart-multi-source.md`](docs/quickstart-multi-source.md) | Recipe card: schema-flex modes + append pre-flight. |
 | [`docs/quickstart-framers.md`](docs/quickstart-framers.md) | Recipe card: which framer for which source shape. |
 | [`docs/quickstart-extractors.md`](docs/quickstart-extractors.md) | Recipe card: copy-paste YAML per extractor. |

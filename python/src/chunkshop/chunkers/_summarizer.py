@@ -5,7 +5,7 @@ Three modes (see brief SC-002):
   - callable:   import ``cfg.module.cfg.function`` lazily; invoke ``fn(text, **cfg.kwargs)``.
   - passthrough: return text unchanged (baseline for A/B comparisons).
 
-chunkshop core never imports skimr/sumy/etc. here — the callable path does the import
+chunkshop core never imports lede/sumy/etc. here — the callable path does the import
 only when the user's YAML asks for that module.
 """
 from __future__ import annotations

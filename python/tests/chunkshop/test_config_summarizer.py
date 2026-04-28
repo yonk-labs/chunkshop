@@ -27,11 +27,11 @@ def test_external_summarizer_default_field():
 def test_callable_summarizer_requires_module_function():
     s = CallableSummarizer(
         mode="callable",
-        module="skimr",
+        module="lede",
         function="summarize",
         kwargs={"max_length": 200},
     )
-    assert s.module == "skimr"
+    assert s.module == "lede"
     assert s.function == "summarize"
     assert s.kwargs["max_length"] == 200
 
@@ -54,9 +54,9 @@ def test_summary_embed_chunker_with_callable():
     cfg = SummaryEmbedChunker(
         type="summary_embed",
         base={"type": "sentence_aware"},
-        summarizer={"mode": "callable", "module": "skimr", "function": "summarize"},
+        summarizer={"mode": "callable", "module": "lede", "function": "summarize"},
     )
-    assert cfg.summarizer.module == "skimr"
+    assert cfg.summarizer.module == "lede"
 
 
 def test_hierarchical_summary_default_grouping_is_fixed_n():

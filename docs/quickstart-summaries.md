@@ -10,7 +10,7 @@ Recipe card for summary-layer chunkers. Full walkthrough in
 |---|---|
 | Embed cleaner, more topical text while keeping raw for audit | `summary_embed` |
 | Match on coarse summaries but return fine-grained chunks | `hierarchical_summary` |
-| Avoid an LLM-in-the-ingest-path | `summary_embed` + skimr (extractive) or `passthrough` baseline |
+| Avoid an LLM-in-the-ingest-path | `summary_embed` + lede (extractive) or `passthrough` baseline |
 | Pre-computed summaries in your source metadata | `summary_embed` with `external` mode |
 
 ## Summarizer modes
@@ -43,14 +43,14 @@ chunker:
     type: sentence_aware
   summarizer:
     mode: callable
-    module: chunkshop.summarizers.skimr
+    module: chunkshop.summarizers.lede
     function: summarize
     kwargs:
       max_length: 300
 ```
 
-Lazy-imports `chunkshop.summarizers.skimr.summarize` at first use. Requires
-the `[skimr]` pip extra (which pulls the sibling `extractive_summary`
+Lazy-imports `chunkshop.summarizers.lede.summarize` at first use. Requires
+the `[lede]` pip extra (which pulls the sibling `extractive_summary`
 repo as a path dep).
 
 For sumy (pluggable algorithms — LexRank, TextRank, LSA):
@@ -126,7 +126,7 @@ chunker:
     n: 5
   summarizer:
     mode: callable
-    module: chunkshop.summarizers.skimr
+    module: chunkshop.summarizers.lede
     function: summarize
 ```
 
@@ -155,7 +155,7 @@ chunker:
     strategy: section_aware
   summarizer:
     mode: callable
-    module: chunkshop.summarizers.skimr
+    module: chunkshop.summarizers.lede
     function: summarize
 ```
 
@@ -203,9 +203,9 @@ ingest code.
 ## See also
 
 - [`tutorial-summaries.md`](tutorial-summaries.md) — end-to-end walkthrough
-  with skimr + sumy, fine+coarse query patterns.
+  with lede + sumy, fine+coarse query patterns.
 - [`summaries.md`](summaries.md) — full reference: all three modes, all
-  three grouping strategies, decision matrix across skimr / sumy / external
+  three grouping strategies, decision matrix across lede / sumy / external
   / callable.
 - [`samples/sample-summary-embed.yaml`](samples/sample-summary-embed.yaml)
   and [`samples/sample-hierarchical.yaml`](samples/sample-hierarchical.yaml) —

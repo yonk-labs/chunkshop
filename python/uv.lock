@@ -236,6 +236,9 @@ keybert = [
 lang = [
     { name = "langdetect" },
 ]
+lede = [
+    { name = "lede" },
+]
 nlp = [
     { name = "keybert" },
     { name = "langdetect" },
@@ -244,9 +247,6 @@ nlp = [
 ]
 quantize = [
     { name = "onnx" },
-]
-skimr = [
-    { name = "skimr" },
 ]
 spacy = [
     { name = "spacy" },
@@ -263,6 +263,7 @@ requires-dist = [
     { name = "keybert", marker = "extra == 'nlp'", specifier = ">=0.8" },
     { name = "langdetect", marker = "extra == 'lang'", specifier = ">=1.0.9" },
     { name = "langdetect", marker = "extra == 'nlp'", specifier = ">=1.0.9" },
+    { name = "lede", marker = "extra == 'lede'", specifier = ">=0.3" },
     { name = "nltk", marker = "extra == 'extractors'", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "onnx", marker = "extra == 'dev'", specifier = ">=1.14" },
@@ -275,12 +276,11 @@ requires-dist = [
     { name = "rake-nltk", marker = "extra == 'extractors'", specifier = ">=1.0.6" },
     { name = "sentence-transformers", marker = "extra == 'keybert'", specifier = ">=3.0" },
     { name = "sentence-transformers", marker = "extra == 'nlp'", specifier = ">=3.0" },
-    { name = "skimr", marker = "extra == 'skimr'", editable = "../../extractive_summary" },
     { name = "spacy", marker = "extra == 'nlp'", specifier = ">=3.7" },
     { name = "spacy", marker = "extra == 'spacy'", specifier = ">=3.7" },
     { name = "sumy", marker = "extra == 'sumy'", specifier = ">=0.11" },
 ]
-provides-extras = ["extractors", "keybert", "spacy", "lang", "nlp", "quantize", "skimr", "sumy", "summarize", "dev"]
+provides-extras = ["extractors", "keybert", "spacy", "lang", "nlp", "quantize", "lede", "sumy", "summarize", "dev"]
 
 [[package]]
 name = "click"
@@ -651,6 +651,15 @@ dependencies = [
     { name = "six" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0e/72/a3add0e4eec4eb9e2569554f7c70f4a3c27712f40e3284d483e88094cc0e/langdetect-1.0.9.tar.gz", hash = "sha256:cbc1fef89f8d062739774bd51eda3da3274006b3661d199c2655f6b3f6d605a0", size = 981474, upload-time = "2021-05-07T07:54:13.562Z" }
+
+[[package]]
+name = "lede"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/aa/93/8b9582a33e3215578bd07fd89fcbe874f3c356f52a8193a55fdb8685932a/lede-0.3.0.tar.gz", hash = "sha256:640230d60aa2b2dbb21ae608db12ebeedfd0cb8703836fddb6863d08435266b2", size = 103207, upload-time = "2026-04-28T10:01:03.073Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/99/9d657784c31ac9b925d4b13dd8565f4ee68510a97625783bc73413515386/lede-0.3.0-py3-none-any.whl", hash = "sha256:34b1797f9e5e7df57381b1269ade2165dcce42c4e4092584a6e2fb6ccff99a50", size = 54711, upload-time = "2026-04-28T10:01:01.134Z" },
+]
 
 [[package]]
 name = "loguru"
@@ -2028,23 +2037,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
 ]
-
-[[package]]
-name = "skimr"
-version = "0.2.1"
-source = { editable = "../../extractive_summary" }
-
-[package.metadata]
-requires-dist = [
-    { name = "networkx", marker = "extra == 'textrank'", specifier = ">=3.0,<3.5" },
-    { name = "numpy", marker = "extra == 'bench'", specifier = ">=1.24" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
-    { name = "pytest-subtests", marker = "extra == 'dev'", specifier = ">=0.10" },
-    { name = "sumy", marker = "extra == 'bench'", specifier = ">=0.11" },
-    { name = "text2num", marker = "extra == 'wordforms'", specifier = ">=3.0" },
-    { name = "yake", marker = "extra == 'yake'", specifier = ">=0.4.8" },
-]
-provides-extras = ["textrank", "wordforms", "yake", "dev", "bench"]
 
 [[package]]
 name = "smart-open"

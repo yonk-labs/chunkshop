@@ -31,9 +31,9 @@ spacy = ["spacy>=3.7"]
 lang = ["langdetect>=1.0.9"]
 nlp = ["keybert>=0.8", "sentence-transformers>=3.0", "spacy>=3.7", "langdetect>=1.0.9"]
 quantize = ["onnx>=1.14"]
-skimr = ["skimr"]  # resolved via [tool.uv.sources] path dep (sibling repo)
+lede = ["lede>=0.3"]
 sumy = ["sumy>=0.11"]
-summarize = []  # umbrella — users pick [skimr] and/or [sumy] explicitly
+summarize = []  # umbrella — users pick [lede] and/or [sumy] explicitly
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 
 [project.scripts]
@@ -50,9 +50,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.uv.sources]
-skimr = { path = "../../extractive_summary", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

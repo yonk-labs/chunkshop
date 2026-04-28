@@ -85,8 +85,8 @@ When new work starts, run `/mission-brief` then `superpowers:writing-plans` to p
 
 ## Sibling repos this one interacts with
 
-- `../extractive_summary/` (skimr) — zero-dep extractive summarizer. Brief 4 (`summary_embed` chunker wrapper) wires it via `chunkshop.summarizers.skimr` as a callable summarizer.
-- `../skimr-neural/` — seed-state neural companion to skimr. Brief 4's callable path supports it once it ships.
+- `../extractive_summary/` (lede) — zero-dep extractive summarizer. Brief 4 (`summary_embed` chunker wrapper) wires it via `chunkshop.summarizers.lede` as a callable summarizer.
+- `../lede-neural/` — seed-state neural companion to lede. Brief 4's callable path supports it once it ships.
 - `../yonk-doctools/` — seed-state sibling repo for PDF/DOCX → markdown preprocessing with VLM image captioning. Feeds chunkshop's `files` source.
 
-Don't import from these in chunkshop's core code. They're user-wired via config (`module: chunkshop.summarizers.skimr`, `glob: /path/to/yonk-doctools/output/**/*.md`).
+Don't import from these in chunkshop's core code. They're user-wired via config (`module: chunkshop.summarizers.lede`, `glob: /path/to/yonk-doctools/output/**/*.md`).

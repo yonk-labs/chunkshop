@@ -35,7 +35,7 @@ Optional extras:
 | `spacy`      | `spacy` for the `spacy_entities` NER extractor.                      |
 | `lang`       | `langdetect` for the `lang_detect` extractor.                        |
 | `nlp`        | Umbrella: `keybert` + `spacy` + `lang` in one install.               |
-| `skimr`      | Sibling `extractive_summary` repo as a path dep — enables `summary_embed` with `skimr.tfidf.summarize`. |
+| `lede`      | Sibling `extractive_summary` repo as a path dep — enables `summary_embed` with `lede.tfidf.summarize`. |
 | `sumy`       | `sumy` + NLTK corpora for the sumy adapter shim (`chunkshop.summarizers.sumy`). |
 | `quantize`   | `onnx` for on-the-fly quantization scratch.                          |
 | `dev`        | `pytest`, `pytest-asyncio`, `onnx`.                                  |
@@ -205,7 +205,7 @@ vs. what gets stored (`summary_embed`) or emit fine+coarse rows linked by
 
 The `summarizer` config is a discriminated union: `{mode: external, field: ...}`
 pulls a pre-computed summary from a source document metadata field; `{mode:
-callable, module: "skimr.tfidf", function: "summarize", kwargs: {...}}`
+callable, module: "lede.tfidf", function: "summarize", kwargs: {...}}`
 imports lazily at first use; `{mode: passthrough}` reuses the raw chunk as
 the summary (baseline). See [`../docs/summaries.md`](../docs/summaries.md)
 and [`../docs/tutorial-summaries.md`](../docs/tutorial-summaries.md).
