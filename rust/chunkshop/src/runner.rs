@@ -15,7 +15,7 @@ use crate::framer::{
     FramerImpl, HeadingBoundaryFramer, IdentityFramer, JsonPathFramer, RegexBoundaryFramer,
 };
 use crate::sink::PgVectorSink;
-use crate::source::{Document, FilesSource, JsonCorpusSource};
+use crate::source::{Document, FilesSource, JsonCorpusSource, PgTableSource};
 
 /// Recursively materialize a `ChunkerConfig` into a boxed trait object.
 /// `NeighborExpand` calls back into this fn to construct its `base`. Adding a
@@ -46,18 +46,23 @@ fn build_framer(cfg: FramerConfig) -> Result<Box<dyn FramerImpl + Send + Sync>> 
 }
 
 /// Same dispatch pattern for sources. `iter_documents` returns owned `Document`s
-/// because both backends materialize their corpus eagerly today; if a streaming
-/// source ever lands, change this to a boxed iterator.
+/// because the file/json/pg backends all materialize their corpus eagerly today;
+/// if a streaming source ever lands, change this to a boxed async iterator.
 enum AnySource {
     Files(FilesSource),
     JsonCorpus(JsonCorpusSource),
+    PgTable(PgTableSource),
 }
 
 impl AnySource {
-    fn iter_documents(&self) -> Result<Vec<Document>> {
+    /// Async because PgTable does network I/O via sqlx; the file/JSON variants
+    /// run sync work inside the async fn (no actual await). Caller is already
+    /// in an async context (`run_cell` is async).
+    async fn iter_documents(&self) -> Result<Vec<Document>> {
         match self {
             AnySource::Files(s) => s.iter_documents(),
             AnySource::JsonCorpus(s) => s.iter_documents(),
+            AnySource::PgTable(s) => s.iter_documents().await,
         }
     }
 }
@@ -77,6 +82,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     let source: AnySource = match cfg.source {
         SourceConfig::Files(fc) => AnySource::Files(FilesSource::new(fc)),
         SourceConfig::JsonCorpus(jc) => AnySource::JsonCorpus(JsonCorpusSource::new(jc)),
+        SourceConfig::PgTable(pc) => AnySource::PgTable(PgTableSource::new(pc)),
     };
     let framer = build_framer(cfg.framer)?;
     let chunker = build_chunker(cfg.chunker)?;
@@ -88,7 +94,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     info!("creating target table");
     sink.create_table().await?;
 
-    let docs = source.iter_documents()?;
+    let docs = source.iter_documents().await?;
     let limit = cfg.runtime.doc_limit.unwrap_or(usize::MAX);
     let heartbeat = cfg.runtime.heartbeat_every.unwrap_or(25);
 

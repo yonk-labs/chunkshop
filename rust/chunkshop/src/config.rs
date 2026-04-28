@@ -162,6 +162,7 @@ fn default_jsonpath_body() -> String {
 pub enum SourceConfig {
     Files(FilesSourceConfig),
     JsonCorpus(JsonCorpusSourceConfig),
+    PgTable(PgTableSourceConfig),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -184,6 +185,23 @@ pub struct JsonCorpusSourceConfig {
     pub content_field: String,
     #[serde(default = "default_title_field")]
     pub title_field: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PgTableSourceConfig {
+    pub dsn_env: String,
+    #[serde(rename = "schema")]
+    pub schema_name: String,
+    pub table: String,
+    pub id_column: String,
+    pub content_column: String,
+    #[serde(default)]
+    pub title_column: Option<String>,
+    /// Trusted operator-supplied SQL fragment appended after `WHERE`. Mirrors
+    /// Python's `pg_table.py` which interpolates this verbatim. NOT validated;
+    /// don't expose this field to untrusted YAML authors.
+    #[serde(default, rename = "where")]
+    pub where_clause: Option<String>,
 }
 
 fn default_id_from() -> String {
@@ -406,6 +424,16 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
     validate_ident(&cfg.target.table, "target.table")?;
     if let Some(tag) = &cfg.target.source_tag {
         validate_ident(tag, "target.source_tag")?;
+    }
+    if let SourceConfig::PgTable(p) = &cfg.source {
+        validate_ident(&p.schema_name, "source.schema")?;
+        validate_ident(&p.table, "source.table")?;
+        validate_ident(&p.id_column, "source.id_column")?;
+        validate_ident(&p.content_column, "source.content_column")?;
+        if let Some(tc) = &p.title_column {
+            validate_ident(tc, "source.title_column")?;
+        }
+        // `where_clause` is intentionally NOT validated — see PgTableSourceConfig docstring.
     }
     cfg.target.validate()?;
     Ok(cfg)

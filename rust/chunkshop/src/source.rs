@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 use sha1::{Digest, Sha1};
 
-use crate::config::{FilesSourceConfig, JsonCorpusSourceConfig};
+use crate::config::{FilesSourceConfig, JsonCorpusSourceConfig, PgTableSourceConfig};
 
 /// Analogue of Python's `sources.base.Document`.
 #[derive(Debug, Clone)]
@@ -159,6 +159,88 @@ impl JsonCorpusSource {
                 content,
                 title,
                 metadata: serde_json::Value::Object(meta),
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// Postgres source. Mirrors `python/src/chunkshop/sources/pg_table.py`.
+/// Reads documents from a Postgres table by id_column / content_column /
+/// optional title_column, with an optional WHERE clause. Identifiers are
+/// validated at config-load (allowlist regex); the WHERE clause is trusted
+/// operator input and concatenated verbatim — see `PgTableSourceConfig`.
+pub struct PgTableSource {
+    cfg: PgTableSourceConfig,
+}
+
+impl PgTableSource {
+    pub fn new(cfg: PgTableSourceConfig) -> Self {
+        Self { cfg }
+    }
+
+    pub async fn iter_documents(&self) -> Result<Vec<Document>> {
+        let dsn = std::env::var(&self.cfg.dsn_env).with_context(|| {
+            format!(
+                "DSN env var {} not set (required by source.dsn_env)",
+                self.cfg.dsn_env
+            )
+        })?;
+
+        // Build the SELECT statement with quoted identifiers (validated at
+        // config-load). The optional WHERE is appended as-is — operator-
+        // trusted, like Python's pg_table.py.
+        let mut select = format!(
+            r#"SELECT "{id_col}", "{content_col}""#,
+            id_col = self.cfg.id_column,
+            content_col = self.cfg.content_column,
+        );
+        if let Some(tc) = &self.cfg.title_column {
+            select.push_str(&format!(r#", "{tc}""#));
+        }
+        select.push_str(&format!(
+            r#" FROM "{schema}"."{table}""#,
+            schema = self.cfg.schema_name,
+            table = self.cfg.table,
+        ));
+        if let Some(w) = &self.cfg.where_clause {
+            select.push_str(&format!(" WHERE {w}"));
+        }
+
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&dsn)
+            .await
+            .with_context(|| format!("connecting to {}", self.cfg.dsn_env))?;
+
+        let rows = sqlx::query(&select)
+            .fetch_all(&pool)
+            .await
+            .with_context(|| format!("running query: {select}"))?;
+
+        let has_title = self.cfg.title_column.is_some();
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            use sqlx::Row;
+            // The id column may be any type that round-trips through Postgres'
+            // text representation. Use String for portability — matches Python's
+            // `str(row[0])`.
+            let id: String = row
+                .try_get::<String, _>(0)
+                .or_else(|_| row.try_get::<i64, _>(0).map(|n| n.to_string()))
+                .or_else(|_| row.try_get::<i32, _>(0).map(|n| n.to_string()))
+                .with_context(|| format!("reading id column from row"))?;
+            let content: String = row.try_get(1).context("reading content column")?;
+            let title: Option<String> = if has_title {
+                row.try_get::<Option<String>, _>(2).unwrap_or(None)
+            } else {
+                None
+            };
+            out.push(Document {
+                id,
+                content,
+                title,
+                metadata: json!({}),
             });
         }
         Ok(out)
