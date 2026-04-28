@@ -11,6 +11,7 @@ pub mod embedder;
 pub mod framer;
 pub(crate) mod hf_cache;
 pub mod runner;
+pub mod sentence_split;
 pub mod sink;
 pub mod source;
 
