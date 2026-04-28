@@ -108,6 +108,7 @@ pub struct CellConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SourceConfig {
     Files(FilesSourceConfig),
+    JsonCorpus(JsonCorpusSourceConfig),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -119,12 +120,38 @@ pub struct FilesSourceConfig {
     pub encoding: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct JsonCorpusSourceConfig {
+    pub path: String,
+    #[serde(default = "default_documents_key")]
+    pub documents_key: String,
+    #[serde(default = "default_id_field")]
+    pub id_field: String,
+    #[serde(default = "default_content_field")]
+    pub content_field: String,
+    #[serde(default = "default_title_field")]
+    pub title_field: Option<String>,
+}
+
 fn default_id_from() -> String {
     "stem".to_string()
 }
 
 fn default_encoding() -> String {
     "utf-8".to_string()
+}
+
+fn default_documents_key() -> String {
+    "documents".to_string()
+}
+fn default_id_field() -> String {
+    "id".to_string()
+}
+fn default_content_field() -> String {
+    "content".to_string()
+}
+fn default_title_field() -> Option<String> {
+    Some("title".to_string())
 }
 
 #[derive(Debug, Clone, Deserialize)]

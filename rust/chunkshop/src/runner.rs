@@ -10,7 +10,7 @@ use crate::config::{CellConfig, ChunkerConfig, EmbedderConfig, SourceConfig};
 use crate::source::Document;
 use crate::embedder::FastembedEmbedder;
 use crate::sink::PgVectorSink;
-use crate::source::FilesSource;
+use crate::source::{FilesSource, JsonCorpusSource};
 
 /// Runtime dispatch over the supported chunkers. Mirrors the
 /// discriminated-union `ChunkerConfig` so each YAML branch maps to a single
@@ -30,6 +30,23 @@ impl AnyChunker {
     }
 }
 
+/// Same dispatch pattern for sources. `iter_documents` returns owned `Document`s
+/// because both backends materialize their corpus eagerly today; if a streaming
+/// source ever lands, change this to a boxed iterator.
+enum AnySource {
+    Files(FilesSource),
+    JsonCorpus(JsonCorpusSource),
+}
+
+impl AnySource {
+    fn iter_documents(&self) -> Result<Vec<Document>> {
+        match self {
+            AnySource::Files(s) => s.iter_documents(),
+            AnySource::JsonCorpus(s) => s.iter_documents(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CellResult {
     pub cell_name: String,
@@ -42,8 +59,9 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     let start = Instant::now();
     info!(cell = %cfg.cell_name, "cell starting");
 
-    let source = match cfg.source {
-        SourceConfig::Files(fc) => FilesSource::new(fc),
+    let source: AnySource = match cfg.source {
+        SourceConfig::Files(fc) => AnySource::Files(FilesSource::new(fc)),
+        SourceConfig::JsonCorpus(jc) => AnySource::JsonCorpus(JsonCorpusSource::new(jc)),
     };
     let chunker: AnyChunker = match cfg.chunker {
         ChunkerConfig::SentenceAware(cc) => AnyChunker::SentenceAware(SentenceAwareChunker::new(cc)),
