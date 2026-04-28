@@ -214,6 +214,7 @@ pub enum ChunkerConfig {
     Hierarchy(HierarchyChunkerConfig),
     FixedOverlap(FixedOverlapChunkerConfig),
     NeighborExpand(NeighborExpandChunkerConfig),
+    Semantic(SemanticChunkerConfig),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -251,6 +252,20 @@ pub struct NeighborExpandChunkerConfig {
     pub window: usize,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct SemanticChunkerConfig {
+    #[serde(default = "default_boundary_model")]
+    pub boundary_model: String,
+    #[serde(default = "default_breakpoint_percentile")]
+    pub breakpoint_percentile: u32,
+    #[serde(default = "default_min_sents_per_chunk")]
+    pub min_sentences_per_chunk: usize,
+    #[serde(default = "default_max_chunk_chars")]
+    pub max_chunk_chars: usize,
+    #[serde(default = "default_sentence_splitter")]
+    pub sentence_splitter: String,
+}
+
 fn default_window_words() -> usize {
     300
 }
@@ -259,6 +274,21 @@ fn default_step_words() -> usize {
 }
 fn default_neighbor_window() -> usize {
     1
+}
+fn default_boundary_model() -> String {
+    "sentence-transformers/all-MiniLM-L6-v2-int8".to_string()
+}
+fn default_breakpoint_percentile() -> u32 {
+    95
+}
+fn default_min_sents_per_chunk() -> usize {
+    3
+}
+fn default_max_chunk_chars() -> usize {
+    2000
+}
+fn default_sentence_splitter() -> String {
+    "naive".to_string()
 }
 
 fn default_doc_type() -> String {

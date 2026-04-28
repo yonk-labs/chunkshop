@@ -6,7 +6,8 @@ use anyhow::Result;
 use tracing::info;
 
 use crate::chunker::{
-    ChunkerImpl, FixedOverlapChunker, HierarchyChunker, NeighborExpandChunker, SentenceAwareChunker,
+    ChunkerImpl, FixedOverlapChunker, HierarchyChunker, NeighborExpandChunker, SemanticChunker,
+    SentenceAwareChunker,
 };
 use crate::config::{CellConfig, ChunkerConfig, EmbedderConfig, FramerConfig, SourceConfig};
 use crate::embedder::FastembedEmbedder;
@@ -29,6 +30,7 @@ fn build_chunker(cfg: ChunkerConfig) -> Result<Box<dyn ChunkerImpl + Send + Sync
             let base = build_chunker(*c.base)?;
             Box::new(NeighborExpandChunker::new(window, base))
         }
+        ChunkerConfig::Semantic(c) => Box::new(SemanticChunker::new(c)?),
     })
 }
 

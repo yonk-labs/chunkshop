@@ -17,8 +17,11 @@ use regex::Regex;
 use serde_json::json;
 
 use crate::config::{
-    FixedOverlapChunkerConfig, HierarchyChunkerConfig, SentenceAwareChunkerConfig,
+    FastembedEmbedderConfig, FixedOverlapChunkerConfig, HierarchyChunkerConfig,
+    SemanticChunkerConfig, SentenceAwareChunkerConfig,
 };
+use crate::embedder::FastembedEmbedder;
+use crate::sentence_split::naive_sentences;
 use crate::source::Document;
 
 /// Chunk emitted by the chunker. `embedded_content` is what gets embedded;
@@ -529,6 +532,256 @@ impl ChunkerImpl for NeighborExpandChunker {
     }
 }
 
+/// Semantic chunker — splits documents at topic shifts detected by sentence-
+/// embedding similarity drops. Direct port of
+/// `python/src/chunkshop/chunkers/semantic.py`. Unlike Python, the Rust
+/// chunker always loads a fresh boundary embedder instance — the
+/// `boundary_model: "same"` shared-instance optimization is not implemented;
+/// document this trade-off in the README. Cross-language byte-identical
+/// chunks are NOT promised: the percentile threshold over embedder distances
+/// can shift breakpoints under MB-1's documented ORT-binary drift.
+pub struct SemanticChunker {
+    cfg: SemanticChunkerConfig,
+    boundary: std::sync::Mutex<FastembedEmbedder>,
+}
+
+impl SemanticChunker {
+    pub fn new(cfg: SemanticChunkerConfig) -> anyhow::Result<Self> {
+        if cfg.sentence_splitter != "naive" {
+            return Err(anyhow::anyhow!(
+                "sentence_splitter {:?} not supported in chunkshop-rs (only 'naive'); \
+                 nltk requires Python",
+                cfg.sentence_splitter
+            ));
+        }
+        if cfg.breakpoint_percentile == 0 || cfg.breakpoint_percentile >= 100 {
+            return Err(anyhow::anyhow!(
+                "breakpoint_percentile must be in [1, 99], got {}",
+                cfg.breakpoint_percentile
+            ));
+        }
+        if cfg.min_sentences_per_chunk < 1 {
+            return Err(anyhow::anyhow!("min_sentences_per_chunk must be >= 1"));
+        }
+        if cfg.max_chunk_chars < 100 {
+            return Err(anyhow::anyhow!(
+                "max_chunk_chars must be >= 100, got {}",
+                cfg.max_chunk_chars
+            ));
+        }
+        let boundary_cfg = FastembedEmbedderConfig {
+            model_name: cfg.boundary_model.clone(),
+            // dim=384 for MiniLM; the FastembedEmbedder uses this only as a
+            // post-init sanity check on the first vector. If the user picks a
+            // different boundary model with a different dim, the embedder will
+            // surface a clear error.
+            dim: 384,
+            batch_size: 16,
+            threads: Some(2),
+        };
+        let boundary = FastembedEmbedder::new(boundary_cfg)?;
+        Ok(Self {
+            cfg,
+            boundary: std::sync::Mutex::new(boundary),
+        })
+    }
+
+    pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        if doc.content.is_empty() || doc.content.trim().is_empty() {
+            return Vec::new();
+        }
+        let sentences = naive_sentences(&doc.content);
+        if sentences.is_empty() {
+            return Vec::new();
+        }
+        if sentences.len() == 1 {
+            // No boundaries possible. Still respect max_chunk_chars.
+            let mut chunks = Vec::new();
+            for sub in self.split_if_too_large(&sentences[0]) {
+                let seq = chunks.len();
+                chunks.push(self.mk_chunk(&doc.id, seq, &sub));
+            }
+            return chunks;
+        }
+
+        let texts: Vec<String> = sentences.clone();
+        let embeddings = match self.boundary.lock().expect("poisoned mutex").embed(texts) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("semantic chunker boundary embed failed: {e:#}");
+                return vec![self.mk_chunk(&doc.id, 0, &doc.content)];
+            }
+        };
+
+        let normed: Vec<Vec<f32>> = embeddings
+            .iter()
+            .map(|v| {
+                let n: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+                let denom = if n == 0.0 { 1.0 } else { n };
+                v.iter().map(|x| x / denom).collect()
+            })
+            .collect();
+
+        let mut distances: Vec<f32> = Vec::with_capacity(normed.len() - 1);
+        for i in 0..normed.len() - 1 {
+            let dot: f32 = normed[i]
+                .iter()
+                .zip(&normed[i + 1])
+                .map(|(a, b)| a * b)
+                .sum();
+            distances.push(1.0 - dot);
+        }
+
+        let threshold = percentile_linear(&distances, self.cfg.breakpoint_percentile);
+        let breakpoints: Vec<usize> = distances
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &d)| if d >= threshold { Some(i) } else { None })
+            .collect();
+
+        let mut starts: Vec<usize> = vec![0];
+        for &bp in &breakpoints {
+            starts.push(bp + 1);
+        }
+        let mut spans: Vec<(usize, usize)> = Vec::with_capacity(starts.len());
+        for i in 0..starts.len() {
+            let s = starts[i];
+            let e = if i + 1 < starts.len() {
+                starts[i + 1]
+            } else {
+                sentences.len()
+            };
+            spans.push((s, e));
+        }
+
+        let spans = merge_small_spans(spans, self.cfg.min_sentences_per_chunk);
+
+        let mut chunks: Vec<Chunk> = Vec::new();
+        for (s, e) in spans {
+            let body = sentences[s..e].join(" ").trim().to_string();
+            if body.is_empty() {
+                continue;
+            }
+            for sub in self.split_if_too_large(&body) {
+                let seq = chunks.len();
+                chunks.push(self.mk_chunk(&doc.id, seq, &sub));
+            }
+        }
+        chunks
+    }
+
+    fn mk_chunk(&self, doc_id: &str, seq: usize, text: &str) -> Chunk {
+        Chunk {
+            doc_id: doc_id.to_string(),
+            seq_num: seq,
+            original_content: text.to_string(),
+            embedded_content: text.to_string(),
+            metadata: json!({ "strategy": "semantic" }),
+        }
+    }
+
+    fn split_if_too_large(&self, body: &str) -> Vec<String> {
+        if body.chars().count() <= self.cfg.max_chunk_chars {
+            return vec![body.to_string()];
+        }
+        let sents = naive_sentences(body);
+        if sents.is_empty() {
+            let chars: Vec<char> = body.chars().collect();
+            return chars
+                .chunks(self.cfg.max_chunk_chars)
+                .map(|c| c.iter().collect())
+                .collect();
+        }
+        let mut out: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        for s in sents {
+            let candidate = if cur.is_empty() {
+                s.clone()
+            } else {
+                let joined = format!("{cur} {s}");
+                joined.trim().to_string()
+            };
+            if candidate.chars().count() > self.cfg.max_chunk_chars && !cur.is_empty() {
+                out.push(cur.trim().to_string());
+                cur = s;
+            } else {
+                cur = candidate;
+            }
+        }
+        if !cur.is_empty() {
+            if cur.chars().count() > self.cfg.max_chunk_chars {
+                let chars: Vec<char> = cur.chars().collect();
+                for window in chars.chunks(self.cfg.max_chunk_chars) {
+                    out.push(window.iter().collect());
+                }
+            } else {
+                out.push(cur.trim().to_string());
+            }
+        }
+        out
+    }
+}
+
+impl ChunkerImpl for SemanticChunker {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        Self::chunk(self, doc)
+    }
+}
+
+/// numpy.percentile with linear interpolation. Mirrors numpy default.
+/// Returns the percentile **value** (not the index).
+fn percentile_linear(values: &[f32], p: u32) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted: Vec<f32> = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = sorted.len();
+    if n == 1 {
+        return sorted[0];
+    }
+    let idx = (n as f64 - 1.0) * (p as f64) / 100.0;
+    let lo = idx.floor() as usize;
+    let hi = idx.ceil() as usize;
+    if lo == hi {
+        return sorted[lo];
+    }
+    let frac = (idx - lo as f64) as f32;
+    sorted[lo] * (1.0 - frac) + sorted[hi] * frac
+}
+
+/// Merge spans smaller than `min` into neighbors. Forward-merge first;
+/// pull the next span into the first if the first is too small; back-merge the
+/// last span if needed. Mirrors Python's `_merge_small`.
+fn merge_small_spans(spans: Vec<(usize, usize)>, min: usize) -> Vec<(usize, usize)> {
+    if spans.is_empty() {
+        return spans;
+    }
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in spans {
+        if !merged.is_empty() && (e - s) < min {
+            let last = merged.len() - 1;
+            let (ps, _) = merged[last];
+            merged[last] = (ps, e);
+        } else {
+            merged.push((s, e));
+        }
+    }
+    if merged.len() > 1 && (merged[0].1 - merged[0].0) < min {
+        let new_first = (merged[0].0, merged[1].1);
+        merged[0] = new_first;
+        merged.remove(1);
+    }
+    if merged.len() > 1 && (merged[merged.len() - 1].1 - merged[merged.len() - 1].0) < min {
+        let last = merged.len() - 1;
+        let (ps, _) = merged[last - 1];
+        let (_, pe) = merged[last];
+        merged[last - 1] = (ps, pe);
+        merged.pop();
+    }
+    merged
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,5 +825,47 @@ mod tests {
         assert!(chunks[0].original_content.starts_with("# Top"));
         assert!(chunks[1].original_content.starts_with("## Section A"));
         assert!(chunks[2].original_content.starts_with("## Section B"));
+    }
+
+    // --- Semantic chunker algorithm helpers ---
+
+    #[test]
+    fn percentile_linear_matches_numpy() {
+        // numpy.percentile([1,2,3,4,5], 95) -> 4.8 (linear interp default)
+        let p = percentile_linear(&[1.0_f32, 2.0, 3.0, 4.0, 5.0], 95);
+        assert!((p - 4.8).abs() < 1e-5, "got {p}");
+        // numpy.percentile([1,2,3,4], 50) -> 2.5
+        let p = percentile_linear(&[1.0, 2.0, 3.0, 4.0], 50);
+        assert!((p - 2.5).abs() < 1e-5, "got {p}");
+        // Single-element edge case.
+        assert_eq!(percentile_linear(&[7.0], 95), 7.0);
+        // Empty edge case.
+        assert_eq!(percentile_linear(&[], 95), 0.0);
+    }
+
+    #[test]
+    fn merge_small_spans_forward() {
+        // [0..5)=5, [5..6)=1 (too small), [6..10)=4. The small span forward-merges
+        // into the previous one.
+        let m = merge_small_spans(vec![(0, 5), (5, 6), (6, 10)], 3);
+        assert_eq!(m, vec![(0, 6), (6, 10)]);
+    }
+
+    #[test]
+    fn merge_small_spans_backward_last() {
+        let m = merge_small_spans(vec![(0, 5), (5, 10), (10, 11)], 3);
+        assert_eq!(m, vec![(0, 5), (5, 11)]);
+    }
+
+    #[test]
+    fn merge_small_spans_first_too_small_pulls_next() {
+        let m = merge_small_spans(vec![(0, 1), (1, 5), (5, 10)], 3);
+        assert_eq!(m, vec![(0, 5), (5, 10)]);
+    }
+
+    #[test]
+    fn merge_small_spans_empty_returns_empty() {
+        let m: Vec<(usize, usize)> = merge_small_spans(Vec::new(), 3);
+        assert!(m.is_empty());
     }
 }

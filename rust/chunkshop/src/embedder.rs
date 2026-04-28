@@ -302,12 +302,24 @@ fn resolve_model_name(name: &str) -> Result<EmbeddingModel> {
         "sentence-transformers/all-MiniLM-L6-v2",
         EmbeddingModel::AllMiniLML6V2,
     );
+    // The semantic chunker's default boundary model is the int8 MiniLM. We map
+    // it to fastembed-rs's stock quantized AllMiniLML6V2Q (Qdrant fp32-optimized
+    // ONNX, mean-pooled) — close enough for boundary detection. Full bit-near-
+    // exact parity (Xenova int8 ONNX with mean pooling in our hand-rolled path)
+    // would require extending the user-defined embedder code from MB-1 with a
+    // mean-pooling branch — out of scope for the semantic-chunker brief because
+    // semantic chunks are not promised byte-identical to Python anyway.
+    table.insert(
+        "sentence-transformers/all-MiniLM-L6-v2-int8",
+        EmbeddingModel::AllMiniLML6V2Q,
+    );
 
     table.get(name).cloned().ok_or_else(|| {
         anyhow!(
             "chunkshop-rs does not map model_name {name:?} to a fastembed-rs variant. \
              Supported (stock): BAAI/bge-base-en-v1.5, BAAI/bge-small-en-v1.5, \
-             BAAI/bge-large-en-v1.5, sentence-transformers/all-MiniLM-L6-v2. \
+             BAAI/bge-large-en-v1.5, sentence-transformers/all-MiniLM-L6-v2, \
+             sentence-transformers/all-MiniLM-L6-v2-int8. \
              Bit-exact (user-defined): Xenova/bge-base-en-v1.5-int8, \
              Xenova/bge-small-en-v1.5-int8."
         )
