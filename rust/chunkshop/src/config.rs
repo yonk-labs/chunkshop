@@ -159,6 +159,8 @@ fn default_title_field() -> Option<String> {
 pub enum ChunkerConfig {
     SentenceAware(SentenceAwareChunkerConfig),
     Hierarchy(HierarchyChunkerConfig),
+    FixedOverlap(FixedOverlapChunkerConfig),
+    NeighborExpand(NeighborExpandChunkerConfig),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -179,6 +181,31 @@ pub struct HierarchyChunkerConfig {
     pub min_section_chars: usize,
     #[serde(default = "default_max_chars")]
     pub max_chars: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FixedOverlapChunkerConfig {
+    #[serde(default = "default_window_words")]
+    pub window_words: usize,
+    #[serde(default = "default_step_words")]
+    pub step_words: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NeighborExpandChunkerConfig {
+    pub base: Box<ChunkerConfig>,
+    #[serde(default = "default_neighbor_window")]
+    pub window: usize,
+}
+
+fn default_window_words() -> usize {
+    300
+}
+fn default_step_words() -> usize {
+    150
+}
+fn default_neighbor_window() -> usize {
+    1
 }
 
 fn default_doc_type() -> String {

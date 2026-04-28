@@ -16,7 +16,9 @@
 use regex::Regex;
 use serde_json::json;
 
-use crate::config::{HierarchyChunkerConfig, SentenceAwareChunkerConfig};
+use crate::config::{
+    FixedOverlapChunkerConfig, HierarchyChunkerConfig, SentenceAwareChunkerConfig,
+};
 use crate::source::Document;
 
 /// Chunk emitted by the chunker. `embedded_content` is what gets embedded;
@@ -390,6 +392,140 @@ impl HierarchyChunker {
                 }
             })
             .collect()
+    }
+}
+
+/// Common interface every chunker satisfies. Object-safe so the runner can
+/// hold a `Box<dyn ChunkerImpl + Send + Sync>` and let `NeighborExpandChunker`
+/// recursively wrap any other chunker as its base.
+pub trait ChunkerImpl {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk>;
+}
+
+impl ChunkerImpl for SentenceAwareChunker {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        Self::chunk(self, doc)
+    }
+}
+
+impl ChunkerImpl for HierarchyChunker {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        Self::chunk(self, doc)
+    }
+}
+
+/// Word-level sliding-window chunker. Direct port of
+/// `python/src/chunkshop/chunkers/fixed_overlap.py`. Same `text.split()`
+/// whitespace-collapse semantics as Python (use Rust's `split_whitespace`).
+/// Each chunk carries `metadata.start_word` and `metadata.n_words`.
+pub struct FixedOverlapChunker {
+    cfg: FixedOverlapChunkerConfig,
+}
+
+impl FixedOverlapChunker {
+    pub fn new(cfg: FixedOverlapChunkerConfig) -> anyhow::Result<Self> {
+        if cfg.window_words == 0 || cfg.step_words == 0 {
+            return Err(anyhow::anyhow!(
+                "window_words and step_words must be positive"
+            ));
+        }
+        Ok(Self { cfg })
+    }
+
+    pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        let words: Vec<&str> = doc.content.split_whitespace().collect();
+        let window = self.cfg.window_words;
+        let step = self.cfg.step_words;
+        let mut chunks: Vec<Chunk> = Vec::new();
+        let mut seq = 0usize;
+        let mut i = 0usize;
+        while i < words.len() {
+            let end = (i + window).min(words.len());
+            let slice = &words[i..end];
+            let text = slice.join(" ");
+            chunks.push(Chunk {
+                doc_id: doc.id.clone(),
+                seq_num: seq,
+                original_content: text.clone(),
+                embedded_content: text,
+                metadata: json!({
+                    "strategy": "fixed_overlap",
+                    "start_word": i,
+                    "n_words": slice.len(),
+                }),
+            });
+            seq += 1;
+            if i + window >= words.len() {
+                break;
+            }
+            i += step;
+        }
+        chunks
+    }
+}
+
+impl ChunkerImpl for FixedOverlapChunker {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        Self::chunk(self, doc)
+    }
+}
+
+/// Wrapper chunker that joins each base chunk with its ±N neighbors into
+/// `embedded_content`. Direct port of
+/// `python/src/chunkshop/chunkers/neighbor_expand.py`. Preserves the base
+/// chunk's `seq_num`, `original_content`, and metadata; adds
+/// `neighbor_expand_window` to metadata.
+pub struct NeighborExpandChunker {
+    window: usize,
+    base: Box<dyn ChunkerImpl + Send + Sync>,
+}
+
+impl NeighborExpandChunker {
+    /// Construct a wrapper around `base` with the given window size. The full
+    /// `NeighborExpandChunkerConfig` lives in YAML; the runner extracts the
+    /// `base` ChunkerConfig and recursively builds it before constructing
+    /// this wrapper.
+    pub fn new(window: usize, base: Box<dyn ChunkerImpl + Send + Sync>) -> Self {
+        Self { window, base }
+    }
+
+    pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        let base_chunks = self.base.chunk(doc);
+        let n = base_chunks.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let w = self.window;
+        let mut out = Vec::with_capacity(n);
+        for (i, bc) in base_chunks.iter().enumerate() {
+            let lo = i.saturating_sub(w);
+            let hi = (i + w).min(n - 1);
+            let parts: Vec<&str> = (lo..=hi)
+                .map(|j| base_chunks[j].embedded_content.as_str())
+                .collect();
+            let joined = parts.join("\n\n");
+
+            let mut merged = bc.metadata.as_object().cloned().unwrap_or_default();
+            merged.insert(
+                "neighbor_expand_window".to_string(),
+                serde_json::Value::from(w as u64),
+            );
+
+            out.push(Chunk {
+                doc_id: bc.doc_id.clone(),
+                seq_num: bc.seq_num,
+                original_content: bc.original_content.clone(),
+                embedded_content: joined,
+                metadata: serde_json::Value::Object(merged),
+            });
+        }
+        out
+    }
+}
+
+impl ChunkerImpl for NeighborExpandChunker {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        Self::chunk(self, doc)
     }
 }
 

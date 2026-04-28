@@ -5,29 +5,28 @@ use std::time::Instant;
 use anyhow::Result;
 use tracing::info;
 
-use crate::chunker::{Chunk, HierarchyChunker, SentenceAwareChunker};
+use crate::chunker::{
+    ChunkerImpl, FixedOverlapChunker, HierarchyChunker, NeighborExpandChunker, SentenceAwareChunker,
+};
 use crate::config::{CellConfig, ChunkerConfig, EmbedderConfig, SourceConfig};
-use crate::source::Document;
 use crate::embedder::FastembedEmbedder;
 use crate::sink::PgVectorSink;
-use crate::source::{FilesSource, JsonCorpusSource};
+use crate::source::{Document, FilesSource, JsonCorpusSource};
 
-/// Runtime dispatch over the supported chunkers. Mirrors the
-/// discriminated-union `ChunkerConfig` so each YAML branch maps to a single
-/// concrete implementation. Adding a new chunker = one variant + one match arm
-/// in the `match cfg.chunker` block above + one match arm in `chunk()` below.
-enum AnyChunker {
-    SentenceAware(SentenceAwareChunker),
-    Hierarchy(HierarchyChunker),
-}
-
-impl AnyChunker {
-    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
-        match self {
-            AnyChunker::SentenceAware(c) => c.chunk(doc),
-            AnyChunker::Hierarchy(c) => c.chunk(doc),
+/// Recursively materialize a `ChunkerConfig` into a boxed trait object.
+/// `NeighborExpand` calls back into this fn to construct its `base`. Adding a
+/// new chunker = one new arm here + one new variant on `ChunkerConfig`.
+fn build_chunker(cfg: ChunkerConfig) -> Result<Box<dyn ChunkerImpl + Send + Sync>> {
+    Ok(match cfg {
+        ChunkerConfig::SentenceAware(c) => Box::new(SentenceAwareChunker::new(c)),
+        ChunkerConfig::Hierarchy(c) => Box::new(HierarchyChunker::new(c)),
+        ChunkerConfig::FixedOverlap(c) => Box::new(FixedOverlapChunker::new(c)?),
+        ChunkerConfig::NeighborExpand(c) => {
+            let window = c.window;
+            let base = build_chunker(*c.base)?;
+            Box::new(NeighborExpandChunker::new(window, base))
         }
-    }
+    })
 }
 
 /// Same dispatch pattern for sources. `iter_documents` returns owned `Document`s
@@ -63,10 +62,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
         SourceConfig::Files(fc) => AnySource::Files(FilesSource::new(fc)),
         SourceConfig::JsonCorpus(jc) => AnySource::JsonCorpus(JsonCorpusSource::new(jc)),
     };
-    let chunker: AnyChunker = match cfg.chunker {
-        ChunkerConfig::SentenceAware(cc) => AnyChunker::SentenceAware(SentenceAwareChunker::new(cc)),
-        ChunkerConfig::Hierarchy(cc) => AnyChunker::Hierarchy(HierarchyChunker::new(cc)),
-    };
+    let chunker = build_chunker(cfg.chunker)?;
     let mut embedder = match cfg.embedder {
         EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,
     };
