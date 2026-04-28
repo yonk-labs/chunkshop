@@ -8,8 +8,11 @@ use tracing::info;
 use crate::chunker::{
     ChunkerImpl, FixedOverlapChunker, HierarchyChunker, NeighborExpandChunker, SentenceAwareChunker,
 };
-use crate::config::{CellConfig, ChunkerConfig, EmbedderConfig, SourceConfig};
+use crate::config::{CellConfig, ChunkerConfig, EmbedderConfig, FramerConfig, SourceConfig};
 use crate::embedder::FastembedEmbedder;
+use crate::framer::{
+    FramerImpl, HeadingBoundaryFramer, IdentityFramer, JsonPathFramer, RegexBoundaryFramer,
+};
 use crate::sink::PgVectorSink;
 use crate::source::{Document, FilesSource, JsonCorpusSource};
 
@@ -26,6 +29,17 @@ fn build_chunker(cfg: ChunkerConfig) -> Result<Box<dyn ChunkerImpl + Send + Sync
             let base = build_chunker(*c.base)?;
             Box::new(NeighborExpandChunker::new(window, base))
         }
+    })
+}
+
+/// Materialize a `FramerConfig` into a boxed trait object. Mirrors
+/// `build_chunker`. New framer = one new arm here + one new variant.
+fn build_framer(cfg: FramerConfig) -> Result<Box<dyn FramerImpl + Send + Sync>> {
+    Ok(match cfg {
+        FramerConfig::Identity(c) => Box::new(IdentityFramer::new(c)),
+        FramerConfig::HeadingBoundary(c) => Box::new(HeadingBoundaryFramer::new(c)?),
+        FramerConfig::RegexBoundary(c) => Box::new(RegexBoundaryFramer::new(c)?),
+        FramerConfig::Jsonpath(c) => Box::new(JsonPathFramer::new(c)),
     })
 }
 
@@ -62,6 +76,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
         SourceConfig::Files(fc) => AnySource::Files(FilesSource::new(fc)),
         SourceConfig::JsonCorpus(jc) => AnySource::JsonCorpus(JsonCorpusSource::new(jc)),
     };
+    let framer = build_framer(cfg.framer)?;
     let chunker = build_chunker(cfg.chunker)?;
     let mut embedder = match cfg.embedder {
         EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,
@@ -78,23 +93,29 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     let mut docs_processed = 0usize;
     let mut chunks_written = 0usize;
 
-    for doc in docs.into_iter().take(limit) {
-        let chunks = chunker.chunk(&doc);
-        if chunks.is_empty() {
+    // Source emits raw documents; framer expands each raw into one or more
+    // framed documents; chunker chunks each framed doc independently. The
+    // doc limit applies at the raw level (matches Python).
+    for raw in docs.into_iter().take(limit) {
+        let framed = framer.frame(&raw)?;
+        for doc in framed {
+            let chunks = chunker.chunk(&doc);
+            if chunks.is_empty() {
+                docs_processed += 1;
+                continue;
+            }
+            let texts: Vec<String> = chunks.iter().map(|c| c.embedded_content.clone()).collect();
+            let embeddings = embedder.embed(texts)?;
+            sink.write_document(&chunks, &embeddings).await?;
+            chunks_written += chunks.len();
             docs_processed += 1;
-            continue;
-        }
-        let texts: Vec<String> = chunks.iter().map(|c| c.embedded_content.clone()).collect();
-        let embeddings = embedder.embed(texts)?;
-        sink.write_document(&chunks, &embeddings).await?;
-        chunks_written += chunks.len();
-        docs_processed += 1;
-        if docs_processed % heartbeat == 0 {
-            info!(
-                docs = docs_processed,
-                chunks = chunks_written,
-                "heartbeat"
-            );
+            if docs_processed % heartbeat == 0 {
+                info!(
+                    docs = docs_processed,
+                    chunks = chunks_written,
+                    "heartbeat"
+                );
+            }
         }
     }
 

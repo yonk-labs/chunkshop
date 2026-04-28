@@ -95,13 +95,66 @@ pub struct CellConfig {
     pub target: TargetConfig,
     #[serde(default)]
     pub runtime: RuntimeConfig,
-    // Ignored stages (present in Python YAMLs, not implemented in Rust MVP):
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    pub framer: Option<serde_yml::Value>,
+    #[serde(default)]
+    pub framer: FramerConfig,
+    // Ignored stages (parsed but not implemented in Rust MVP):
     #[serde(default, skip_serializing)]
     #[allow(dead_code)]
     pub extractor: Option<serde_yml::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FramerConfig {
+    Identity(IdentityFramerConfig),
+    HeadingBoundary(HeadingBoundaryFramerConfig),
+    RegexBoundary(RegexBoundaryFramerConfig),
+    Jsonpath(JsonPathFramerConfig),
+}
+
+impl Default for FramerConfig {
+    fn default() -> Self {
+        FramerConfig::Identity(IdentityFramerConfig {})
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct IdentityFramerConfig {}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HeadingBoundaryFramerConfig {
+    #[serde(default = "default_heading_pattern")]
+    pub pattern: String,
+    #[serde(default = "default_true")]
+    pub title_from_heading: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RegexBoundaryFramerConfig {
+    pub split_pattern: String,
+    #[serde(default)]
+    pub title_pattern: Option<String>,
+    #[serde(default = "default_true")]
+    pub body_starts_with_match: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct JsonPathFramerConfig {
+    pub row_path: String,
+    #[serde(default)]
+    pub title_path: Option<String>,
+    #[serde(default = "default_jsonpath_body")]
+    pub body_path: String,
+}
+
+fn default_heading_pattern() -> String {
+    r"^#+\s".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_jsonpath_body() -> String {
+    "$".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
