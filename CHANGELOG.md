@@ -68,6 +68,25 @@
 
 ### Changed
 
+- **`chunkshop-rs` now ships the `semantic` chunker.** Splits documents at
+  topic shifts detected by sentence-embedding similarity drops. Same algorithm
+  as Python: naive sentence split → embed each via a small boundary model
+  (default `sentence-transformers/all-MiniLM-L6-v2-int8` → fastembed-rs's
+  stock quantized AllMiniLML6V2Q in Rust) → cosine distances between
+  adjacent sentences → percentile threshold (numpy linear-interpolation
+  default) → breakpoint detection → span build → small-span merging
+  (forward then backward) → max_chunk_chars hard-split on sentence boundaries.
+  Algorithm helpers tested per-component (4 unit tests for percentile,
+  span-merge cases) plus 5 sentence-splitter tests; an end-to-end smoke
+  test confirms the full chunker runs against the sample corpus and emits
+  well-formed chunks. **Cross-language byte-identical chunks are NOT
+  promised** for this chunker: the percentile-cutoff over float embeddings
+  is sensitive to MB-1's documented ~1e-3 ORT-binary drift, which can shift
+  which sentence-pairs cross the threshold. Five of six Python chunkers
+  ship in Rust now; remaining: `summary_embed` and `hierarchical_summary`
+  (both need a callable summarizer, where the `lede` crate from crates.io
+  is a natural fit).
+
 - **`chunkshop-rs` now ships the framer pipeline stage** with all four
   framers Python ships: `identity` (default 1-to-1 pass-through), `heading_boundary`
   (split markdown on a configurable heading regex with preamble extraction

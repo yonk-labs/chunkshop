@@ -40,7 +40,7 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 |-----------|----------------------------------------------------------------|
 | source    | `files` (glob + `id_from: path \| stem \| sha1`), `json_corpus` (path + `documents_key` + configurable `id`/`content`/`title` field names; remaining row keys flow through to chunk metadata) |
 | framer    | `identity` (default 1-to-1 pass-through), `heading_boundary` (split markdown on a configurable heading regex with preamble + title-from-heading), `regex_boundary` (split on arbitrary regex; optional title-pattern capture), `jsonpath` (parse content as JSON, walk dotted path with `*` for list iteration; configurable body/title sub-paths) — all byte-identical to Python |
-| chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap` (word-level sliding window with start_word/n_words metadata), `neighbor_expand` (wraps any base chunker, joins each chunk's ±N neighbors into `embedded_content`) — all byte-identical to Python |
+| chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand` (all byte-identical to Python), `semantic` (sentence-embedding-similarity boundary detection — algorithm parity to Python, but chunk text is NOT byte-identical because the percentile threshold over float embeddings is sensitive to MB-1's ~1e-3 ORT-binary drift) |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
 | target    | pgvector table; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once on `ON CONFLICT`; `promote_metadata` jsonb-to-typed-column writes; HNSW index optional; concurrent-cell safe via schema-name advisory lock |
 
@@ -48,7 +48,7 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 
 Everything else Python ships is **deliberately out of scope**:
 
-- Other chunkers: `semantic`, `summary_embed`, `hierarchical_summary` — not ported.
+- Other chunkers: `summary_embed`, `hierarchical_summary` — not ported.
 - Extractors (`rake_keywords`, `keybert_phrases`, `spacy_entities`, `lang_detect`,
   `composite`) — parsed but ignored; no tags or extractor-produced metadata.
 - Sources: `pg_table`, `http`, `s3` — not ported.
@@ -146,7 +146,7 @@ re-creates it under `mode: overwrite`.
 
 | Want                                            | Lift |
 |-------------------------------------------------|------|
-| Other chunkers (`semantic`, `summary_embed`, `hierarchical_summary`) | `semantic` needs the boundary embedder, `summary_embed` / `hierarchical_summary` need a callable summarizer (the `lede` crate published on crates.io is a natural fit). |
+| Other chunkers (`summary_embed`, `hierarchical_summary`) | Both need a callable summarizer; the `lede` crate published on crates.io is a natural fit for the Rust port. |
 | Extractors                                      | Each is an independent pure-Rust port modulo Python-only deps (spaCy can't cross). |
 | Sources (`pg_table`, `http`, `s3`) | Standard wire-format ports. |
 | Orchestrator                                    | Spawn N `chunkshop-rs ingest` subprocesses over N YAML configs. |
