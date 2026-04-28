@@ -1,0 +1,23 @@
+{
+  "documents": [
+    {
+      "id": "doc-1",
+      "content": "First document body.",
+      "title": "First",
+      "tags": ["a", "b"],
+      "score": 0.91
+    },
+    {
+      "id": "doc-2",
+      "content": "Second document body, longer.",
+      "title": "Second",
+      "tags": ["c"]
+    },
+    {
+      "id": "doc-3",
+      "content": "Third.",
+      "tags": []
+    }
+  ],
+  "schema_version": 1
+}
