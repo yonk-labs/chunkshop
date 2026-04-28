@@ -38,7 +38,7 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 
 | Stage     | Supported                                                      |
 |-----------|----------------------------------------------------------------|
-| source    | `files` (glob + `id_from: path \| stem \| sha1`)               |
+| source    | `files` (glob + `id_from: path \| stem \| sha1`), `json_corpus` (path + `documents_key` + configurable `id`/`content`/`title` field names; remaining row keys flow through to chunk metadata) |
 | chunker   | `sentence_aware` (doc_type: prose or code; max_chars/min_chars), `hierarchy` (prefix_heading + section_part metadata + max_chars recursion — byte-identical to Python) |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
 | target    | pgvector table; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once on `ON CONFLICT`; `promote_metadata` jsonb-to-typed-column writes; HNSW index optional; concurrent-cell safe via schema-name advisory lock |
@@ -52,7 +52,7 @@ Everything else Python ships is **deliberately out of scope**:
 - Framers (`heading_boundary`, `regex_boundary`, `jsonpath`) — parsed but ignored.
 - Extractors (`rake_keywords`, `keybert_phrases`, `spacy_entities`, `lang_detect`,
   `composite`) — parsed but ignored; no tags or extractor-produced metadata.
-- Sources: `json_corpus`, `pg_table`, `http`, `s3` — not ported.
+- Sources: `pg_table`, `http`, `s3` — not ported.
 - Orchestrator / bakeoff subcommands — not ported.
 
 YAML configs from the Python side are **accepted** (unknown fields on
@@ -150,7 +150,7 @@ re-creates it under `mode: overwrite`.
 | Other chunkers (`fixed_overlap`, `neighbor_expand`, `semantic`, `summary_embed`, `hierarchical_summary`) | Each is a self-contained port; `semantic` needs the boundary embedder, `summary_embed` needs a callable summarizer. |
 | Framers (`heading_boundary`, `regex_boundary`, `jsonpath`) | New trait + four implementations. |
 | Extractors                                      | Each is an independent pure-Rust port modulo Python-only deps (spaCy can't cross). |
-| Sources (`json_corpus`, `pg_table`, `http`, `s3`) | Standard wire-format ports. |
+| Sources (`pg_table`, `http`, `s3`) | Standard wire-format ports. |
 | Orchestrator                                    | Spawn N `chunkshop-rs ingest` subprocesses over N YAML configs. |
 
 ## License

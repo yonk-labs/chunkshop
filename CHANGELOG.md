@@ -68,6 +68,15 @@
 
 ### Changed
 
+- **`chunkshop-rs` now ships the `json_corpus` source** — same shape as
+  Python: reads a JSON file, takes the array under `documents_key` (default
+  `"documents"`), pulls `id` / `content` / `title` from configured fields
+  (defaults `id`, `content`, `title`), and stuffs the remaining row keys
+  into the document's `metadata` as raw JSON values (preserving types so
+  downstream `promote_metadata` casts work). Verified by
+  `rust/chunkshop/tests/json_corpus_source.rs`. Any Python YAML with
+  `source.type: json_corpus` runs unchanged on Rust.
+
 - **`chunkshop-rs` sink reaches full-mode parity with Python.** Adds
   `mode: append` (table-existence + dim-match + ALTER preflight),
   `force_overwrite` flag, the source-tag-conflict safety check on
