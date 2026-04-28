@@ -1,0 +1,38 @@
+{
+  "raw_id": "fixture",
+  "raw_title": null,
+  "config": {
+    "row_path": "items.*",
+    "title_path": "title",
+    "body_path": "body"
+  },
+  "frames": [
+    {
+      "id": "fixture#0",
+      "content": "Body alpha.",
+      "title": "Alpha",
+      "metadata": {
+        "framer": "jsonpath",
+        "frame_seq": 0
+      }
+    },
+    {
+      "id": "fixture#1",
+      "content": "Body bravo.",
+      "title": "Bravo",
+      "metadata": {
+        "framer": "jsonpath",
+        "frame_seq": 1
+      }
+    },
+    {
+      "id": "fixture#2",
+      "content": "Body charlie.",
+      "title": "Charlie",
+      "metadata": {
+        "framer": "jsonpath",
+        "frame_seq": 2
+      }
+    }
+  ]
+}

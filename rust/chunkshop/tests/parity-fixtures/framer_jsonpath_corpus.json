@@ -1,0 +1,8 @@
+{
+  "items": [
+    {"title": "Alpha", "body": "Body alpha.", "extra": "x1"},
+    {"title": "Bravo", "body": "Body bravo.", "extra": "x2"},
+    {"title": "Charlie", "body": "Body charlie.", "extra": "x3"}
+  ],
+  "schema_version": 1
+}

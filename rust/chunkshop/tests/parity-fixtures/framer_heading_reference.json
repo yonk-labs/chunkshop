@@ -1,0 +1,46 @@
+{
+  "raw_id": "fixture",
+  "raw_title": null,
+  "config": {
+    "pattern": "^##\\s",
+    "title_from_heading": true
+  },
+  "frames": [
+    {
+      "id": "fixture#0",
+      "content": "# Top\n\nPreamble paragraph that comes before any second-level heading. Python's heading_boundary framer with `pattern: '^##\\s'` should treat this whole stretch (including the `# Top` line) as the preamble frame.",
+      "title": null,
+      "metadata": {
+        "framer": "heading_boundary",
+        "frame_seq": 0
+      }
+    },
+    {
+      "id": "fixture#1",
+      "content": "## Section A\n\nBody of section A. Two short sentences here keep things tidy.",
+      "title": "Section A",
+      "metadata": {
+        "framer": "heading_boundary",
+        "frame_seq": 1
+      }
+    },
+    {
+      "id": "fixture#2",
+      "content": "## Section B\n\nBody of section B. Slightly different so the framed docs are distinguishable.\n\n### Section B.1\n\nSubsection that the `^##\\s` pattern does NOT split on (only matches exactly two `#`s). It's part of section B's body.",
+      "title": "Section B",
+      "metadata": {
+        "framer": "heading_boundary",
+        "frame_seq": 2
+      }
+    },
+    {
+      "id": "fixture#3",
+      "content": "## Section C\n\nBody of section C. Last section in the corpus.",
+      "title": "Section C",
+      "metadata": {
+        "framer": "heading_boundary",
+        "frame_seq": 3
+      }
+    }
+  ]
+}
