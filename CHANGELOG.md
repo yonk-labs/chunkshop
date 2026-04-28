@@ -68,6 +68,18 @@
 
 ### Changed
 
+- **`chunkshop-rs` now ships the `pg_table` source.** Reads documents
+  from a Postgres table by id_column / content_column / optional title_column
+  with an optional `where` clause. Mirrors Python: identifiers are
+  regex-validated at config-load (allowlist `^[a-z_][a-z0-9_]*$`); the
+  WHERE clause is trusted operator input concatenated as-is. Implementation
+  uses sqlx (already a dep). The runner's source dispatch is now async to
+  accommodate the network-bound query path; files / json_corpus variants
+  keep their sync inner impls and are awaited through the async wrapper at
+  no overhead. Three of five sources ship in Rust now (`files`,
+  `json_corpus`, `pg_table`); remaining `http` + `s3`. Verified by
+  `rust/chunkshop/tests/pg_table_source.rs` against a real Postgres.
+
 - **`chunkshop-rs` now ships the `semantic` chunker.** Splits documents at
   topic shifts detected by sentence-embedding similarity drops. Same algorithm
   as Python: naive sentence split → embed each via a small boundary model
