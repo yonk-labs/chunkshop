@@ -1,0 +1,19 @@
+# Top-Level Title
+
+Intro paragraph that comes before the first nested heading. It is long enough to clear the default min_section_chars threshold of 100. Two sentences make this clearer.
+
+## Section A
+
+Body of Section A. Short on purpose to keep the chunker from splitting it. Still over the 100-char minimum so it survives the filter.
+
+## Section B
+
+Body of Section B. Longer than A so neighbor expansion shows up clearly when this section's chunk is joined with its neighbors.
+
+## Section C
+
+Body of Section C. Comparable length to B.
+
+## Section D
+
+Body of Section D. The last section in the corpus; its expanded view should glue C + D together since w=1 there is no further-right neighbor.

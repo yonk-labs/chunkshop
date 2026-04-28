@@ -1,0 +1,60 @@
+{
+  "doc_id": "fixture",
+  "doc_title": null,
+  "config": {
+    "window_words": 100,
+    "step_words": 50
+  },
+  "chunks": [
+    {
+      "seq_num": 0,
+      "original_content": "The fixed-overlap chunker walks word-by-word across a document with a sliding window. Each chunk holds window_words consecutive whitespace-split tokens; the next chunk starts step_words later. When the remaining tail is shorter than the window the loop stops after emitting the partial chunk. Whitespace inside the source is collapsed to a single space when the chunk is rejoined. This corpus is deliberately long enough to exercise three or four chunks at typical defaults. Word boundaries follow Python's str.split with no arguments: any run of whitespace counts. Punctuation stays attached to the adjacent word. Newlines collapse the same as spaces. The chunk's",
+      "embedded_content": "The fixed-overlap chunker walks word-by-word across a document with a sliding window. Each chunk holds window_words consecutive whitespace-split tokens; the next chunk starts step_words later. When the remaining tail is shorter than the window the loop stops after emitting the partial chunk. Whitespace inside the source is collapsed to a single space when the chunk is rejoined. This corpus is deliberately long enough to exercise three or four chunks at typical defaults. Word boundaries follow Python's str.split with no arguments: any run of whitespace counts. Punctuation stays attached to the adjacent word. Newlines collapse the same as spaces. The chunk's",
+      "metadata": {
+        "strategy": "fixed_overlap",
+        "start_word": 0,
+        "n_words": 100
+      }
+    },
+    {
+      "seq_num": 1,
+      "original_content": "single space when the chunk is rejoined. This corpus is deliberately long enough to exercise three or four chunks at typical defaults. Word boundaries follow Python's str.split with no arguments: any run of whitespace counts. Punctuation stays attached to the adjacent word. Newlines collapse the same as spaces. The chunk's metadata records start_word as the index into the whitespace-split list and n_words as the actual length of the slice. Empty input yields an empty chunk list. Repeating filler to bulk this fixture: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo",
+      "embedded_content": "single space when the chunk is rejoined. This corpus is deliberately long enough to exercise three or four chunks at typical defaults. Word boundaries follow Python's str.split with no arguments: any run of whitespace counts. Punctuation stays attached to the adjacent word. Newlines collapse the same as spaces. The chunk's metadata records start_word as the index into the whitespace-split list and n_words as the actual length of the slice. Empty input yields an empty chunk list. Repeating filler to bulk this fixture: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo",
+      "metadata": {
+        "strategy": "fixed_overlap",
+        "start_word": 50,
+        "n_words": 100
+      }
+    },
+    {
+      "seq_num": 2,
+      "original_content": "metadata records start_word as the index into the whitespace-split list and n_words as the actual length of the slice. Empty input yields an empty chunk list. Repeating filler to bulk this fixture: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa",
+      "embedded_content": "metadata records start_word as the index into the whitespace-split list and n_words as the actual length of the slice. Empty input yields an empty chunk list. Repeating filler to bulk this fixture: alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa",
+      "metadata": {
+        "strategy": "fixed_overlap",
+        "start_word": 100,
+        "n_words": 100
+      }
+    },
+    {
+      "seq_num": 3,
+      "original_content": "sierra tango uniform victor whiskey x-ray yankee zulu. alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. Each window starts at a fresh start_word offset. Step 50 with window 100 means the second chunk begins at word 50 and overlaps the first chunk by 50 words. The last partial chunk may be shorter than window_words; n_words records",
+      "embedded_content": "sierra tango uniform victor whiskey x-ray yankee zulu. alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. Each window starts at a fresh start_word offset. Step 50 with window 100 means the second chunk begins at word 50 and overlaps the first chunk by 50 words. The last partial chunk may be shorter than window_words; n_words records",
+      "metadata": {
+        "strategy": "fixed_overlap",
+        "start_word": 150,
+        "n_words": 100
+      }
+    },
+    {
+      "seq_num": 4,
+      "original_content": "quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. Each window starts at a fresh start_word offset. Step 50 with window 100 means the second chunk begins at word 50 and overlaps the first chunk by 50 words. The last partial chunk may be shorter than window_words; n_words records the actual length.",
+      "embedded_content": "quebec romeo sierra tango uniform victor whiskey x-ray yankee zulu. Each window starts at a fresh start_word offset. Step 50 with window 100 means the second chunk begins at word 50 and overlaps the first chunk by 50 words. The last partial chunk may be shorter than window_words; n_words records the actual length.",
+      "metadata": {
+        "strategy": "fixed_overlap",
+        "start_word": 200,
+        "n_words": 53
+      }
+    }
+  ]
+}
