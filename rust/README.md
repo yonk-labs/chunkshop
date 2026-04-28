@@ -41,7 +41,7 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 | source    | `files` (glob + `id_from: path \| stem \| sha1`)               |
 | chunker   | `sentence_aware` (doc_type: prose or code; max_chars/min_chars), `hierarchy` (prefix_heading + section_part metadata + max_chars recursion — byte-identical to Python) |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
-| target    | pgvector table; modes `overwrite` + `create_if_missing`; HNSW index optional |
+| target    | pgvector table; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once on `ON CONFLICT`; `promote_metadata` jsonb-to-typed-column writes; HNSW index optional; concurrent-cell safe via schema-name advisory lock |
 
 ## What does NOT work (MVP cutoff)
 
@@ -53,8 +53,6 @@ Everything else Python ships is **deliberately out of scope**:
 - Extractors (`rake_keywords`, `keybert_phrases`, `spacy_entities`, `lang_detect`,
   `composite`) — parsed but ignored; no tags or extractor-produced metadata.
 - Sources: `json_corpus`, `pg_table`, `http`, `s3` — not ported.
-- Target `mode: append` — returns a runtime error pointing at the Python impl.
-- Promoted columns (`promote_metadata`) — parsed but not written.
 - Orchestrator / bakeoff subcommands — not ported.
 
 YAML configs from the Python side are **accepted** (unknown fields on
@@ -153,7 +151,6 @@ re-creates it under `mode: overwrite`.
 | Framers (`heading_boundary`, `regex_boundary`, `jsonpath`) | New trait + four implementations. |
 | Extractors                                      | Each is an independent pure-Rust port modulo Python-only deps (spaCy can't cross). |
 | Sources (`json_corpus`, `pg_table`, `http`, `s3`) | Standard wire-format ports. |
-| Sink `mode: append` + promoted columns          | Pre-flight + `ADD COLUMN IF NOT EXISTS` + per-doc upsert with the source-write-once invariant. |
 | Orchestrator                                    | Spawn N `chunkshop-rs ingest` subprocesses over N YAML configs. |
 
 ## License

@@ -68,6 +68,20 @@
 
 ### Changed
 
+- **`chunkshop-rs` sink reaches full-mode parity with Python.** Adds
+  `mode: append` (table-existence + dim-match + ALTER preflight),
+  `force_overwrite` flag, the source-tag-conflict safety check on
+  `mode: overwrite` (refuses to drop a table holding rows from a different
+  cell unless `force_overwrite: true`), the BLAKE2b-keyed
+  `pg_advisory_xact_lock` that serializes concurrent-cell schema setup,
+  and `promote_metadata` jsonb-to-typed-column writes (allowlisted types,
+  identifier-safe paths). `source` stays write-once on `ON CONFLICT` —
+  provenance is preserved across cells. Cross-language verified by
+  `rust/chunkshop/tests/sink_modes_parity.rs`: a Python `mode: overwrite`
+  cell + a Rust `mode: append` cell both write into one table, both rows
+  query by `WHERE source = ...`, and the promoted column holds the right
+  typed values for both. New dep: `blake2`.
+
 - **`chunkshop-rs` now ships the `hierarchy` chunker** — Python's shipped
   default and the bakeoff winner. Same logic: heading prefix prepended to
   `embedded_content` (`{heading}\n\n{body}`), per-`section_part` metadata,
