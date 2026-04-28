@@ -68,6 +68,20 @@
 
 ### Changed
 
+- **`chunkshop-rs` now ships the framer pipeline stage** with all four
+  framers Python ships: `identity` (default 1-to-1 pass-through), `heading_boundary`
+  (split markdown on a configurable heading regex with preamble extraction
+  and title-from-heading), `regex_boundary` (split on arbitrary regex with
+  optional title-pattern capture), and `jsonpath` (parse content as JSON,
+  walk dotted path with `*` for list iteration). The runner now wires
+  source → framer → chunker → embedder → sink. **Byte-identical to Python**
+  for both heading_boundary and jsonpath, verified by
+  `rust/chunkshop/tests/heading_boundary_parity.rs` and
+  `rust/chunkshop/tests/jsonpath_parity.rs` against committed Python
+  references. Default identity-framer means existing YAMLs without a
+  `framer:` block see no behavior change (verified by the
+  `cross_language_append_with_promote_column` test re-running unchanged).
+
 - **`chunkshop-rs` now ships the `fixed_overlap` and `neighbor_expand`
   chunkers.** `fixed_overlap` is a word-level sliding window with
   `start_word` / `n_words` metadata (Python's canonical baseline chunker).
