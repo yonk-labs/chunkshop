@@ -68,6 +68,19 @@
 
 ### Changed
 
+- **`chunkshop-rs` now ships the `fixed_overlap` and `neighbor_expand`
+  chunkers.** `fixed_overlap` is a word-level sliding window with
+  `start_word` / `n_words` metadata (Python's canonical baseline chunker).
+  `neighbor_expand` wraps any base chunker and joins each chunk's ±N
+  neighbors into `embedded_content`. Both are **byte-identical to Python**
+  on the same input — verified by `rust/chunkshop/tests/fixed_overlap_parity.rs`
+  and `rust/chunkshop/tests/neighbor_expand_parity.rs` against committed
+  Python references. The runner gains a `ChunkerImpl` trait + a recursive
+  `build_chunker` so neighbor_expand can wrap any other chunker (including
+  itself, in principle). Four of six Python chunkers ship in Rust now
+  (`sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`);
+  remaining: `semantic` and the two summary_* wrappers.
+
 - **`chunkshop-rs` now ships the `json_corpus` source** — same shape as
   Python: reads a JSON file, takes the array under `documents_key` (default
   `"documents"`), pulls `id` / `content` / `title` from configured fields
