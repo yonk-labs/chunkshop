@@ -1,0 +1,124 @@
+//! Cross-language byte-identical parity for SummaryEmbedChunker
+//! (passthrough + external modes — callable parity is out of scope until
+//! lede integration ships).
+
+use std::path::PathBuf;
+
+use chunkshop::chunker::{ChunkerImpl, HierarchyChunker, SummaryEmbedChunker};
+use chunkshop::config::{
+    ExternalSummarizerConfig, HierarchyChunkerConfig, PassthroughSummarizerConfig,
+    SummarizerConfig,
+};
+use chunkshop::source::Document;
+use chunkshop::summarizer::build_summarizer;
+use serde::Deserialize;
+use serde_json::json;
+
+fn fixtures_dir() -> PathBuf {
+    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("tests");
+    p.push("parity-fixtures");
+    p
+}
+
+#[derive(Debug, Deserialize)]
+struct RefChunk {
+    doc_id: String,
+    seq_num: usize,
+    original_content: String,
+    embedded_content: String,
+    metadata: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct PassthroughRef {
+    doc_id: String,
+    chunks: Vec<RefChunk>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalRef {
+    doc_id: String,
+    doc_metadata: serde_json::Value,
+    chunks: Vec<RefChunk>,
+}
+
+fn assert_chunks_match(actual: &[chunkshop::chunker::Chunk], expected: &[RefChunk]) {
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "chunk count mismatch: rust={}, python={}",
+        actual.len(),
+        expected.len()
+    );
+    for (i, (got, exp)) in actual.iter().zip(expected.iter()).enumerate() {
+        assert_eq!(got.doc_id, exp.doc_id, "chunk[{i}] doc_id");
+        assert_eq!(got.seq_num, exp.seq_num, "chunk[{i}] seq_num");
+        assert_eq!(
+            got.original_content, exp.original_content,
+            "chunk[{i}] original_content"
+        );
+        assert_eq!(
+            got.embedded_content, exp.embedded_content,
+            "chunk[{i}] embedded_content"
+        );
+        assert_eq!(got.metadata, exp.metadata, "chunk[{i}] metadata");
+    }
+}
+
+fn make_base_chunker() -> Box<dyn ChunkerImpl + Send + Sync> {
+    Box::new(HierarchyChunker::new(HierarchyChunkerConfig {
+        prefix_heading: true,
+        min_section_chars: 100,
+        max_chars: 400,
+    }))
+}
+
+#[test]
+fn rust_summary_embed_passthrough_matches_python() {
+    let corpus = std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt"))
+        .expect("read corpus");
+    let ref_json = std::fs::read_to_string(
+        fixtures_dir().join("summary_embed_passthrough_reference.json"),
+    )
+    .expect("read reference");
+    let r: PassthroughRef = serde_json::from_str(&ref_json).expect("parse");
+
+    let summarizer_cfg = SummarizerConfig::Passthrough(PassthroughSummarizerConfig::default());
+    let summarizer = build_summarizer(&summarizer_cfg).expect("build summarizer");
+    let chunker = SummaryEmbedChunker::new(make_base_chunker(), summarizer, "passthrough");
+
+    let doc = Document {
+        id: r.doc_id.clone(),
+        content: corpus,
+        title: None,
+        metadata: json!({}),
+    };
+    let actual = chunker.chunk(&doc);
+    assert_chunks_match(&actual, &r.chunks);
+}
+
+#[test]
+fn rust_summary_embed_external_matches_python() {
+    let corpus = std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt"))
+        .expect("read corpus");
+    let ref_json =
+        std::fs::read_to_string(fixtures_dir().join("summary_embed_external_reference.json"))
+            .expect("read reference");
+    let r: ExternalRef = serde_json::from_str(&ref_json).expect("parse");
+
+    let summarizer_cfg = SummarizerConfig::External(ExternalSummarizerConfig {
+        field: "summary".to_string(),
+    });
+    let summarizer = build_summarizer(&summarizer_cfg).expect("build summarizer");
+    let chunker = SummaryEmbedChunker::new(make_base_chunker(), summarizer, "external");
+
+    let doc = Document {
+        id: r.doc_id.clone(),
+        content: corpus,
+        title: None,
+        metadata: r.doc_metadata,
+    };
+    let actual = chunker.chunk(&doc);
+    assert_chunks_match(&actual, &r.chunks);
+}

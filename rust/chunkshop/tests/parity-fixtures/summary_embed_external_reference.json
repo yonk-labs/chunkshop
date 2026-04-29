@@ -1,0 +1,90 @@
+{
+  "doc_id": "fixture",
+  "config": {
+    "summarizer_mode": "external",
+    "field": "summary",
+    "base": {
+      "type": "hierarchy",
+      "prefix_heading": true,
+      "min_section_chars": 100,
+      "max_chars": 400
+    }
+  },
+  "doc_metadata": {
+    "summary": "PRE_COMPUTED_SUMMARY_FOR_DOC"
+  },
+  "chunks": [
+    {
+      "doc_id": "fixture",
+      "seq_num": 0,
+      "original_content": "Intro paragraph that comes before the first nested heading. It is long enough to clear the default min_section_chars threshold of 100. Two sentences make this clearer.",
+      "embedded_content": "PRE_COMPUTED_SUMMARY_FOR_DOC",
+      "metadata": {
+        "strategy": "hierarchy",
+        "heading": "Top-Level Title",
+        "section_part": 0,
+        "summarizer": "external"
+      }
+    },
+    {
+      "doc_id": "fixture",
+      "seq_num": 1,
+      "original_content": "Body of Section A. This section is short on purpose to exercise normal flow. Still over the 100-char minimum.",
+      "embedded_content": "PRE_COMPUTED_SUMMARY_FOR_DOC",
+      "metadata": {
+        "strategy": "hierarchy",
+        "heading": "Section A",
+        "section_part": 0,
+        "summarizer": "external"
+      }
+    },
+    {
+      "doc_id": "fixture",
+      "seq_num": 2,
+      "original_content": "Body of Section B. Longer than A so that the section_part metadata reads zero throughout because we stay under max_chars. Adding a second sentence to comfortably exceed min_section_chars.",
+      "embedded_content": "PRE_COMPUTED_SUMMARY_FOR_DOC",
+      "metadata": {
+        "strategy": "hierarchy",
+        "heading": "Section B",
+        "section_part": 0,
+        "summarizer": "external"
+      }
+    },
+    {
+      "doc_id": "fixture",
+      "seq_num": 3,
+      "original_content": "Subsection body. Also over the min_section_chars threshold. The chunker treats this like any other heading — same section_part counter, same metadata shape.",
+      "embedded_content": "PRE_COMPUTED_SUMMARY_FOR_DOC",
+      "metadata": {
+        "strategy": "hierarchy",
+        "heading": "Section B.1",
+        "section_part": 0,
+        "summarizer": "external"
+      }
+    },
+    {
+      "doc_id": "fixture",
+      "seq_num": 4,
+      "original_content": "This section is going to be padded so it exceeds the configured max_chars and triggers split_to_max_chars recursion. Repeat content next: Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. ",
+      "embedded_content": "PRE_COMPUTED_SUMMARY_FOR_DOC",
+      "metadata": {
+        "strategy": "hierarchy",
+        "heading": "Section Big",
+        "section_part": 0,
+        "summarizer": "external"
+      }
+    },
+    {
+      "doc_id": "fixture",
+      "seq_num": 5,
+      "original_content": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+      "embedded_content": "PRE_COMPUTED_SUMMARY_FOR_DOC",
+      "metadata": {
+        "strategy": "hierarchy",
+        "heading": "Section Big",
+        "section_part": 1,
+        "summarizer": "external"
+      }
+    }
+  ]
+}
