@@ -3,9 +3,11 @@
 **One YAML config → one end-to-end document ingest into a pgvector table.**
 Read from a source, optionally re-frame the rows, chunk the text, embed each
 chunk with an ONNX model, optionally extract metadata, and land it in
-Postgres. Embeddable as a Python library or driven from the CLI. One schema
-across Python, Rust, and Go (the latter two planned) — vectors are
-interchangeable across implementations.
+Postgres. Embeddable as a Python or Rust library, or driven from the CLI.
+One schema across Python and Rust at the **single-cell** layer — vectors
+written by either implementation are interchangeable. The **bakeoff**
+(matrix → recommended cell) and **orchestrator** (parallel multi-cell
+fan-out) are Python-only today; Rust port in flight. Go is not started.
 
 ## The problem this solves
 
@@ -67,10 +69,13 @@ that a knowledgeable engineer would have picked anyway.
   `.github/workflows/release.yml` publishes to PyPI on tag push via
   Trusted Publishing (no API token).
 
-**Planned (not shipped):** Rust (`ort` + `tokenizers`) and Go
-(`onnxruntime_go` + `hugot`) ports, sharing the same YAML schema and
-pgvector layout. Vectors produced by any implementation will be
-interchangeable.
+**Rust (`ort` + `tokenizers`):** single-cell pipeline at parity (5/5
+sources, 7/7 chunkers, embedder, 4/6 extractors, full sink, inline
+`Pipeline`). Same YAML schema, same pgvector layout — single-cell vectors
+interchangeable with Python. **Bakeoff and orchestrator are Python-only**
+(comparison + bulk fan-out); Rust port in flight.
+
+**Go (`onnxruntime_go` + `hugot`):** scoped, not started.
 
 ## What makes the defaults trustworthy
 

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Documentation
+
+- **Honest framing of the Rust parity story.** Earlier prose ("5/5 sources
+  ship in Rust", "all 6 chunkers", "parity-checked") oversold the
+  cross-language pitch by stopping at the single-cell layer. The bakeoff
+  and orchestrator are Python-only and the docs now say so up-front
+  instead of burying it under "deliberately out of scope". Top-level
+  README's status table now distinguishes single-cell parity (✅) from
+  meta-runner parity (❌). `rust/README.md` carries a prominent note that
+  Rust today is for *running* a chosen cell, not *picking* one. The NTSB
+  bakeoff sample README explicitly flags Python-only. No code change —
+  this is a framing fix so the next reader (you, future me, a contributor)
+  doesn't get the same wrong impression. Rust bakeoff port is in flight.
+
 ### Changed
 
 - **`scripts/run_incremental_watermark` rewritten in Python.** The original

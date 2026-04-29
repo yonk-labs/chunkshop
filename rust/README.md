@@ -1,12 +1,34 @@
 # chunkshop-rs
 
-Minimal Rust port of chunkshop. Same YAML config, same pgvector target table,
-same ordering of chunks — vectors written by `chunkshop-rs` are compatible with
-vectors written by the Python reference (see `../scripts/parity_check.py`).
+Rust port of chunkshop's **single-cell pipeline**. Same YAML config, same
+pgvector target table, same ordering of chunks — vectors written by
+`chunkshop-rs ingest` are compatible with vectors written by the Python
+reference (see `../scripts/parity_check.py`).
 
-**Status:** v0.1.0 MVP. One source, one chunker, one embedder, one sink. This
-is a wire-format proof of the cross-language claim; it is not feature parity
-with Python.
+> ## ⚠️ Read this before assuming Rust = Python
+>
+> The chunkshop user journey is **bring corpus → run bakeoff → take
+> recommended.yaml → run ingest → repeat for new corpus**. Today the Rust
+> port covers only the second-to-last step (`ingest`). The bakeoff and
+> orchestrator are **Python-only**. Use Rust to *run* a cell the bakeoff
+> picked. Use Python to *pick* the cell.
+>
+> | What | Python | Rust |
+> |---|---|---|
+> | `ingest` (one YAML → one cell) | ✅ | ✅ |
+> | `Pipeline` (library / inline mode) | ✅ | ✅ |
+> | `bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ | ❌ in flight |
+> | `orchestrate` (N cells in parallel subprocesses) | ✅ | ❌ |
+>
+> Rust bakeoff parity is the next major piece; see the project mission
+> brief / CHANGELOG. Until then, the cross-language pitch is honest at the
+> single-cell layer (vectors interchangeable) and aspirational at the
+> meta-runner layer (comparison + bulk fan-out).
+
+**Status:** v0.1.x. Single-cell pipeline at feature parity with Python
+(modulo two NLP-heavy extractors that need spaCy). This is a wire-format
+proof of the cross-language claim at the cell level; **it is not yet feature
+parity at the meta-runner level**.
 
 ## Build
 
@@ -45,16 +67,33 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 | extractor | `none` (default), `composite`, `rake_keywords` (hand-rolled RAKE + 150-word EN stopword list — algorithm-only parity), `lang_detect` (via `whatlang` crate, ISO 639-3 → 639-1 conversion — algorithm-only parity), `keybert_phrases` + `spacy_entities` (Python-only stubs that error at config-load) |
 | target    | pgvector table; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once on `ON CONFLICT`; `promote_metadata` jsonb-to-typed-column writes; HNSW index optional; concurrent-cell safe via schema-name advisory lock |
 
-## What does NOT work (MVP cutoff)
+## What does NOT work yet
 
-Everything else Python ships is **deliberately out of scope**:
+This is **not deliberate scoping** for the bakeoff / orchestrator items —
+they're real gaps. The two extractor stubs are deliberate.
+
+### Meta-runner gaps (real parity work pending)
+
+- **`chunkshop-rs bakeoff` subcommand — not ported.** This is the gap that
+  matters most: bakeoff is *step 1* of the chunkshop user journey (bring
+  corpus → run bakeoff → take recommended.yaml → ingest). Rust today cannot
+  run the matrix that picks the chunker/embedder for a corpus. Until Rust
+  bakeoff lands, **a Rust-only deployment cannot run the chunkshop
+  comparison story end-to-end** — it can only run a cell that Python's
+  bakeoff already picked. Port is in flight; see the project CHANGELOG.
+
+- **`chunkshop-rs orchestrate` subcommand — not ported.** Bulk multi-cell
+  fan-out (Python's CLI spawns N `ingest` subprocesses with thread caps,
+  log multiplexing, per-cell failure isolation). Different surface than the
+  bakeoff; tracked separately.
+
+### Deliberate Python-only extractors
 
 - Extractors `keybert_phrases` and `spacy_entities` — Python-only. Build-time
   error directs users back to Python or to a custom Rust binary that
   registers their own NER / embedding-keyphrase pipeline. The other four
   extractor variants (`none`, `composite`, `rake_keywords`, `lang_detect`)
   ship.
-- Orchestrator / bakeoff subcommands — not ported.
 
 YAML configs from the Python side are **accepted** (unknown fields on
 `runtime`/`framer`/`extractor` are ignored) — but obviously the ignored stages
@@ -148,8 +187,9 @@ re-creates it under `mode: overwrite`.
 
 | Want                                            | Lift |
 |-------------------------------------------------|------|
+| **`chunkshop-rs bakeoff`** subcommand           | **In flight.** Mirror `python/src/chunkshop/bakeoff/` (config + keys + gold + runner + score + output) so the same `bakeoff-ntsb.yaml` runs from either language and produces the same leaderboard ordering. The single biggest gap to the cross-language pitch — without it, the comparison story is Python-only. |
+| `chunkshop-rs orchestrate` subcommand           | Spawn N `chunkshop-rs ingest` subprocesses over N YAML configs with thread caps + per-cell failure isolation. Different surface from bakeoff; tracked separately. |
 | Python-only extractors (`keybert_phrases`, `spacy_entities`) | Each needs a Rust-native NER / embedding-keyphrase implementation modulo Python-only deps (spaCy can't cross). |
-| Orchestrator                                    | Spawn N `chunkshop-rs ingest` subprocesses over N YAML configs. |
 
 ## License
 

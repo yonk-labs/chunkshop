@@ -5,6 +5,14 @@ markdown files shipped with `pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/`
 Hand-written 12-query gold set, four chunkers, three embedders, one command,
 one leaderboard.
 
+> **Python-only today.** The `chunkshop bakeoff` CLI is implemented in
+> `python/src/chunkshop/bakeoff/`. The Rust port (`chunkshop-rs bakeoff`)
+> is in flight — once it lands this README will document both invocations
+> against the same `bakeoff-ntsb.yaml` and ship `sample-results-rust.md`
+> alongside the existing `sample-results.md`. Until then, run the bakeoff
+> from Python and use the recommended.yaml output to drive `chunkshop-rs
+> ingest` if you want the production runtime in Rust.
+
 ## What it does
 
 `chunkshop bakeoff` ingests every (chunker × embedder) combo into its own

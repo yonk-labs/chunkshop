@@ -13,7 +13,11 @@ optionally tags it, and lands the result in a pgvector table. Designed to be con
 library or driven from the command line.
 
 One YAML config = one end-to-end ingest ("cell"). Multiple YAMLs run in parallel via
-`chunkshop orchestrate`. Same schema across Python, Rust, and Go — vectors are interchangeable.
+`chunkshop orchestrate`. The single-cell pipeline is at parity across Python and
+Rust — vectors written by either implementation are interchangeable. The
+**bakeoff** (matrix → leaderboard → recommended cell) and the **orchestrator**
+(parallel multi-cell fan-out) are **Python-only** today; Rust port in flight.
+Go is not started.
 
 ## Pipeline
 
@@ -53,9 +57,24 @@ line for pgvector and a copy-paste query script.
 
 | Impl             | Path       | State                                                |
 |------------------|------------|------------------------------------------------------|
-| Python reference | `python/`  | v0.2.0, runs end-to-end. int8 default.               |
-| Rust             | `rust/`    | v0.1.0 MVP. One source, chunker, embedder, sink. Parity-checked. |
-| Go               | `go/`      | Planned. `onnxruntime_go` + HF tokenizer bindings.   |
+| Python reference | `python/`  | v0.2.0. All features. int8 default.                  |
+| Rust             | `rust/`    | v0.1.0. **Single-cell pipeline at parity** (5/5 sources, 7/7 chunkers, embedder, 4/6 extractors, full sink, inline `Pipeline`). **Bakeoff and orchestrator are Python-only** — Rust today is for *running* a chosen cell, not for *picking* one. See [`rust/README.md`](rust/README.md). |
+| Go               | `go/`      | Not started.                                         |
+
+### What "single-cell parity" means and doesn't mean
+
+| Layer | Python | Rust |
+|---|---|---|
+| Source / framer / chunker / embedder / extractor / sink | ✅ | ✅ |
+| `Pipeline` (inline / library mode) | ✅ | ✅ |
+| `chunkshop ingest` (one YAML → one cell) | ✅ | ✅ |
+| **`chunkshop bakeoff` (matrix → leaderboard → recommended.yaml)** | ✅ | ❌ |
+| **`chunkshop orchestrate` (N cells as parallel subprocesses)** | ✅ | ❌ |
+
+The bakeoff is **step 1 of every adoption** in the chunkshop journey — bring a
+corpus, write a small gold set, run the bakeoff, take the recommended cell to
+production. Until Rust bakeoff lands, **the comparison story is Python-only**.
+Rust runs the cell the bakeoff picked.
 
 ## Defaults
 
@@ -84,9 +103,10 @@ data in the sibling repo. See [`docs/embedders.md`](docs/embedders.md) for the
 catalogue and A/B recipe. See [`docs/embedders.md#benchmark-on-docssamples`](docs/embedders.md#benchmark-on-docssamples)
 for measured numbers on this repo's corpus.
 
-All three implementations share the same YAML config schema, the same ONNX Runtime-based
-embedder (via `fastembed` in Python; via `ort` in Rust; via `onnxruntime_go` in Go), and the
-same target table layout — so vectors produced by any of them are interchangeable.
+Python and Rust share the same YAML config schema, the same ONNX Runtime-based
+embedder (via `fastembed` in Python; via `ort` in Rust), and the same target
+table layout — so single-cell vectors produced by either are interchangeable.
+The Go path was scoped but is not started.
 
 ## YAML shape
 
@@ -94,10 +114,10 @@ One YAML = one cell = one end-to-end ingest. Six sections (framer optional, defa
 
 | Section   | Types                                                                        |
 |-----------|------------------------------------------------------------------------------|
-| source    | files · json_corpus · pg_table · http (stub) · s3 (stub)                     |
+| source    | files · json_corpus · pg_table · http · s3 · inline (library mode — host app drives ingestion) |
 | framer    | identity (default) · heading_boundary · regex_boundary · jsonpath            |
 | chunker   | sentence_aware · fixed_overlap · hierarchy · neighbor_expand · semantic · summary_embed · hierarchical_summary |
-| embedder  | fastembed (Python); onnx_direct (Rust, Go, optional in Python)               |
+| embedder  | fastembed (Python uses `fastembed`; Rust uses `ort` directly with the same ONNX file Python loads, ~1-2e-3 cosine drift documented) |
 | extractor | none · rake_keywords · keybert_phrases · spacy_entities · lang_detect · composite (opt-in extras) |
 | target    | pgvector table `{schema}.{table}`; `mode: overwrite \| append \| create_if_missing`; `source_tag` + `promote_metadata` for multi-source tables; HNSW index |
 
