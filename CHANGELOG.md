@@ -68,6 +68,28 @@
 
 ### Changed
 
+- **`chunkshop-rs` extractor stage shipped — all 5 pipeline stages now
+  have at least partial Rust coverage.** Six extractor variants:
+  - `none`, `composite` — trivial ports, byte-identical to Python.
+  - `rake_keywords` — hand-rolled RAKE algorithm with a 150-word English
+    stopword list; algorithm-only parity (NOT byte-identical to Python's
+    rake-nltk, which uses NLTK's stopword list and slightly different
+    tokenization).
+  - `lang_detect` — via the `whatlang` crate (new dep), with an ISO 639-3
+    → 639-1 conversion table for 40+ languages; algorithm-only parity
+    (different statistical detector vs Python's `langdetect`).
+  - `keybert_phrases`, `spacy_entities` — Python-only stubs that error at
+    config-load with a clear message directing users to either Python or
+    a custom Rust binary.
+
+  Runner threads tags + metadata through the documented chunker-wins
+  merge (`{**doc.metadata, **r.metadata, **c.metadata}`). Sink's
+  `write_document` gains a `tags_per_chunk: &[Vec<String>]` parameter
+  populating the `tags text[]` column per chunk; mismatched-length is an
+  error. The `cross_language_append_with_promote_column` integration
+  test still passes (no regression). 10 new lib tests + 7 new integration
+  tests; lib total now 42 (was 32). New runtime dep: `whatlang = 0.16`.
+
 - **`chunkshop-rs` chunker matrix is complete (6/6).** Ports
   `summary_embed` and `hierarchical_summary` from Python, closing the
   last two chunker gaps. Both wrap any base chunker. `summary_embed`

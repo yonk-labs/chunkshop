@@ -42,14 +42,18 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 | framer    | `identity` (default 1-to-1 pass-through), `heading_boundary` (split markdown on a configurable heading regex with preamble + title-from-heading), `regex_boundary` (split on arbitrary regex; optional title-pattern capture), `jsonpath` (parse content as JSON, walk dotted path with `*` for list iteration; configurable body/title sub-paths) — all byte-identical to Python |
 | chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`, `summary_embed`, `hierarchical_summary` (all byte-identical to Python), `semantic` (algorithm-parity; chunks NOT byte-identical due to MB-1's ~1e-3 ORT drift) — **all 6 Python chunkers ship in Rust**. Summarizer dispatch supports `passthrough` + `external` natively; `callable` mode currently recognizes only `chunkshop.summarizers.passthrough` — lede crate integration is a follow-up brief. |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
+| extractor | `none` (default), `composite`, `rake_keywords` (hand-rolled RAKE + 150-word EN stopword list — algorithm-only parity), `lang_detect` (via `whatlang` crate, ISO 639-3 → 639-1 conversion — algorithm-only parity), `keybert_phrases` + `spacy_entities` (Python-only stubs that error at config-load) |
 | target    | pgvector table; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once on `ON CONFLICT`; `promote_metadata` jsonb-to-typed-column writes; HNSW index optional; concurrent-cell safe via schema-name advisory lock |
 
 ## What does NOT work (MVP cutoff)
 
 Everything else Python ships is **deliberately out of scope**:
 
-- Extractors (`rake_keywords`, `keybert_phrases`, `spacy_entities`, `lang_detect`,
-  `composite`) — parsed but ignored; no tags or extractor-produced metadata.
+- Extractors `keybert_phrases` and `spacy_entities` — Python-only. Build-time
+  error directs users back to Python or to a custom Rust binary that
+  registers their own NER / embedding-keyphrase pipeline. The other four
+  extractor variants (`none`, `composite`, `rake_keywords`, `lang_detect`)
+  ship.
 - Sources: `s3` — not ported.
 - Orchestrator / bakeoff subcommands — not ported.
 
