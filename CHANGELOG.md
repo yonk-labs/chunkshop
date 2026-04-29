@@ -4,6 +4,15 @@
 
 ### Documentation
 
+- **User-journey-first docs.** README leads with the canonical 5-step
+  loop: bring corpus → write gold queries → run bakeoff → ship the
+  recommended cell → repeat for new corpus. New `docs/getting-started.md`
+  walks the entire journey using the NTSB sample as the worked example,
+  with copy-paste-runnable commands at every step. The bakeoff is now
+  positioned as **step 1 of every adoption**, not a sample tucked under
+  `docs/samples/`. This is the framing that makes the chunkshop pitch
+  ("the experiment that picks the recipe, then the runtime that ships
+  the recipe") legible to a first-time reader.
 - **Honest framing of the Rust parity story.** Earlier prose ("5/5 sources
   ship in Rust", "all 6 chunkers", "parity-checked") oversold the
   cross-language pitch by stopping at the single-cell layer. The bakeoff

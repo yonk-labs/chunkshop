@@ -33,25 +33,38 @@ flowchart LR
 Each arrow is a boundary — swap any box without touching the others. See
 [`docs/architecture.md`](docs/architecture.md) for the per-module breakdown.
 
-## 60-second quickstart
+## The user journey (start here)
+
+chunkshop has one canonical loop. Every adoption goes through these five steps:
+
+1. **Bring real data.** Your corpus — sales notes, NTSB reports, court rulings, a docs site, whatever you actually need to retrieve over.
+2. **Write a small gold set.** ~10 hand-crafted queries, each paired with the doc that *should* rank #1.
+3. **Run the bakeoff.** `chunkshop bakeoff` runs every (chunker × embedder) combo against your corpus and gold set. Out comes a leaderboard and a `recommended.yaml` — the recipe that won on *your* data.
+4. **Ship the recommended cell.** `chunkshop ingest --config recommended.yaml` runs that recipe in production.
+5. **New corpus → repeat from step 2.** Each domain gets its own bakeoff; each production pipeline gets its own tuned cell.
+
+The bakeoff is **step 1 of every adoption**, not a sample. It's the experiment that picks the recipe you'll ship with.
 
 ```bash
-# 1. Install (Python MVP)
-cd chunkshop/python
-uv sync --extra dev
+# 1. Install
+cd chunkshop/python && uv sync --extra dev && cd ..
 
 # 2. Point an env var at your Postgres (pgvector extension required)
 export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
 
-# 3. Run against the shipped sample corpus (4 markdown files in docs/samples/).
-#    First run downloads the ONNX model (~85 MB for int8 bge-base).
-cd ..   # repo root
-chunkshop ingest --config docs/samples/sample.yaml
+# 3. Run the canonical demo: bakeoff against the NTSB aviation-accident corpus
+chunkshop bakeoff --config docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml \
+                  --dsn "$CHUNKSHOP_DSN" --yes
+
+# 4. Take the recommended cell to production
+chunkshop ingest --config skill-output/bakeoff/ntsb_bakeoff/recommended.yaml
 ```
 
-New to chunkshop? The [**end-to-end tutorial**](docs/tutorial.md) takes you from zero
-(no Postgres) to a running semantic query in about 15 minutes, including the `docker run`
-line for pgvector and a copy-paste query script.
+The full walkthrough — install → bakeoff → recommended → ingest, with the
+NTSB corpus as the worked example — lives in
+[**`docs/getting-started.md`**](docs/getting-started.md).
+
+Already past step 3 and just want the runtime? `chunkshop ingest --config <your-cell>.yaml`. Same for Rust: `chunkshop-rs ingest --config <your-cell>.yaml`.
 
 ## Status
 
