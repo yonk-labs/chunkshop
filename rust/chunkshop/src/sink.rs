@@ -321,12 +321,20 @@ impl PgVectorSink {
         &self,
         chunks: &[Chunk],
         embeddings: &[Vec<f32>],
+        tags_per_chunk: &[Vec<String>],
     ) -> Result<()> {
         if chunks.len() != embeddings.len() {
             return Err(anyhow!(
                 "chunks ({}) and embeddings ({}) length mismatch",
                 chunks.len(),
                 embeddings.len()
+            ));
+        }
+        if chunks.len() != tags_per_chunk.len() {
+            return Err(anyhow!(
+                "chunks ({}) and tags_per_chunk ({}) length mismatch",
+                chunks.len(),
+                tags_per_chunk.len()
             ));
         }
         if chunks.is_empty() {
@@ -393,8 +401,11 @@ impl PgVectorSink {
         );
 
         let mut tx = self.pool.begin().await?;
-        let empty_tags: Vec<String> = Vec::new();
-        for (c, emb) in chunks.iter().zip(embeddings.iter()) {
+        for ((c, emb), tags) in chunks
+            .iter()
+            .zip(embeddings.iter())
+            .zip(tags_per_chunk.iter())
+        {
             let id = format!("{}::{}", c.doc_id, c.seq_num);
             let vec = Vector::from(emb.clone());
             let meta_str = serde_json::to_string(&c.metadata)?;
@@ -405,7 +416,7 @@ impl PgVectorSink {
                 .bind(c.seq_num as i32)
                 .bind(&c.original_content)
                 .bind(&c.embedded_content)
-                .bind(&empty_tags)
+                .bind(tags)
                 .bind(&meta_str)
                 .bind(&vec)
                 .bind(self.cfg.source_tag.as_deref());

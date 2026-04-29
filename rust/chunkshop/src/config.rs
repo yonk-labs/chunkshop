@@ -97,10 +97,83 @@ pub struct CellConfig {
     pub runtime: RuntimeConfig,
     #[serde(default)]
     pub framer: FramerConfig,
-    // Ignored stages (parsed but not implemented in Rust MVP):
-    #[serde(default, skip_serializing)]
-    #[allow(dead_code)]
-    pub extractor: Option<serde_yml::Value>,
+    #[serde(default)]
+    pub extractor: ExtractorConfig,
+}
+
+/// Discriminated union over extractor types. Mirrors Python's `ExtractorConfig`.
+/// Tagged on `type`. Default = `None` (the no-op extractor — equivalent to
+/// "no extractor stage" in pre-extractor YAMLs).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ExtractorConfig {
+    None(NoneExtractorConfig),
+    Composite(CompositeExtractorConfig),
+    RakeKeywords(RakeKeywordsExtractorConfig),
+    LangDetect(LangDetectExtractorConfig),
+    KeybertPhrases(KeybertPhrasesExtractorConfig),
+    SpacyEntities(SpacyEntitiesExtractorConfig),
+}
+
+impl Default for ExtractorConfig {
+    fn default() -> Self {
+        ExtractorConfig::None(NoneExtractorConfig::default())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct NoneExtractorConfig {}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompositeExtractorConfig {
+    #[serde(default)]
+    pub extractors: Vec<ExtractorConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RakeKeywordsExtractorConfig {
+    #[serde(default = "default_rake_top_k")]
+    pub top_k: usize,
+    #[serde(default = "default_rake_min_chars")]
+    pub min_chars: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LangDetectExtractorConfig {
+    #[serde(default = "default_lang_backend")]
+    pub backend: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KeybertPhrasesExtractorConfig {
+    #[serde(default = "default_keybert_top_k")]
+    pub top_k: usize,
+    #[serde(default = "default_keybert_model")]
+    pub model_name: String,
+    #[serde(default = "default_keybert_ngram")]
+    pub keyphrase_ngram_range: (usize, usize),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SpacyEntitiesExtractorConfig {
+    #[serde(default = "default_spacy_model")]
+    pub model: String,
+    #[serde(default = "default_spacy_whitelist")]
+    pub label_whitelist: Vec<String>,
+}
+
+fn default_rake_top_k() -> usize { 10 }
+fn default_rake_min_chars() -> usize { 3 }
+fn default_lang_backend() -> String { "langdetect".to_string() }
+fn default_keybert_top_k() -> usize { 10 }
+fn default_keybert_model() -> String { "all-MiniLM-L6-v2".to_string() }
+fn default_keybert_ngram() -> (usize, usize) { (1, 2) }
+fn default_spacy_model() -> String { "en_core_web_sm".to_string() }
+fn default_spacy_whitelist() -> Vec<String> {
+    vec!["ORG", "PERSON", "GPE", "DATE", "LAW"]
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 #[derive(Debug, Clone, Deserialize)]

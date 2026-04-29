@@ -8,6 +8,7 @@
 pub mod chunker;
 pub mod config;
 pub mod embedder;
+pub mod extractor;
 pub mod framer;
 pub(crate) mod hf_cache;
 pub mod runner;

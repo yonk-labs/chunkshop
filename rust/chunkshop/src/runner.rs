@@ -14,6 +14,7 @@ use crate::config::{
     CellConfig, ChunkerConfig, EmbedderConfig, FramerConfig, GroupingConfig, SourceConfig,
 };
 use crate::embedder::FastembedEmbedder;
+use crate::extractor::build_extractor;
 use crate::framer::{
     FramerImpl, HeadingBoundaryFramer, IdentityFramer, JsonPathFramer, RegexBoundaryFramer,
 };
@@ -112,6 +113,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     };
     let framer = build_framer(cfg.framer)?;
     let chunker = build_chunker(cfg.chunker)?;
+    let extractor = build_extractor(cfg.extractor)?;
     let mut embedder = match cfg.embedder {
         EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,
     };
@@ -140,8 +142,42 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
             }
             let texts: Vec<String> = chunks.iter().map(|c| c.embedded_content.clone()).collect();
             let embeddings = embedder.embed(texts)?;
-            sink.write_document(&chunks, &embeddings).await?;
-            chunks_written += chunks.len();
+
+            // Per-chunk extractor pass. Tags collected for the sink; metadata
+            // merged into each chunk with chunker-wins semantics:
+            //   {**doc.metadata, **r.metadata, **c.metadata}
+            // matching python/src/chunkshop/runner.py.
+            let mut tags_per_chunk: Vec<Vec<String>> = Vec::with_capacity(chunks.len());
+            let mut chunks_with_meta: Vec<crate::chunker::Chunk> =
+                Vec::with_capacity(chunks.len());
+            let doc_meta = doc.metadata.as_object().cloned().unwrap_or_default();
+            for c in &chunks {
+                let r = extractor.extract(&c.original_content)?;
+                let mut merged = serde_json::Map::new();
+                for (k, v) in &doc_meta {
+                    merged.insert(k.clone(), v.clone());
+                }
+                for (k, v) in &r.metadata {
+                    merged.insert(k.clone(), v.clone());
+                }
+                if let Some(c_meta) = c.metadata.as_object() {
+                    for (k, v) in c_meta {
+                        merged.insert(k.clone(), v.clone());
+                    }
+                }
+                tags_per_chunk.push(r.tags);
+                chunks_with_meta.push(crate::chunker::Chunk {
+                    doc_id: c.doc_id.clone(),
+                    seq_num: c.seq_num,
+                    original_content: c.original_content.clone(),
+                    embedded_content: c.embedded_content.clone(),
+                    metadata: serde_json::Value::Object(merged),
+                });
+            }
+
+            sink.write_document(&chunks_with_meta, &embeddings, &tags_per_chunk)
+                .await?;
+            chunks_written += chunks_with_meta.len();
             docs_processed += 1;
             if docs_processed % heartbeat == 0 {
                 info!(
