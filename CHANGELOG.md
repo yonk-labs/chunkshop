@@ -68,6 +68,21 @@
 
 ### Changed
 
+- **`http` source — first feature where Python and Rust shipped together.**
+  Python's `HttpSource` was a `NotImplementedError` stub; this brief
+  replaces it with a real implementation (stdlib only — `urllib.request` +
+  `xml.etree.ElementTree` + `re`) and adds the matching Rust port (using
+  `reqwest`, promoted to a direct dep). Both fetch every URL in `urls`
+  and walk an optional `sitemap` (one-level `<urlset><loc>`; sitemap-of-
+  sitemaps explicitly out of scope), de-dup by first occurrence, build a
+  `Document` per URL with `id=<url>`, `content=<body>`, `title=<HTML
+  <title>>` and `metadata={url, status_code, content_type}`. Fail-fast on
+  non-2xx. Tests on each side spin up an in-process HTTP server and cover
+  URLs-only, sitemap walk, dedup, and the error path. Python pytest
+  count grows from 181 to 185; Rust adds 4 new tests. Four of five sources
+  now ship in Rust (`files`, `json_corpus`, `pg_table`, `http`); only
+  `s3` remains.
+
 - **`chunkshop-rs` now ships the `pg_table` source.** Reads documents
   from a Postgres table by id_column / content_column / optional title_column
   with an optional `where` clause. Mirrors Python: identifiers are

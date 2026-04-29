@@ -38,7 +38,7 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 
 | Stage     | Supported                                                      |
 |-----------|----------------------------------------------------------------|
-| source    | `files` (glob + `id_from: path \| stem \| sha1`), `json_corpus` (path + `documents_key` + configurable `id`/`content`/`title` field names; remaining row keys flow through to chunk metadata), `pg_table` (DSN env + schema + table + id/content/title columns + optional `where` clause; identifiers regex-validated, WHERE is trusted operator input) |
+| source    | `files`, `json_corpus`, `pg_table`, `http` (urls + optional sitemap; `<title>` extracted via regex; `metadata` carries `{url, status_code, content_type}`) |
 | framer    | `identity` (default 1-to-1 pass-through), `heading_boundary` (split markdown on a configurable heading regex with preamble + title-from-heading), `regex_boundary` (split on arbitrary regex; optional title-pattern capture), `jsonpath` (parse content as JSON, walk dotted path with `*` for list iteration; configurable body/title sub-paths) — all byte-identical to Python |
 | chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand` (all byte-identical to Python), `semantic` (sentence-embedding-similarity boundary detection — algorithm parity to Python, but chunk text is NOT byte-identical because the percentile threshold over float embeddings is sensitive to MB-1's ~1e-3 ORT-binary drift) |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
@@ -51,7 +51,7 @@ Everything else Python ships is **deliberately out of scope**:
 - Other chunkers: `summary_embed`, `hierarchical_summary` — not ported.
 - Extractors (`rake_keywords`, `keybert_phrases`, `spacy_entities`, `lang_detect`,
   `composite`) — parsed but ignored; no tags or extractor-produced metadata.
-- Sources: `http`, `s3` — not ported.
+- Sources: `s3` — not ported.
 - Orchestrator / bakeoff subcommands — not ported.
 
 YAML configs from the Python side are **accepted** (unknown fields on
@@ -148,7 +148,7 @@ re-creates it under `mode: overwrite`.
 |-------------------------------------------------|------|
 | Other chunkers (`summary_embed`, `hierarchical_summary`) | Both need a callable summarizer; the `lede` crate published on crates.io is a natural fit for the Rust port. |
 | Extractors                                      | Each is an independent pure-Rust port modulo Python-only deps (spaCy can't cross). |
-| Sources (`http`, `s3`) | Standard wire-format ports; `http` needs a Rust HTTP client (reqwest already in tree via fastembed transitive), `s3` needs aws-sdk-s3. |
+| Source: `s3`                                    | Needs `aws-sdk-s3`. |
 | Orchestrator                                    | Spawn N `chunkshop-rs ingest` subprocesses over N YAML configs. |
 
 ## License
