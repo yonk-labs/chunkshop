@@ -15,7 +15,7 @@ use crate::framer::{
     FramerImpl, HeadingBoundaryFramer, IdentityFramer, JsonPathFramer, RegexBoundaryFramer,
 };
 use crate::sink::PgVectorSink;
-use crate::source::{Document, FilesSource, JsonCorpusSource, PgTableSource};
+use crate::source::{Document, FilesSource, HttpSource, JsonCorpusSource, PgTableSource};
 
 /// Recursively materialize a `ChunkerConfig` into a boxed trait object.
 /// `NeighborExpand` calls back into this fn to construct its `base`. Adding a
@@ -52,10 +52,11 @@ enum AnySource {
     Files(FilesSource),
     JsonCorpus(JsonCorpusSource),
     PgTable(PgTableSource),
+    Http(HttpSource),
 }
 
 impl AnySource {
-    /// Async because PgTable does network I/O via sqlx; the file/JSON variants
+    /// Async because PgTable + Http do network I/O; the file/JSON variants
     /// run sync work inside the async fn (no actual await). Caller is already
     /// in an async context (`run_cell` is async).
     async fn iter_documents(&self) -> Result<Vec<Document>> {
@@ -63,6 +64,7 @@ impl AnySource {
             AnySource::Files(s) => s.iter_documents(),
             AnySource::JsonCorpus(s) => s.iter_documents(),
             AnySource::PgTable(s) => s.iter_documents().await,
+            AnySource::Http(s) => s.iter_documents().await,
         }
     }
 }
@@ -83,6 +85,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
         SourceConfig::Files(fc) => AnySource::Files(FilesSource::new(fc)),
         SourceConfig::JsonCorpus(jc) => AnySource::JsonCorpus(JsonCorpusSource::new(jc)),
         SourceConfig::PgTable(pc) => AnySource::PgTable(PgTableSource::new(pc)),
+        SourceConfig::Http(hc) => AnySource::Http(HttpSource::new(hc)),
     };
     let framer = build_framer(cfg.framer)?;
     let chunker = build_chunker(cfg.chunker)?;

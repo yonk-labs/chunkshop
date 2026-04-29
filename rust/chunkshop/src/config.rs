@@ -163,6 +163,7 @@ pub enum SourceConfig {
     Files(FilesSourceConfig),
     JsonCorpus(JsonCorpusSourceConfig),
     PgTable(PgTableSourceConfig),
+    Http(HttpSourceConfig),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -202,6 +203,14 @@ pub struct PgTableSourceConfig {
     /// don't expose this field to untrusted YAML authors.
     #[serde(default, rename = "where")]
     pub where_clause: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HttpSourceConfig {
+    #[serde(default)]
+    pub urls: Vec<String>,
+    #[serde(default)]
+    pub sitemap: Option<String>,
 }
 
 fn default_id_from() -> String {
