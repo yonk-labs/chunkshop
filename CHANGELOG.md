@@ -68,6 +68,27 @@
 
 ### Changed
 
+- **`chunkshop-rs` chunker matrix is complete (6/6).** Ports
+  `summary_embed` and `hierarchical_summary` from Python, closing the
+  last two chunker gaps. Both wrap any base chunker. `summary_embed`
+  replaces each chunk's `embedded_content` with a summary;
+  `hierarchical_summary` emits both fine (granularity=fine) and coarse
+  (granularity=coarse, summary of joined group) chunks linked by
+  `group_id` matching Python's `{doc.id}::g{idx}` format. Three grouping
+  strategies fully implemented (`fixed_n`, `word_budget`,
+  `section_aware`); the Python `section_aware`-requires-`hierarchy`-base
+  validator runs at config-load on the Rust side too. Shared
+  `SummarizerConfig` (passthrough / external / callable) dispatched by a
+  new `summarizer.rs` module. **Callable mode** in Rust currently
+  recognizes only `chunkshop.summarizers.passthrough` — lede integration
+  via crates.io is a follow-up feature-flagged brief, but unknown modules
+  produce a clear error directing users to either Python or a custom
+  Rust binary that registers their summarizer. Cross-language **byte-
+  identical** parity verified by 4 new integration tests
+  (`summary_embed_parity` × passthrough/external + `hierarchical_summary_parity`
+  × fixed_n/section_aware). Lib test count grows to 32 (was 21 — added 11
+  for summarizer modes, grouping strategies, and config validators).
+
 - **`http` source — first feature where Python and Rust shipped together.**
   Python's `HttpSource` was a `NotImplementedError` stub; this brief
   replaces it with a real implementation (stdlib only — `urllib.request` +
