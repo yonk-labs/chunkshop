@@ -4,6 +4,14 @@
 
 ### Added
 
+- **NTSB bakeoff sample (`docs/samples/bakeoff-ntsb/`).** Runnable end-to-end
+  bakeoff against the 20-doc NTSB aviation-accident corpus shipped with
+  `pg-raggraph/benchmarks/kg-rag-eval`. 4 chunkers × 3 embedders = 12 combos,
+  12 hand-written gold queries. One verified run produces a clean leaderboard
+  with `hierarchy + nomic-embed-v1.5-Q` winning at MRR=0.958. Demonstrates the
+  `chunkshop bakeoff` CLI end-to-end on a realistic third-party corpus
+  including all four non-semantic chunkers and three embedder sizes.
+
 - **Incremental ingest, deltas, and inline (library) mode.** Five new patterns
   documented in `docs/incremental.md` for hooking change-data into chunkshop:
   cron + WHERE clause, watermarked cursor (with a `scripts/run_incremental_watermark.sh`

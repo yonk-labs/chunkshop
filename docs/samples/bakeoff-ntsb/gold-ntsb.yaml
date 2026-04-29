@@ -1,0 +1,35 @@
+# 12 hand-written gold queries against the NTSB aviation-accident corpus.
+# Each entry pairs a user-plausible question with the doc that should rank #1.
+#
+# Doc IDs are file stems from
+# /home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/<id>.md
+#
+# Statistical-power note: 12 queries is a low floor. One query flipping
+# moves aggregate recall@1 by ~0.08. Add more queries before treating the
+# leaderboard like a tournament result.
+
+# 20071229X02007 — Tallahassee, FL — 85-year-old pilot, Piper PA-22, struck trees on private turf strip
+- { query: "elderly pilot accident on private grass airstrip with trees and utility wires", gold_doc_id: "20071229X02007" }
+- { query: "Piper PA-22 final approach short turf runway tree strike", gold_doc_id: "20071229X02007" }
+
+# 20071231X02009 — Death Valley, CA — Beech A23 hard landing, porpoise, nose gear failure
+- { query: "Beech A23 hard landing porpoise nose gear collapse Death Valley", gold_doc_id: "20071231X02009" }
+- { query: "nosewheel landing gear failed after bounced touchdown on runway 5", gold_doc_id: "20071231X02009" }
+
+# 20080102X00005 — Belen, NM — Sorrell SNJ-7, lost directional control after touchdown
+- { query: "loss of directional control on landing rollway runway 21 Belen New Mexico", gold_doc_id: "20080102X00005" }
+
+# 20080104X00020 — Wausau, WI — Cessna 172 Skyhawk, runway 04 ice/snow covered, multiple takeoffs
+- { query: "Cessna 172 Skyhawk landing on icy snow-covered runway in Wisconsin", gold_doc_id: "20080104X00020" }
+- { query: "pilot completed three takeoffs and full stop landings before runway switch", gold_doc_id: "20080104X00020" }
+
+# 20080108X00029 — Arteaga, Mexico — Cessna 210, fatal crash into mountainous terrain
+- { query: "Cessna 210 fatal crash into mountains southeast of Arteaga Mexico", gold_doc_id: "20080108X00029" }
+- { query: "private pilot fatal accident XB-GTS Mesa de las Tablas Coahuila", gold_doc_id: "20080108X00029" }
+
+# 20080108X00031 — Boquete, Panama — Cessna 172, three fatal one serious, mountainous Chiriqui
+- { query: "Panama-registered Cessna 172 fatal mountain crash near Boquete Chiriqui", gold_doc_id: "20080108X00031" }
+- { query: "Islas Secas departing flight three fatalities one serious injury", gold_doc_id: "20080108X00031" }
+
+# 20080109X00035 — Latrobe, PA — Vans RV-8 amateur built, third landing of the day, low wetland
+- { query: "amateur built Vans RV-8 left wing strike after going around at Latrobe", gold_doc_id: "20080109X00035" }
