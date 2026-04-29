@@ -72,7 +72,7 @@ Already past step 3 and just want the runtime? `chunkshop ingest --config <your-
 | Impl             | Path       | State                                                |
 |------------------|------------|------------------------------------------------------|
 | Python reference | `python/`  | v0.2.0. All features. int8 default.                  |
-| Rust             | `rust/`    | v0.1.x. **Single-cell pipeline + bakeoff at parity.** Same YAML → equivalent leaderboard. Orchestrator still Python-only. Embedder registry is a subset (BGE int8 variants today; nomic is a follow-up). See [`rust/README.md`](rust/README.md). |
+| Rust             | `rust/`    | v0.1.x. **Single-cell pipeline + bakeoff at parity.** Same canonical `bakeoff-ntsb.yaml` runs from both languages and produces equivalent leaderboards (verified by `scripts/parity_check_bakeoff.py`). Orchestrator still Python-only. See [`rust/README.md`](rust/README.md). |
 | Go               | `go/`      | Not started.                                         |
 
 ### What "parity" means and doesn't mean
@@ -82,9 +82,9 @@ Already past step 3 and just want the runtime? `chunkshop ingest --config <your-
 | Source / framer / chunker / embedder / extractor / sink | ✅ | ✅ |
 | `Pipeline` (inline / library mode) | ✅ | ✅ |
 | `chunkshop ingest` (one YAML → one cell) | ✅ | ✅ |
-| **`chunkshop bakeoff` (matrix → leaderboard → recommended.yaml)** | ✅ | ✅ (BGE int8 matrix; nomic is a follow-up) |
+| **`chunkshop bakeoff` (matrix → leaderboard → recommended.yaml)** | ✅ | ✅ |
 | `chunkshop orchestrate` (N cells as parallel subprocesses) | ✅ | ❌ |
-| Embedder registry breadth | full | BGE int8 + stock fastembed-rs models; nomic / others = follow-up |
+| Embedder registry breadth | full fastembed catalogue + custom-registered HF | BGE int8 (bit-near-exact) + nomic v1.5 + stock fastembed-rs catalogue. YAML-driven HF pointer queued. |
 
 The bakeoff is **step 1 of every adoption** in the chunkshop journey — bring a
 corpus, write a small gold set, run the bakeoff, take the recommended cell to

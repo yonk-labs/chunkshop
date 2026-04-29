@@ -16,7 +16,7 @@ and the same bakeoff YAML produces equivalent leaderboards in both languages
 > |---|---|---|
 > | `ingest` (one YAML → one cell) | ✅ | ✅ |
 > | `Pipeline` (library / inline mode) | ✅ | ✅ |
-> | `bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ | ✅ (BGE int8 matrix; nomic = follow-up) |
+> | `bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ | ✅ |
 > | `orchestrate` (N cells in parallel subprocesses) | ✅ | ❌ |
 >
 > Cross-language bakeoff parity is **verified** per-run by
@@ -25,10 +25,12 @@ and the same bakeoff YAML produces equivalent leaderboards in both languages
 > orchestrator port is the next major piece.
 
 **Status:** v0.1.x. Single-cell pipeline + bakeoff at parity with Python
-(modulo two NLP-heavy extractors that need spaCy and a smaller embedder
-registry — see roadmap). Wire-format proof of the cross-language claim
-at both the cell layer (vectors interchangeable) AND the bakeoff layer
-(equivalent leaderboards from the same YAML).
+(modulo two NLP-heavy extractors that need spaCy). The same canonical
+YAML — `docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml` — runs from both
+languages and produces equivalent leaderboards. Wire-format proof of the
+cross-language claim at both the cell layer (vectors interchangeable) AND
+the bakeoff layer (leaderboards within ±2.5pp MRR, consistent ordering on
+distinct-MRR pairs).
 
 ## Build
 
@@ -83,16 +85,19 @@ embedder-registry breadth are real parity gaps.
   log multiplexing, per-cell failure isolation). Different surface than the
   bakeoff; tracked separately.
 
-### Embedder registry breadth gap
+### Embedder registry breadth
 
-- **Rust supports a subset of the model_names Python supports.** The Rust
-  embedder registry today maps `Xenova/bge-{small,base}-en-v1.5-int8`
-  (bit-near-exact via the same ONNX file Python loads) plus the stock
+- The Rust dispatch supports `Xenova/bge-{small,base}-en-v1.5-int8`
+  (bit-near-exact via the same ONNX file Python loads), the stock
   fastembed-rs variants (`BAAI/bge-{small,base,large}-en-v1.5`,
-  `sentence-transformers/all-MiniLM-L6-v2[-int8]`). `nomic-ai/nomic-embed-text-v1.5-Q`
-  and other Python-supported models are not yet wired. Adding a model =
-  one entry in `src/embedder.rs::resolve_model_name` plus (for int8
-  variants) the matching ONNX-file path. See the embedder docs.
+  `sentence-transformers/all-MiniLM-L6-v2[-int8]`), and the nomic v1.5
+  family (`nomic-ai/nomic-embed-text-v1.5[-Q]`). Adding a model that
+  fastembed-rs already knows = one entry in
+  `src/embedder.rs::resolve_model_name`. Adding a model fastembed-rs
+  doesn't know yet = one entry in `user_defined_source` (for CLS-pooled
+  variants) plus a mean-pooling branch if needed. The brief queue tracks
+  a YAML-driven HF-pointer feature that turns "add a model" into a YAML
+  edit instead of a Rust-source edit. See [`../docs/embedders.md`](../docs/embedders.md).
 
 ### Deliberate Python-only extractors
 

@@ -313,13 +313,27 @@ fn resolve_model_name(name: &str) -> Result<EmbeddingModel> {
         "sentence-transformers/all-MiniLM-L6-v2-int8",
         EmbeddingModel::AllMiniLML6V2Q,
     );
+    // Nomic v1.5 long-context (8k tokens, 768 dim, mean-pooled internally by
+    // fastembed-rs). The `-Q` suffix routes to the int8-quantized ONNX file
+    // (`onnx/model_quantized.onnx` in the upstream HF repo) — same model_name
+    // Python's fastembed accepts. Stock fastembed-rs handles pooling +
+    // normalization, so no user-defined branch is needed.
+    table.insert(
+        "nomic-ai/nomic-embed-text-v1.5",
+        EmbeddingModel::NomicEmbedTextV15,
+    );
+    table.insert(
+        "nomic-ai/nomic-embed-text-v1.5-Q",
+        EmbeddingModel::NomicEmbedTextV15Q,
+    );
 
     table.get(name).cloned().ok_or_else(|| {
         anyhow!(
             "chunkshop-rs does not map model_name {name:?} to a fastembed-rs variant. \
              Supported (stock): BAAI/bge-base-en-v1.5, BAAI/bge-small-en-v1.5, \
              BAAI/bge-large-en-v1.5, sentence-transformers/all-MiniLM-L6-v2, \
-             sentence-transformers/all-MiniLM-L6-v2-int8. \
+             sentence-transformers/all-MiniLM-L6-v2-int8, \
+             nomic-ai/nomic-embed-text-v1.5, nomic-ai/nomic-embed-text-v1.5-Q. \
              Bit-exact (user-defined): Xenova/bge-base-en-v1.5-int8, \
              Xenova/bge-small-en-v1.5-int8."
         )

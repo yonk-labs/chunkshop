@@ -1,14 +1,14 @@
-'# NOTE': Top combo from bakeoff 'ntsb_bakeoff' (MRR=0.933, r@1=0.917). Point `source` at your real corpus before running `chunkshop ingest`.
+'# NOTE': Top combo from bakeoff 'ntsb_bakeoff' (MRR=0.958, r@1=0.917). Point `source` at your real corpus before running `chunkshop ingest`.
 cell_name: ntsb_bakeoff_recommended
 chunker:
+  doc_type: prose
   max_chars: 2000
-  min_section_chars: 100
-  prefix_heading: true
-  type: hierarchy
+  min_chars: 200
+  type: sentence_aware
 embedder:
   batch_size: 64
   dim: 768
-  model_name: Xenova/bge-base-en-v1.5-int8
+  model_name: nomic-ai/nomic-embed-text-v1.5-Q
   type: fastembed
 framer:
   type: identity

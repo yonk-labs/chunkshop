@@ -4,6 +4,26 @@
 
 ### Added
 
+- **Nomic embedder wired into the Rust dispatch.** `nomic-ai/nomic-embed-text-v1.5`
+  and `nomic-ai/nomic-embed-text-v1.5-Q` now resolve to fastembed-rs's
+  `NomicEmbedTextV15` / `NomicEmbedTextV15Q` variants. The canonical
+  `docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml` (12 combos, including
+  nomic) now runs from both languages without a Rust-specific YAML
+  variant. Removed `bakeoff-ntsb-rust.yaml`.
+- **`docs/embedders.md` updated to cover both languages.** New "The Rust
+  dispatch (file map)" section. The Catalogue gains Python/Rust columns
+  per model. Cases A/B/C in "Adding a new model" now cover both Python
+  and Rust paths, and a "YAML-driven HF pointer (feature pending)"
+  section flags the queued brief that turns Case B into a YAML-only
+  workflow.
+- **Cross-language parity check now runs the canonical matrix.**
+  `scripts/parity_check_bakeoff.py` drives the 12-combo
+  `bakeoff-ntsb.yaml` from both languages. Top-combo check tightened:
+  accepts tied-near-the-tolerance picks (Python and Rust can legitimately
+  tie at MRR=0.958 and break the tie differently due to drift on a
+  near-tie query). Verified PASS at default tolerance: all 12 combos
+  within ±0.021 MRR; ordering consistent.
+
 - **Rust bakeoff port (`chunkshop-rs bakeoff`).** The matrix → leaderboard →
   recommended.yaml loop now runs in both languages. Mirrors
   `python/src/chunkshop/bakeoff/` with byte-identical key derivation

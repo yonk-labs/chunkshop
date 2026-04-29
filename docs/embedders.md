@@ -1,26 +1,44 @@
 # Embedders
 
-chunkshop's Python implementation has one embedder backend today: `fastembed`. Behind it is
-ONNX Runtime plus a HuggingFace tokenizer. Every supported model is an ONNX file; int8 is
-just a different ONNX file for the same architecture, not a different codepath.
+chunkshop's embedder stage runs ONNX inference. Same model_name, same ONNX file,
+same target table → vectors are interchangeable across implementations:
 
-This doc covers: the shipped model catalogue, the int8 registration pattern, how to add a
-new model, and how to A/B two embedders on the same corpus.
+- **Python:** `fastembed` package → ORT → `~/.cache/fastembed/`.
+- **Rust:** `fastembed-rs` for stock variants OR a hand-rolled `ort` path for
+  the int8 BGE variants where we want bit-near-exact parity with Python.
+
+Every supported model is an ONNX file; int8 is just a different ONNX file for
+the same architecture, not a different codepath.
+
+This doc covers: the shipped model catalogue (with Python/Rust support per
+model), the registration patterns in both languages, how to add a new model
+in either, and how to A/B two embedders on the same corpus.
 
 ## Catalogue
 
-| `model_name`                             | dim | Precision | Registered by        | Notes                                  |
-|------------------------------------------|-----|-----------|----------------------|----------------------------------------|
-| `Xenova/bge-base-en-v1.5-int8`           | 768 | int8      | chunkshop `_registry`| **Default.** Best quality-for-size.    |
-| `Xenova/bge-small-en-v1.5-int8`          | 384 | int8      | chunkshop `_registry`| Smaller/faster; ~3–5 fewer MTEB pts.   |
-| `BAAI/bge-small-en-v1.5`                 | 384 | fp32      | fastembed (built-in) | fp32 of small; +0–2 pts over int8.     |
-| `BAAI/bge-base-en-v1.5`                  | 768 | fp32      | fastembed (built-in) | Quality ceiling for BGE family.        |
-| `nomic-ai/nomic-embed-text-v1.5-Q`       | 768 | int8      | fastembed (built-in) | 8k-token context; use for long docs.   |
-| `nomic-ai/nomic-embed-text-v1.5`         | 768 | fp32      | fastembed (built-in) | fp32 long-context; ~550 MB.            |
+| `model_name`                             | dim | Precision | Python | Rust  | Notes                                  |
+|------------------------------------------|-----|-----------|--------|-------|----------------------------------------|
+| `Xenova/bge-base-en-v1.5-int8`           | 768 | int8      | ✅      | ✅ bit-near-exact | **Default.** Best quality-for-size.    |
+| `Xenova/bge-small-en-v1.5-int8`          | 384 | int8      | ✅      | ✅ bit-near-exact | Smaller/faster; ~3–5 fewer MTEB pts.   |
+| `BAAI/bge-small-en-v1.5`                 | 384 | fp32      | ✅      | ✅ stock | fp32 of small; +0–2 pts over int8.     |
+| `BAAI/bge-base-en-v1.5`                  | 768 | fp32      | ✅      | ✅ stock | Quality ceiling for BGE family.        |
+| `BAAI/bge-large-en-v1.5`                 | 1024| fp32      | ✅      | ✅ stock | Larger; only worth it on long docs.   |
+| `sentence-transformers/all-MiniLM-L6-v2` | 384 | fp32      | ✅      | ✅ stock | Fast baseline.                         |
+| `sentence-transformers/all-MiniLM-L6-v2-int8` | 384 | int8 | ✅     | ✅ stock | int8 baseline (mean-pooled).           |
+| `nomic-ai/nomic-embed-text-v1.5`         | 768 | fp32      | ✅      | ✅ stock | fp32 long-context; ~550 MB.            |
+| `nomic-ai/nomic-embed-text-v1.5-Q`       | 768 | int8      | ✅      | ✅ stock | 8k-token context; use for long docs.   |
 
-Any model fastembed knows about is usable — `fastembed.TextEmbedding.list_supported_models()`
-in a REPL is the full current list. The catalogue above is what the shipped example configs
-and factorial YAMLs actually use.
+**"bit-near-exact"** means Rust loads the same ONNX file Python loads,
+through a hand-rolled `ort` path with thread-controlled inference. The
+two implementations diverge by ULPs (~1-2e-3 mean cosine drift, ~5-15e-3
+max — see the parity check). **"stock"** means the model uses
+`fastembed-rs`'s built-in pipeline, which handles pooling and tokenization
+internally.
+
+Any model fastembed (Python) knows about is usable from the Python side —
+`fastembed.TextEmbedding.list_supported_models()` in a REPL is the full
+current list. The Rust dispatch is currently a hand-curated subset; see
+"Adding a new model in Rust" below.
 
 ## How it works
 
@@ -76,11 +94,47 @@ def register_int8_variants() -> None:
 Idempotent — safe to call multiple times. Safe to call even if fastembed starts shipping
 these variants natively; the duplicate check skips them.
 
+## The Rust dispatch (file map)
+
+Rust has two registration paths because two model families need different
+codepaths:
+
+```mermaid
+flowchart LR
+    Y[YAML<br/>embedder.model_name] --> CFG[FastembedEmbedderConfig]
+    CFG --> CHK{user_defined_source?}
+    CHK -- yes<br/>(Xenova int8) --> UD[hand-rolled ort path<br/>bit-near-exact CLS-pooled]
+    CHK -- no --> RES[resolve_model_name]
+    RES --> FB[fastembed-rs<br/>EmbeddingModel variant]
+    FB --> ORT[onnxruntime session]
+    UD --> ORT
+```
+
+Both paths live in `rust/chunkshop/src/embedder.rs`:
+
+- **`user_defined_source(model_name)`** — returns `Some((repo, onnx_path))`
+  when the model has a bit-near-exact path. Today: `Xenova/bge-base-en-v1.5-int8`
+  and `Xenova/bge-small-en-v1.5-int8`. Both CLS-pooled. Adding a mean-pooled
+  model here requires a mean-pooling branch in the hand-rolled forward (it's
+  CLS-only today).
+
+- **`resolve_model_name(name)`** — the dispatch table for stock fastembed-rs
+  variants. Every name fastembed-rs has built in can be wired with a one-line
+  insert into the HashMap. The current shipped list:
+  - `BAAI/bge-{small,base,large}-en-v1.5` → `EmbeddingModel::BGE{Small,Base,Large}ENV15`
+  - `sentence-transformers/all-MiniLM-L6-v2[-int8]` → `EmbeddingModel::AllMiniLML6V2[Q]`
+  - `nomic-ai/nomic-embed-text-v1.5[-Q]` → `EmbeddingModel::NomicEmbedTextV15[Q]`
+
+The error message when a model_name isn't recognized lists the supported
+names in both categories — a YAML typo fails at config-load with a clear
+list of valid choices.
+
 ## Adding a new model
 
-### Case A: fastembed already supports it
+### Case A: both fastembed and fastembed-rs already support it
 
-Nothing to do in chunkshop. Put it straight in your YAML:
+Nothing to do in chunkshop. Put it straight in your YAML and it works in
+both languages:
 
 ```yaml
 embedder:
@@ -90,12 +144,16 @@ embedder:
 ```
 
 `dim` is a contract — if the model produces a different dimension at runtime,
-`FastembedProvider.embed` raises a clear error before writing anything.
+both implementations raise a clear error before writing anything.
 
-### Case B: fastembed doesn't know about it but the HF repo has an ONNX file
+### Case B: HF repo has an ONNX file, but neither library has it built in
 
-Add an entry to `_INT8_VARIANTS` in `python/src/chunkshop/embedders/_registry.py` (the name
-is historical — the list holds any registered variant, int8 or not):
+This case requires editing both languages today. (The
+[YAML-driven HF pointer brief](#yaml-driven-hf-pointer-feature-pending) tracks
+making this a YAML-only path.)
+
+**Python side** — add an entry to `_INT8_VARIANTS` in
+`python/src/chunkshop/embedders/_registry.py`:
 
 ```python
 {
@@ -107,7 +165,7 @@ is historical — the list holds any registered variant, int8 or not):
     "model_file": "onnx/model.onnx", # path inside the HF repo
     "description": "short label",
     "license": "...",
-    "size_in_gb": 0.123,             # fastembed uses this for download UX
+    "size_in_gb": 0.123,
     "additional_files": [
         "tokenizer.json",
         "tokenizer_config.json",
@@ -117,19 +175,68 @@ is historical — the list holds any registered variant, int8 or not):
 },
 ```
 
-Then reference the new `model` name in your YAML. No code changes elsewhere.
+**Rust side** — depends on whether `fastembed-rs` already knows about it:
 
-### Case C: you want a different backend (ONNX Runtime directly, not via fastembed)
+- *If `fastembed-rs::EmbeddingModel::*` has a matching variant:* one-line
+  `HashMap` insert in `rust/chunkshop/src/embedder.rs::resolve_model_name`:
+  ```rust
+  table.insert("your-org/your-model-name", EmbeddingModel::YourModelVariant);
+  ```
+  Then update the helpful error message to list it. Rebuild. Done.
+
+- *If `fastembed-rs` doesn't have it but the model is CLS-pooled:* add to
+  `user_defined_source`:
+  ```rust
+  "your-org/your-model-name" => Some(("your-org/your-model", "onnx/model.onnx")),
+  ```
+  This routes through the hand-rolled `ort` path (bit-near-exact with Python
+  if Python loads the same ONNX file).
+
+- *If `fastembed-rs` doesn't have it and the model uses mean pooling:* the
+  hand-rolled forward in `embedder.rs` is CLS-only today. You'd need to add
+  a mean-pooling branch that averages the token-level outputs before
+  L2-normalizing. Tracked in the brief below.
+
+### Case C: you want a different backend entirely
+
+Examples: ONNX Runtime directly without fastembed, an HTTP embedder pointing
+at a remote API (OpenAI / Cohere / Voyage / TEI).
 
 Add a new provider:
 
-1. Create `python/src/chunkshop/embedders/onnx_direct_provider.py` with an `embed` method.
-2. Add an `OnnxDirectEmbedder` pydantic model to `config.py` with `type:
-   Literal["onnx_direct"]`, and include it in the `EmbedderConfig` union.
+1. **Python:** create `python/src/chunkshop/embedders/<your>_provider.py` with
+   an `embed(self, texts: list[str]) -> np.ndarray` method.
+2. Add a `<Your>Embedder` pydantic model to `config.py` with `type: Literal["your_type"]`,
+   include it in the `EmbedderConfig` discriminated union.
 3. Add a branch to `load_embedder` in `embedders/__init__.py`.
+4. **Rust:** add a matching variant to `EmbedderConfig` in `config.rs`,
+   implement the new path (or wrap your provider in the existing
+   `FastembedEmbedder` shape if it conforms).
 
-The original MVP plan calls for an `onnx_direct` embedder for bit-exact parity checks with
-the future Rust/Go ports. Worth doing the day one of those ports ships.
+This is the path for things like external API-backed embedders, where ONNX
+isn't involved. Bigger lift than Case B; usually warrants its own brief.
+
+### YAML-driven HF pointer (feature pending)
+
+The "edit code in both languages" friction in Case B is a real UX wart.
+There's a queued brief to add YAML fields that let a user point at any HF
+ONNX file from configuration alone — no recompile:
+
+```yaml
+embedder:
+  type: fastembed
+  model_name: my-org/my-finetuned-model        # used as the column label
+  hf_repo: my-org/my-finetuned-model           # NEW — where to fetch from
+  onnx_path: onnx/model.onnx                   # NEW — file inside the repo
+  pooling: cls                                  # NEW — cls | mean (default cls)
+  dim: 768
+  # additional_files: [ ... ]                   # NEW (optional)
+```
+
+Both languages would dynamically register at config-load. Python's path is
+small (`fastembed.add_custom_model` already does the work). Rust's path
+needs the mean-pooling branch added to the hand-rolled forward. See the
+mission brief queue.
 
 ## A/B testing two embedders
 

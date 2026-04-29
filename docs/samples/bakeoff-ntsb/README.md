@@ -2,15 +2,14 @@
 
 A real bakeoff against the **NTSB aviation-accident corpus** (20 final-report
 markdown files shipped with `pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/`).
-Hand-written 12-query gold set, four chunkers, BGE int8 embedders (Python adds
-nomic), one command, one leaderboard.
+Hand-written 12-query gold set, four chunkers, three embedders, one command,
+one leaderboard.
 
-> **Both languages run this sample.** `chunkshop bakeoff` (Python) reads the
-> canonical 12-combo matrix; `chunkshop-rs bakeoff` reads the Rust-compatible
-> 8-combo subset (nomic isn't in the Rust embedder registry yet — that's a
-> follow-up). The cross-language parity test in
-> `scripts/parity_check_bakeoff.py` confirms both rank the 8 overlapping
-> combos within 2.5pp MRR and agree on ordering for distinct-MRR pairs.
+> **One canonical YAML runs from both languages.** `chunkshop bakeoff` and
+> `chunkshop-rs bakeoff` both consume `bakeoff-ntsb.yaml`. The
+> cross-language parity test in `scripts/parity_check_bakeoff.py` confirms
+> the 12 combos rank within ±2.5pp MRR with consistent ordering on
+> distinct-MRR pairs.
 
 ## What it does
 
@@ -26,15 +25,14 @@ with each embedder, ranks results against the gold doc per query, and writes:
 
 | File | Role |
 |---|---|
-| [`bakeoff-ntsb.yaml`](bakeoff-ntsb.yaml) | Canonical matrix (Python): 4 chunkers × 3 embedders = 12 combos. Includes nomic. |
-| [`bakeoff-ntsb-rust.yaml`](bakeoff-ntsb-rust.yaml) | Rust-compatible matrix: 4 chunkers × 2 BGE embedders = 8 combos. Drops nomic. |
-| [`gold-ntsb.yaml`](gold-ntsb.yaml) | 12 hand-written queries, each paired with its gold doc_id (file stem). Shared. |
-| [`sample-results-python.md`](sample-results-python.md) | Committed leaderboard from a Python verified run (12 combos). |
-| [`sample-results-rust.md`](sample-results-rust.md) | Committed leaderboard from a Rust verified run (8 combos). |
+| [`bakeoff-ntsb.yaml`](bakeoff-ntsb.yaml) | The matrix: 4 chunkers × 3 embedders = 12 combos. Runs from both Python and Rust. |
+| [`gold-ntsb.yaml`](gold-ntsb.yaml) | 12 hand-written queries, each paired with its gold doc_id (file stem). |
+| [`sample-results-python.md`](sample-results-python.md) | Committed leaderboard from a Python verified run. |
+| [`sample-results-rust.md`](sample-results-rust.md) | Committed leaderboard from a Rust verified run. |
 | [`sample-recommended-python.yaml`](sample-recommended-python.yaml) | Top-combo cell from the Python run, ready to `chunkshop ingest`. |
 | [`sample-recommended-rust.yaml`](sample-recommended-rust.yaml) | Top-combo cell from the Rust run, ready to `chunkshop-rs ingest`. |
 
-The corpus path is hard-coded in both YAMLs to:
+The corpus path is hard-coded in the YAML to:
 `/home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md`.
 Edit if your `pg-raggraph` checkout lives elsewhere.
 
@@ -59,9 +57,9 @@ export CHUNKSHOP_DSN=postgresql://postgres:postgres@localhost:5434/age_bakeoff_p
 cd /path/to/chunkshop      # repo root
 (cd rust && cargo build --release)
 
-# 8 combos, ~120 seconds on a laptop:
+# 12 combos, ~3 minutes on a laptop:
 ./rust/target/release/chunkshop-rs bakeoff \
-    --config docs/samples/bakeoff-ntsb/bakeoff-ntsb-rust.yaml \
+    --config docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml \
     --dsn "$CHUNKSHOP_DSN" \
     --yes
 ```
@@ -76,17 +74,18 @@ drops the schema after the leaderboard is written).
 python3 scripts/parity_check_bakeoff.py
 ```
 
-This drives both implementations against `bakeoff-ntsb-rust.yaml` (the
-8-combo overlap), then asserts:
+This drives both implementations against `bakeoff-ntsb.yaml` (the canonical
+12-combo matrix), then asserts:
 
 - per-combo aggregate MRR within ±2.5pp between languages
 - ordering agreement on every distinct-MRR pair (gap > 0.005)
-- top combo agrees within the tie band
+- top combo agrees within drift tolerance
 
-A verified-run snapshot of the diff: 7/8 combos within ±0.011 MRR; 1 outlier
-at 0.021 MRR (`hierarchy + bge-small`) — drift-driven, well inside the
-documented ORT envelope. All 8 distinct-MRR pairs ranked consistently.
-Both languages picked the same top combo (`hierarchy + bge-base-int8`).
+A verified-run snapshot: 12/12 combos within ±0.021 MRR (max delta
+0.021, mean ~0.008); all distinct-MRR pairs ranked consistently. Top combos
+ranked tied at 0.958 in Python (sort picked `hierarchy + nomic`); in Rust
+the tie broke the other way (`sentence_aware + nomic`) — the two combos are
+within drift tolerance, both legitimate winners.
 
 ## Sample result (verified Python run)
 
@@ -105,14 +104,14 @@ Full Python leaderboard in [`sample-results-python.md`](sample-results-python.md
 ## Sample result (verified Rust run)
 
 ```
-Winner: hierarchy + Xenova/bge-base-en-v1.5-int8 (MRR=0.933, r@1=0.917)
+Winner: sentence_aware + nomic-ai/nomic-embed-text-v1.5-Q (MRR=0.958, r@1=0.917)
 ```
 
 | # | Chunker | Embedder | r@1 | r@3 | r@5 | MRR |
 |---|---|---|---|---|---|---|
-| 1 | `hierarchy` | `Xenova/bge-base-en-v1.5-int8` | 0.917 | 0.917 | 1.000 | 0.933 |
-| 2 | `sentence_aware` | `Xenova/bge-base-en-v1.5-int8` | 0.917 | 0.917 | 1.000 | 0.933 |
-| 3 | `sentence_aware` | `Xenova/bge-small-en-v1.5-int8` | 0.833 | 1.000 | 1.000 | 0.903 |
+| 1 | `sentence_aware` | `nomic-ai/nomic-embed-text-v1.5-Q` | 0.917 | 1.000 | 1.000 | 0.958 |
+| 2 | `hierarchy` | `nomic-ai/nomic-embed-text-v1.5-Q` | 0.917 | 0.917 | 1.000 | 0.938 |
+| 3 | `neighbor_expand(window=1, base=hierarchy)` | `nomic-ai/nomic-embed-text-v1.5-Q` | 0.917 | 0.917 | 0.917 | 0.933 |
 
 Full Rust leaderboard in [`sample-results-rust.md`](sample-results-rust.md).
 

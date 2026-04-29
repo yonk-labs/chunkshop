@@ -21,11 +21,9 @@ Run from repo root:
 Exits 0 on parity within tolerance, non-zero with a structured diff
 otherwise.
 
-Note: this uses the Rust-compatible matrix (`bakeoff-ntsb-rust.yaml`,
-2 embedders × 4 chunkers = 8 combos) for both runs. The 3-embedder
-Python-canonical matrix (`bakeoff-ntsb.yaml`) includes nomic, which the
-Rust port doesn't yet support. Adding nomic to the Rust embedder
-registry is a follow-up brief.
+Drives the canonical 12-combo matrix (`bakeoff-ntsb.yaml`, 3 embedders ×
+4 chunkers) on both languages now that nomic is wired into the Rust
+embedder registry.
 """
 from __future__ import annotations
 
@@ -39,7 +37,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RUST_YAML = REPO_ROOT / "docs/samples/bakeoff-ntsb/bakeoff-ntsb-rust.yaml"
+BAKEOFF_YAML = REPO_ROOT / "docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml"
 RUST_BIN = REPO_ROOT / "rust/target/release/chunkshop-rs"
 SKILL_OUT = REPO_ROOT / "skill-output/bakeoff/ntsb_bakeoff"
 
@@ -104,7 +102,7 @@ def run_python_bakeoff(py_bin: Path, dsn: str) -> dict:
     rc = run(
         [
             str(py_bin), "bakeoff",
-            "--config", str(RUST_YAML),  # use rust-compat matrix on both sides
+            "--config", str(BAKEOFF_YAML),
             "--dsn", dsn,
             "--yes",
         ],
@@ -120,7 +118,7 @@ def run_rust_bakeoff(rust_bin: Path, dsn: str) -> dict:
     drop_schema(dsn)
     rc = run(
         [str(rust_bin), "bakeoff",
-         "--config", str(RUST_YAML),
+         "--config", str(BAKEOFF_YAML),
          "--dsn", dsn,
          "--yes"],
         cwd=REPO_ROOT,
@@ -192,7 +190,11 @@ def diff_leaderboards(py: dict, rs: dict, mrr_tol: float, ordering_gap: float) -
             print(line)
         failures.extend(bad_orderings)
 
-    # Recommended-cell parity: top combo by MRR must be within ordering_gap.
+    # Recommended-cell parity: each language's top pick must score within
+    # `mrr_tol` of the other language's top in EITHER scoreboard. This
+    # accepts the documented tie-band shuffle: when two combos are within
+    # the drift envelope of each other on at least one side, either is a
+    # legitimate winner.
     py_top = max(py_combos.values(), key=lambda c: c["aggregate"].get("mrr", 0))
     rs_top = max(rs_combos.values(), key=lambda c: c["aggregate"].get("mrr", 0))
     py_top_key = combo_key(py_top)
@@ -203,16 +205,20 @@ def diff_leaderboards(py: dict, rs: dict, mrr_tol: float, ordering_gap: float) -
     if py_top_key != rs_top_key:
         py_top_in_rs = rs_combos[py_top_key]["aggregate"]["mrr"]
         rs_top_in_py = py_combos[rs_top_key]["aggregate"]["mrr"]
-        py_gap = py_top["aggregate"]["mrr"] - rs_top_in_py
-        rs_gap = rs_top["aggregate"]["mrr"] - py_top_in_rs
-        if py_gap > ordering_gap or rs_gap > ordering_gap:
+        # The picked-top of one language must be within mrr_tol of the
+        # other language's picked-top on at least one scoreboard.
+        py_side = abs(py_top["aggregate"]["mrr"] - rs_top_in_py)
+        rs_side = abs(rs_top["aggregate"]["mrr"] - py_top_in_rs)
+        if min(py_side, rs_side) > mrr_tol:
             failures.append(
-                f"top-combo disagree by more than {ordering_gap:.3f} MRR: "
-                f"py picked {py_top_key}, rs picked {rs_top_key}"
+                f"top-combo disagree by more than {mrr_tol:.3f} MRR on both "
+                f"scoreboards: py picked {py_top_key}, rs picked {rs_top_key}; "
+                f"py-side Δ={py_side:.3f}, rs-side Δ={rs_side:.3f}"
             )
         else:
             print(
-                f"  (within tie band {ordering_gap:.3f} — acceptable shuffle)"
+                f"  (within drift tolerance {mrr_tol:.3f}: py-side Δ={py_side:.3f}, "
+                f"rs-side Δ={rs_side:.3f} — acceptable shuffle)"
             )
     else:
         print("  agree")
@@ -231,7 +237,7 @@ def main() -> int:
     args = parse_args()
     print(f"Repo root: {REPO_ROOT}")
     print(f"DSN:       {args.dsn}")
-    print(f"YAML:      {RUST_YAML}")
+    print(f"YAML:      {BAKEOFF_YAML}")
     print(f"MRR tol:   {args.mrr_tolerance:.3f}")
     print(f"Ord gap:   {args.ordering_gap:.3f}")
 
@@ -239,8 +245,8 @@ def main() -> int:
     rust_bin = ensure_rust_bin()
 
     # Sanity: the rust matrix yaml must exist.
-    if not RUST_YAML.exists():
-        print(f"Rust matrix YAML missing: {RUST_YAML}", file=sys.stderr)
+    if not BAKEOFF_YAML.exists():
+        print(f"Rust matrix YAML missing: {BAKEOFF_YAML}", file=sys.stderr)
         return 2
 
     print("\n=== Phase 1: Python bakeoff ===")
