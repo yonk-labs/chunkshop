@@ -68,6 +68,18 @@
 
 ### Changed
 
+- **`s3` source — Python and Rust shipped together (5/5 sources on Rust).**
+  Python's `S3Source` was a `NotImplementedError` stub; this brief replaces
+  it with a real impl using `boto3` (new optional `[s3]` extra). Rust adds
+  a `S3SourceConfig` variant and `S3Source` impl using the `object_store`
+  crate's `aws` feature. Both honor an optional `endpoint_url` so users
+  can point at minio / R2 / other S3-compatible servers without code
+  changes; auth uses the standard AWS credential chain. Document shape
+  matches across languages: `id = s3://<bucket>/<key>`, `metadata =
+  {bucket, key, size, etag}`. Pagination handled via list_objects_v2.
+  Tests are credential-gated (`CHUNKSHOP_S3_TEST_BUCKET` env var); the
+  default test run is unchanged.
+
 - **`chunkshop-rs` extractor stage shipped — all 5 pipeline stages now
   have at least partial Rust coverage.** Six extractor variants:
   - `none`, `composite` — trivial ports, byte-identical to Python.

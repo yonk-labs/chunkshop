@@ -50,6 +50,9 @@ class S3Source(_Base):
     type: Literal["s3"]
     bucket: str
     prefix: str = ""
+    # Optional S3-compatible endpoint (minio, R2, custom). When None, boto3
+    # falls back to the default AWS endpoint per the credential's region.
+    endpoint_url: Optional[str] = None
 
 
 SourceConfig = Annotated[

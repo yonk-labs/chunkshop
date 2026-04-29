@@ -237,6 +237,7 @@ pub enum SourceConfig {
     JsonCorpus(JsonCorpusSourceConfig),
     PgTable(PgTableSourceConfig),
     Http(HttpSourceConfig),
+    S3(S3SourceConfig),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -284,6 +285,18 @@ pub struct HttpSourceConfig {
     pub urls: Vec<String>,
     #[serde(default)]
     pub sitemap: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct S3SourceConfig {
+    pub bucket: String,
+    #[serde(default)]
+    pub prefix: String,
+    /// Optional S3-compatible endpoint URL (minio, R2, custom). When None,
+    /// `object_store` resolves the standard AWS S3 endpoint per the
+    /// credential's region.
+    #[serde(default)]
+    pub endpoint_url: Option<String>,
 }
 
 fn default_id_from() -> String {

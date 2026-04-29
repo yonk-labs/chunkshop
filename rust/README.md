@@ -38,7 +38,7 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 
 | Stage     | Supported                                                      |
 |-----------|----------------------------------------------------------------|
-| source    | `files`, `json_corpus`, `pg_table`, `http` (urls + optional sitemap; `<title>` extracted via regex; `metadata` carries `{url, status_code, content_type}`) |
+| source    | `files`, `json_corpus`, `pg_table`, `http`, `s3` (bucket + prefix + optional `endpoint_url` for minio / R2; via the `object_store` crate; standard AWS credential chain; `metadata` carries `{bucket, key, size, etag}`) — **5/5 sources ship in Rust** |
 | framer    | `identity` (default 1-to-1 pass-through), `heading_boundary` (split markdown on a configurable heading regex with preamble + title-from-heading), `regex_boundary` (split on arbitrary regex; optional title-pattern capture), `jsonpath` (parse content as JSON, walk dotted path with `*` for list iteration; configurable body/title sub-paths) — all byte-identical to Python |
 | chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`, `summary_embed`, `hierarchical_summary` (all byte-identical to Python), `semantic` (algorithm-parity; chunks NOT byte-identical due to MB-1's ~1e-3 ORT drift) — **all 6 Python chunkers ship in Rust**. Summarizer dispatch supports `passthrough` + `external` natively; `callable` mode currently recognizes only `chunkshop.summarizers.passthrough` — lede crate integration is a follow-up brief. |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
@@ -54,7 +54,6 @@ Everything else Python ships is **deliberately out of scope**:
   registers their own NER / embedding-keyphrase pipeline. The other four
   extractor variants (`none`, `composite`, `rake_keywords`, `lang_detect`)
   ship.
-- Sources: `s3` — not ported.
 - Orchestrator / bakeoff subcommands — not ported.
 
 YAML configs from the Python side are **accepted** (unknown fields on

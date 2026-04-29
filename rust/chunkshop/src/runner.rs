@@ -19,7 +19,9 @@ use crate::framer::{
     FramerImpl, HeadingBoundaryFramer, IdentityFramer, JsonPathFramer, RegexBoundaryFramer,
 };
 use crate::sink::PgVectorSink;
-use crate::source::{Document, FilesSource, HttpSource, JsonCorpusSource, PgTableSource};
+use crate::source::{
+    Document, FilesSource, HttpSource, JsonCorpusSource, PgTableSource, S3Source,
+};
 use crate::summarizer::build_summarizer;
 
 /// Recursively materialize a `ChunkerConfig` into a boxed trait object.
@@ -77,18 +79,20 @@ enum AnySource {
     JsonCorpus(JsonCorpusSource),
     PgTable(PgTableSource),
     Http(HttpSource),
+    S3(S3Source),
 }
 
 impl AnySource {
-    /// Async because PgTable + Http do network I/O; the file/JSON variants
-    /// run sync work inside the async fn (no actual await). Caller is already
-    /// in an async context (`run_cell` is async).
+    /// Async because PgTable + Http + S3 do network I/O; the file/JSON
+    /// variants run sync work inside the async fn (no actual await). Caller
+    /// is already in an async context (`run_cell` is async).
     async fn iter_documents(&self) -> Result<Vec<Document>> {
         match self {
             AnySource::Files(s) => s.iter_documents(),
             AnySource::JsonCorpus(s) => s.iter_documents(),
             AnySource::PgTable(s) => s.iter_documents().await,
             AnySource::Http(s) => s.iter_documents().await,
+            AnySource::S3(s) => s.iter_documents().await,
         }
     }
 }
@@ -110,6 +114,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
         SourceConfig::JsonCorpus(jc) => AnySource::JsonCorpus(JsonCorpusSource::new(jc)),
         SourceConfig::PgTable(pc) => AnySource::PgTable(PgTableSource::new(pc)),
         SourceConfig::Http(hc) => AnySource::Http(HttpSource::new(hc)),
+        SourceConfig::S3(sc) => AnySource::S3(S3Source::new(sc)),
     };
     let framer = build_framer(cfg.framer)?;
     let chunker = build_chunker(cfg.chunker)?;
