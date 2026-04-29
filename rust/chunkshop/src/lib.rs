@@ -5,6 +5,7 @@
 //! shape match the Python reference so vectors are interchangeable across
 //! implementations.
 
+pub mod bakeoff;
 pub mod chunker;
 pub mod config;
 pub mod embedder;
@@ -18,6 +19,7 @@ pub mod sink;
 pub mod source;
 pub mod summarizer;
 
+pub use bakeoff::{run_bakeoff, run_bakeoff_with_base, BakeoffConfig, BakeoffResults};
 pub use chunker::{Chunk, SentenceAwareChunker};
 pub use config::{load_config, CellConfig};
 pub use embedder::FastembedEmbedder;

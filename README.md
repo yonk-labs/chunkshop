@@ -13,11 +13,12 @@ optionally tags it, and lands the result in a pgvector table. Designed to be con
 library or driven from the command line.
 
 One YAML config = one end-to-end ingest ("cell"). Multiple YAMLs run in parallel via
-`chunkshop orchestrate`. The single-cell pipeline is at parity across Python and
-Rust — vectors written by either implementation are interchangeable. The
-**bakeoff** (matrix → leaderboard → recommended cell) and the **orchestrator**
-(parallel multi-cell fan-out) are **Python-only** today; Rust port in flight.
-Go is not started.
+`chunkshop orchestrate`. The single-cell pipeline AND the bakeoff (matrix →
+leaderboard → recommended cell) are now at parity across Python and Rust —
+vectors written by either implementation are interchangeable, and the same
+`bakeoff-ntsb.yaml` produces equivalent leaderboards in both languages
+(`scripts/parity_check_bakeoff.py` verifies). The **orchestrator** (parallel
+multi-cell fan-out) is still Python-only. Go is not started.
 
 ## Pipeline
 
@@ -71,23 +72,24 @@ Already past step 3 and just want the runtime? `chunkshop ingest --config <your-
 | Impl             | Path       | State                                                |
 |------------------|------------|------------------------------------------------------|
 | Python reference | `python/`  | v0.2.0. All features. int8 default.                  |
-| Rust             | `rust/`    | v0.1.0. **Single-cell pipeline at parity** (5/5 sources, 7/7 chunkers, embedder, 4/6 extractors, full sink, inline `Pipeline`). **Bakeoff and orchestrator are Python-only** — Rust today is for *running* a chosen cell, not for *picking* one. See [`rust/README.md`](rust/README.md). |
+| Rust             | `rust/`    | v0.1.x. **Single-cell pipeline + bakeoff at parity.** Same YAML → equivalent leaderboard. Orchestrator still Python-only. Embedder registry is a subset (BGE int8 variants today; nomic is a follow-up). See [`rust/README.md`](rust/README.md). |
 | Go               | `go/`      | Not started.                                         |
 
-### What "single-cell parity" means and doesn't mean
+### What "parity" means and doesn't mean
 
 | Layer | Python | Rust |
 |---|---|---|
 | Source / framer / chunker / embedder / extractor / sink | ✅ | ✅ |
 | `Pipeline` (inline / library mode) | ✅ | ✅ |
 | `chunkshop ingest` (one YAML → one cell) | ✅ | ✅ |
-| **`chunkshop bakeoff` (matrix → leaderboard → recommended.yaml)** | ✅ | ❌ |
-| **`chunkshop orchestrate` (N cells as parallel subprocesses)** | ✅ | ❌ |
+| **`chunkshop bakeoff` (matrix → leaderboard → recommended.yaml)** | ✅ | ✅ (BGE int8 matrix; nomic is a follow-up) |
+| `chunkshop orchestrate` (N cells as parallel subprocesses) | ✅ | ❌ |
+| Embedder registry breadth | full | BGE int8 + stock fastembed-rs models; nomic / others = follow-up |
 
 The bakeoff is **step 1 of every adoption** in the chunkshop journey — bring a
 corpus, write a small gold set, run the bakeoff, take the recommended cell to
-production. Until Rust bakeoff lands, **the comparison story is Python-only**.
-Rust runs the cell the bakeoff picked.
+production. Both languages now run that loop end-to-end. Cross-language
+parity is verified per-run by `scripts/parity_check_bakeoff.py`.
 
 ## Defaults
 

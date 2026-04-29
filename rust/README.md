@@ -1,34 +1,34 @@
 # chunkshop-rs
 
-Rust port of chunkshop's **single-cell pipeline**. Same YAML config, same
-pgvector target table, same ordering of chunks — vectors written by
-`chunkshop-rs ingest` are compatible with vectors written by the Python
-reference (see `../scripts/parity_check.py`).
+Rust port of chunkshop. Same YAML config, same pgvector target table, same
+ordering of chunks — vectors written by `chunkshop-rs ingest` are compatible
+with vectors written by the Python reference (`../scripts/parity_check.py`),
+and the same bakeoff YAML produces equivalent leaderboards in both languages
+(`../scripts/parity_check_bakeoff.py`).
 
-> ## ⚠️ Read this before assuming Rust = Python
+> ## What Rust covers today
 >
 > The chunkshop user journey is **bring corpus → run bakeoff → take
-> recommended.yaml → run ingest → repeat for new corpus**. Today the Rust
-> port covers only the second-to-last step (`ingest`). The bakeoff and
-> orchestrator are **Python-only**. Use Rust to *run* a cell the bakeoff
-> picked. Use Python to *pick* the cell.
+> recommended.yaml → run ingest → repeat for new corpus**. Rust now covers
+> all of it except orchestrator-level parallel fan-out.
 >
 > | What | Python | Rust |
 > |---|---|---|
 > | `ingest` (one YAML → one cell) | ✅ | ✅ |
 > | `Pipeline` (library / inline mode) | ✅ | ✅ |
-> | `bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ | ❌ in flight |
+> | `bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ | ✅ (BGE int8 matrix; nomic = follow-up) |
 > | `orchestrate` (N cells in parallel subprocesses) | ✅ | ❌ |
 >
-> Rust bakeoff parity is the next major piece; see the project mission
-> brief / CHANGELOG. Until then, the cross-language pitch is honest at the
-> single-cell layer (vectors interchangeable) and aspirational at the
-> meta-runner layer (comparison + bulk fan-out).
+> Cross-language bakeoff parity is **verified** per-run by
+> `scripts/parity_check_bakeoff.py`: same YAML, leaderboards within
+> ±2.5pp MRR with consistent ordering on distinct-MRR pairs. The
+> orchestrator port is the next major piece.
 
-**Status:** v0.1.x. Single-cell pipeline at feature parity with Python
-(modulo two NLP-heavy extractors that need spaCy). This is a wire-format
-proof of the cross-language claim at the cell level; **it is not yet feature
-parity at the meta-runner level**.
+**Status:** v0.1.x. Single-cell pipeline + bakeoff at parity with Python
+(modulo two NLP-heavy extractors that need spaCy and a smaller embedder
+registry — see roadmap). Wire-format proof of the cross-language claim
+at both the cell layer (vectors interchangeable) AND the bakeoff layer
+(equivalent leaderboards from the same YAML).
 
 ## Build
 
@@ -69,23 +69,30 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 
 ## What does NOT work yet
 
-This is **not deliberate scoping** for the bakeoff / orchestrator items —
-they're real gaps. The two extractor stubs are deliberate.
+The two extractor stubs are deliberate Python-only. Orchestrator and the
+embedder-registry breadth are real parity gaps.
 
-### Meta-runner gaps (real parity work pending)
+### Meta-runner gap
 
-- **`chunkshop-rs bakeoff` subcommand — not ported.** This is the gap that
-  matters most: bakeoff is *step 1* of the chunkshop user journey (bring
-  corpus → run bakeoff → take recommended.yaml → ingest). Rust today cannot
-  run the matrix that picks the chunker/embedder for a corpus. Until Rust
-  bakeoff lands, **a Rust-only deployment cannot run the chunkshop
-  comparison story end-to-end** — it can only run a cell that Python's
-  bakeoff already picked. Port is in flight; see the project CHANGELOG.
-
+- **`chunkshop-rs bakeoff` subcommand — SHIPPED.** Run the same
+  `bakeoff-ntsb-rust.yaml` from either language and verify with
+  `scripts/parity_check_bakeoff.py` (leaderboards within ±2.5pp MRR;
+  consistent ordering on distinct-MRR pairs).
 - **`chunkshop-rs orchestrate` subcommand — not ported.** Bulk multi-cell
   fan-out (Python's CLI spawns N `ingest` subprocesses with thread caps,
   log multiplexing, per-cell failure isolation). Different surface than the
   bakeoff; tracked separately.
+
+### Embedder registry breadth gap
+
+- **Rust supports a subset of the model_names Python supports.** The Rust
+  embedder registry today maps `Xenova/bge-{small,base}-en-v1.5-int8`
+  (bit-near-exact via the same ONNX file Python loads) plus the stock
+  fastembed-rs variants (`BAAI/bge-{small,base,large}-en-v1.5`,
+  `sentence-transformers/all-MiniLM-L6-v2[-int8]`). `nomic-ai/nomic-embed-text-v1.5-Q`
+  and other Python-supported models are not yet wired. Adding a model =
+  one entry in `src/embedder.rs::resolve_model_name` plus (for int8
+  variants) the matching ONNX-file path. See the embedder docs.
 
 ### Deliberate Python-only extractors
 

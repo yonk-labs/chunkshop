@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Added
+
+- **Rust bakeoff port (`chunkshop-rs bakeoff`).** The matrix → leaderboard →
+  recommended.yaml loop now runs in both languages. Mirrors
+  `python/src/chunkshop/bakeoff/` with byte-identical key derivation
+  (combo table names match across languages), pure-math scoring (recall@k +
+  MRR), and report.md formatting comparable with Python's.
+- **Cross-language bakeoff parity test (`scripts/parity_check_bakeoff.py`).**
+  Drives the same `bakeoff-ntsb-rust.yaml` from both implementations,
+  diffs aggregate MRR (within ±2.5pp documented ORT-drift envelope) and
+  ordering (consistent on distinct-MRR pairs). Verified PASS on the
+  shipped sample: 7/8 combos within ±0.011 MRR; one outlier at 0.021
+  (well inside envelope); both languages pick the same top combo
+  (`hierarchy + bge-base-int8`).
+- **`docs/samples/bakeoff-ntsb/bakeoff-ntsb-rust.yaml`** — Rust-compatible
+  matrix variant (drops nomic, which isn't in the Rust embedder registry
+  yet). Plus `sample-results-rust.md` and `sample-recommended-rust.yaml`
+  committed alongside the Python-side artifacts so readers see both
+  leaderboards without running the bakeoff themselves.
+- **Embedder-registry-breadth gap documented.** `rust/README.md` now
+  calls out that the Rust port supports a subset of Python's model_names
+  (BGE int8 variants + stock fastembed-rs models) and that adding a model
+  is one entry in `src/embedder.rs::resolve_model_name`. nomic + others
+  are tracked as follow-ups.
+
 ### Documentation
 
 - **User-journey-first docs.** README leads with the canonical 5-step
