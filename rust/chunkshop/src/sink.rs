@@ -427,6 +427,23 @@ impl PgVectorSink {
 
             q.execute(&mut *tx).await.context("INSERT chunk row")?;
         }
+        // delete_orphans: same-tx cleanup of stale chunks at higher seq_nums
+        // when a doc shrinks. All chunks here share doc_id, so chunks[0].doc_id
+        // is the right key. No-op when growing (seq_num >= len(chunks) catches none).
+        if self.cfg.delete_orphans {
+            let doc_id = &chunks[0].doc_id;
+            let new_count = chunks.len() as i32;
+            let delete_sql = format!(
+                "DELETE FROM {tbl} WHERE doc_id = $1 AND seq_num >= $2",
+                tbl = self.fq_table(),
+            );
+            sqlx::query(&delete_sql)
+                .bind(doc_id)
+                .bind(new_count)
+                .execute(&mut *tx)
+                .await
+                .context("DELETE orphan chunks")?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -435,6 +452,11 @@ impl PgVectorSink {
         let stmt = format!("SELECT COUNT(DISTINCT doc_id) FROM {}", self.fq_table());
         let row = sqlx::query(&stmt).fetch_one(&self.pool).await?;
         Ok(row.get::<i64, _>(0))
+    }
+
+    /// Borrow the underlying pool for sibling SQL (used by `Pipeline::delete_document`).
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 }
 

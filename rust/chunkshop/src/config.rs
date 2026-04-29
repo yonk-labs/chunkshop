@@ -238,7 +238,15 @@ pub enum SourceConfig {
     PgTable(PgTableSourceConfig),
     Http(HttpSourceConfig),
     S3(S3SourceConfig),
+    /// Library/embedded mode — no automatic iteration. The host application
+    /// drives ingestion via `chunkshop::Pipeline::from_yaml(...)` and calls
+    /// `pipeline.ingest_text(doc_id, text, metadata)` per document.
+    /// `Runner::run_cell` rejects this variant; only `Pipeline` accepts it.
+    Inline(InlineSourceConfig),
 }
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct InlineSourceConfig {}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FilesSourceConfig {
@@ -568,6 +576,13 @@ pub struct TargetConfig {
     pub promote_metadata: Vec<PromoteColumn>,
     #[serde(default)]
     pub force_overwrite: bool,
+    /// When true, after upserting chunks for a document, delete any rows for
+    /// that document with `seq_num >= len(new_chunks)`. Closes the per-doc
+    /// shrink gap (last run wrote 12 chunks; this run writes 8 → drop the 4
+    /// orphans inside the same write transaction). Default false to preserve
+    /// the historical behavior. See `docs/incremental.md`.
+    #[serde(default)]
+    pub delete_orphans: bool,
 }
 
 impl TargetConfig {

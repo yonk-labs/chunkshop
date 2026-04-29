@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use tracing::info;
 
 use crate::chunker::{
@@ -27,7 +27,7 @@ use crate::summarizer::build_summarizer;
 /// Recursively materialize a `ChunkerConfig` into a boxed trait object.
 /// `NeighborExpand` calls back into this fn to construct its `base`. Adding a
 /// new chunker = one new arm here + one new variant on `ChunkerConfig`.
-fn build_chunker(cfg: ChunkerConfig) -> Result<Box<dyn ChunkerImpl + Send + Sync>> {
+pub fn build_chunker(cfg: ChunkerConfig) -> Result<Box<dyn ChunkerImpl + Send + Sync>> {
     Ok(match cfg {
         ChunkerConfig::SentenceAware(c) => Box::new(SentenceAwareChunker::new(c)),
         ChunkerConfig::Hierarchy(c) => Box::new(HierarchyChunker::new(c)),
@@ -62,7 +62,7 @@ fn build_chunker(cfg: ChunkerConfig) -> Result<Box<dyn ChunkerImpl + Send + Sync
 
 /// Materialize a `FramerConfig` into a boxed trait object. Mirrors
 /// `build_chunker`. New framer = one new arm here + one new variant.
-fn build_framer(cfg: FramerConfig) -> Result<Box<dyn FramerImpl + Send + Sync>> {
+pub fn build_framer(cfg: FramerConfig) -> Result<Box<dyn FramerImpl + Send + Sync>> {
     Ok(match cfg {
         FramerConfig::Identity(c) => Box::new(IdentityFramer::new(c)),
         FramerConfig::HeadingBoundary(c) => Box::new(HeadingBoundaryFramer::new(c)?),
@@ -115,6 +115,13 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
         SourceConfig::PgTable(pc) => AnySource::PgTable(PgTableSource::new(pc)),
         SourceConfig::Http(hc) => AnySource::Http(HttpSource::new(hc)),
         SourceConfig::S3(sc) => AnySource::S3(S3Source::new(sc)),
+        SourceConfig::Inline(_) => {
+            return Err(anyhow!(
+                "inline source has no auto-iterator: drive ingest from your app \
+                 with chunkshop::Pipeline::from_yaml(...).ingest_text(doc_id, text, metadata). \
+                 See docs/incremental.md (Pattern F) and docs/samples/inline-mode/."
+            ));
+        }
     };
     let framer = build_framer(cfg.framer)?;
     let chunker = build_chunker(cfg.chunker)?;

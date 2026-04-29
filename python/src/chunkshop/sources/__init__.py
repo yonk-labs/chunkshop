@@ -1,6 +1,7 @@
 """Source registry."""
 from chunkshop.config import (
     FilesSource as FilesCfg,
+    InlineSource as InlineCfg,
     JsonCorpusSource as JsonCfg,
     PgTableSource as PgCfg,
     HttpSource as HttpCfg,
@@ -26,6 +27,12 @@ def load_source(cfg: SourceConfig) -> Source:
         return HttpSource(cfg)
     if isinstance(cfg, S3Cfg):
         return S3Source(cfg)
+    if isinstance(cfg, InlineCfg):
+        raise RuntimeError(
+            "inline source has no auto-iterator: drive ingest from your app "
+            "with chunkshop.Pipeline.from_yaml(...).ingest_text(doc_id, text, metadata). "
+            "See docs/incremental.md (Pattern F) and docs/samples/inline-mode/."
+        )
     raise ValueError(f"unknown source type: {type(cfg).__name__}")
 
 

@@ -4,6 +4,34 @@
 
 ### Added
 
+- **Incremental ingest, deltas, and inline (library) mode.** Five new patterns
+  documented in `docs/incremental.md` for hooking change-data into chunkshop:
+  cron + WHERE clause, watermarked cursor (with a `scripts/run_incremental_watermark.sh`
+  wrapper), staging-file inbox, Postgres CDC → staging table, and object-storage
+  events. Plus a third-party-tools guide covering schedulers (Airflow / Prefect /
+  Dagster / Temporal / Kestra / cron / k8s CronJob), CDC taps (Debezium / pgoutput /
+  Estuary / DMS / Supabase Realtime / Materialize), and durable buffers (SQS /
+  Kafka / Redis Streams / Rabbit / Cloudflare Queues).
+- **`target.delete_orphans` flag (Python + Rust).** When true, after upserting
+  chunks for a document the sink runs `DELETE ... WHERE doc_id = $1 AND seq_num
+  >= $new_count` inside the same transaction. Closes the per-doc shrink gap
+  (last run wrote 12 chunks; this run writes 8 → drop the 4 orphans atomically).
+  Default false to preserve historical behavior. Four integration tests in
+  `python/tests/chunkshop/test_sink_delete_orphans.py`.
+- **Inline (library) mode: `source.type = inline` + `chunkshop.Pipeline`.**
+  When the host application IS the source — webhook handler, queue consumer,
+  in-process generator — the YAML drops the source dispatch and you call
+  `Pipeline.ingest_text(doc_id, text, metadata)` per document. Symmetric in
+  Python (`chunkshop.Pipeline.from_yaml`) and Rust (`chunkshop::Pipeline::from_yaml`).
+  `Pipeline.delete_document(doc_id)` removes a doc explicitly, scoped to the
+  pipeline's `source_tag` (write-once provenance). Runnable end-to-end demos
+  for both languages in `docs/samples/inline-mode/` exercise insert / grow /
+  shrink-with-orphan-cleanup / delete and produce identical chunk-count tables
+  across Python and Rust.
+- **`docs/samples/incremental-pg-table.yaml`.** Reference YAML for Pattern A
+  (sliding-window) and Pattern B (watermarked) — the WHERE clause shown
+  inline; the wrapper script overwrites it before each run for Pattern B.
+
 - **Rust: `lede` callable summarizer behind `lede` cargo feature.**
   `cargo build --features lede` (or `cargo build --workspace --features lede`)
   pulls `lede 0.3` from crates.io and registers

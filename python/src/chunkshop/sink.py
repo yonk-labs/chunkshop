@@ -286,6 +286,17 @@ class PgVectorSink:
 
         with psycopg.connect(self._dsn) as conn, conn.cursor() as cur:
             cur.executemany(stmt, rows)
+            if self.cfg.delete_orphans:
+                # When a doc shrinks (e.g. last run wrote 12 chunks, this run writes 8),
+                # chunks at seq_num >= len(chunks) are now orphaned. Delete them within
+                # the same transaction so an interrupted write either applies the new
+                # chunkset OR keeps the old one — never a half-overwritten doc.
+                cur.execute(
+                    sql.SQL(
+                        "DELETE FROM {tbl} WHERE doc_id = %s AND seq_num >= %s"
+                    ).format(tbl=fq),
+                    (doc_id, len(chunks)),
+                )
             conn.commit()
 
     def count_docs(self) -> int:

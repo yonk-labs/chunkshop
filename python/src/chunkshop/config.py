@@ -55,8 +55,21 @@ class S3Source(_Base):
     endpoint_url: Optional[str] = None
 
 
+class InlineSource(_Base):
+    """Library/embedded mode — the host application drives ingestion.
+
+    No automatic iteration. The YAML still defines chunker / embedder /
+    extractor / target, but the calling code (a Python service, a worker, a
+    CLI tool) constructs `chunkshop.Pipeline.from_yaml(path)` and calls
+    `pipeline.ingest_text(doc_id, text, metadata)` per document. Use when
+    your app already knows when new content arrives — webhooks, queues,
+    in-process generation — and you don't want a YAML-defined source.
+    """
+    type: Literal["inline"]
+
+
 SourceConfig = Annotated[
-    Union[FilesSource, JsonCorpusSource, PgTableSource, HttpSource, S3Source],
+    Union[FilesSource, JsonCorpusSource, PgTableSource, HttpSource, S3Source, InlineSource],
     Field(discriminator="type"),
 ]
 
@@ -369,6 +382,7 @@ class TargetConfig(_Base):
     source_tag: Optional[str] = None
     promote_metadata: list[PromoteColumn] = Field(default_factory=list)
     force_overwrite: bool = False
+    delete_orphans: bool = False
 
     @field_validator("table", "schema_name", "source_tag")
     @classmethod

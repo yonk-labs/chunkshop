@@ -1,0 +1,47 @@
+# Inline (library) mode — the host application drives ingestion.
+#
+# Use this when YOUR app is the source: webhook handler, queue consumer,
+# in-process generator, slack bot, etc. The YAML still pins chunker /
+# embedder / extractor / target so chunks land identically across services,
+# but no auto-iteration happens. Build once, push docs in.
+#
+#   shop = chunkshop.Pipeline.from_yaml("sample-inline.yaml")
+#   shop.ingest_text(doc_id="note-001", text="...", metadata={...})
+#   shop.delete_document(doc_id="note-001")
+
+cell_name: inline_demo
+
+source:
+  type: inline   # mandatory — Pipeline rejects any other source type
+
+framer:
+  type: identity
+
+chunker:
+  type: hierarchy
+  max_chars: 200      # demo size — production usually 800–1500
+
+embedder:
+  type: fastembed
+  model_name: "Xenova/bge-small-en-v1.5-int8"
+  dim: 384
+  threads: 2
+  batch_size: 64
+
+extractor:
+  type: none     # demo runs with the default install — swap for lang_detect
+                 # or rake_keywords once you `uv sync --extra lang --extra extractors`.
+
+target:
+  dsn_env: VECTORS_DB_DSN
+  schema: rag
+  table: inline_chunks
+  mode: create_if_missing
+  source_tag: inline_demo
+  delete_orphans: true     # drop excess chunks when a doc shrinks
+  hnsw: false              # demo only — turn on in production
+  promote_metadata:
+    - { path: account, type: text }
+
+runtime:
+  omp_num_threads: 2
