@@ -242,6 +242,8 @@ pub enum ChunkerConfig {
     FixedOverlap(FixedOverlapChunkerConfig),
     NeighborExpand(NeighborExpandChunkerConfig),
     Semantic(SemanticChunkerConfig),
+    SummaryEmbed(SummaryEmbedChunkerConfig),
+    HierarchicalSummary(HierarchicalSummaryChunkerConfig),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -291,6 +293,111 @@ pub struct SemanticChunkerConfig {
     pub max_chunk_chars: usize,
     #[serde(default = "default_sentence_splitter")]
     pub sentence_splitter: String,
+}
+
+/// Discriminated union over summarizer modes. Mirrors Python's `SummarizerConfig`.
+/// Tagged on `mode` (matches the Python YAML).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum SummarizerConfig {
+    External(ExternalSummarizerConfig),
+    Callable(CallableSummarizerConfig),
+    Passthrough(PassthroughSummarizerConfig),
+}
+
+impl SummarizerConfig {
+    /// One of `"external"`, `"callable"`, `"passthrough"` — the value chunkshop
+    /// stamps into `metadata.summarizer` for traceability.
+    pub fn mode_str(&self) -> &'static str {
+        match self {
+            SummarizerConfig::External(_) => "external",
+            SummarizerConfig::Callable(_) => "callable",
+            SummarizerConfig::Passthrough(_) => "passthrough",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExternalSummarizerConfig {
+    #[serde(default = "default_external_field")]
+    pub field: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CallableSummarizerConfig {
+    pub module: String,
+    #[serde(default = "default_callable_function")]
+    pub function: String,
+    #[serde(default)]
+    pub kwargs: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PassthroughSummarizerConfig {}
+
+fn default_external_field() -> String {
+    "summary".to_string()
+}
+fn default_callable_function() -> String {
+    "summarize".to_string()
+}
+
+/// Discriminated union over grouping strategies for HierarchicalSummaryChunker.
+/// Mirrors Python's `GroupingConfig`. Tagged on `strategy`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "strategy", rename_all = "snake_case")]
+pub enum GroupingConfig {
+    FixedN(FixedNGroupingConfig),
+    WordBudget(WordBudgetGroupingConfig),
+    SectionAware(SectionAwareGroupingConfig),
+}
+
+impl Default for GroupingConfig {
+    fn default() -> Self {
+        GroupingConfig::FixedN(FixedNGroupingConfig::default())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FixedNGroupingConfig {
+    #[serde(default = "default_fixed_n")]
+    pub n: usize,
+}
+
+impl Default for FixedNGroupingConfig {
+    fn default() -> Self {
+        Self { n: default_fixed_n() }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WordBudgetGroupingConfig {
+    #[serde(default = "default_word_budget")]
+    pub max_words: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SectionAwareGroupingConfig {}
+
+fn default_fixed_n() -> usize {
+    5
+}
+fn default_word_budget() -> usize {
+    2000
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SummaryEmbedChunkerConfig {
+    pub base: Box<ChunkerConfig>,
+    pub summarizer: SummarizerConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HierarchicalSummaryChunkerConfig {
+    pub base: Box<ChunkerConfig>,
+    pub summarizer: SummarizerConfig,
+    #[serde(default)]
+    pub grouping: GroupingConfig,
 }
 
 fn default_window_words() -> usize {
@@ -445,7 +552,44 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
         // `where_clause` is intentionally NOT validated — see PgTableSourceConfig docstring.
     }
     cfg.target.validate()?;
+    validate_chunker_config(&cfg.chunker)?;
     Ok(cfg)
+}
+
+/// Cross-field validation for chunker configs (recursive, walks any
+/// `Box<ChunkerConfig>` base fields). Mirrors Python's pydantic model
+/// validators that fire at config-load time.
+fn validate_chunker_config(c: &ChunkerConfig) -> Result<()> {
+    match c {
+        ChunkerConfig::SentenceAware(_)
+        | ChunkerConfig::Hierarchy(_)
+        | ChunkerConfig::FixedOverlap(_)
+        | ChunkerConfig::Semantic(_) => Ok(()),
+        ChunkerConfig::NeighborExpand(c) => validate_chunker_config(&c.base),
+        ChunkerConfig::SummaryEmbed(c) => validate_chunker_config(&c.base),
+        ChunkerConfig::HierarchicalSummary(c) => {
+            // Mirror Python's _section_aware_requires_hierarchy_base: when
+            // grouping is section_aware, the base chunker MUST be hierarchy.
+            if matches!(c.grouping, GroupingConfig::SectionAware(_)) {
+                let base_type_name = match &*c.base {
+                    ChunkerConfig::Hierarchy(_) => "hierarchy",
+                    ChunkerConfig::SentenceAware(_) => "sentence_aware",
+                    ChunkerConfig::FixedOverlap(_) => "fixed_overlap",
+                    ChunkerConfig::NeighborExpand(_) => "neighbor_expand",
+                    ChunkerConfig::Semantic(_) => "semantic",
+                    ChunkerConfig::SummaryEmbed(_) => "summary_embed",
+                    ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
+                };
+                if base_type_name != "hierarchy" {
+                    return Err(anyhow!(
+                        "hierarchical_summary with strategy='section_aware' requires \
+                         base.type='hierarchy', got {base_type_name:?}"
+                    ));
+                }
+            }
+            validate_chunker_config(&c.base)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -559,5 +703,43 @@ target:
         assert_eq!(cfg.target.promote_metadata[0].path, "heading");
         assert_eq!(cfg.target.promote_metadata[0].type_, "text");
         assert_eq!(cfg.target.promote_metadata[1].column_name(), "entities__org");
+    }
+
+    #[test]
+    fn rejects_section_aware_without_hierarchy_base() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: hierarchical_summary
+  base: { type: sentence_aware }
+  summarizer: { mode: passthrough }
+  grouping: { strategy: section_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("section_aware") && err.contains("hierarchy"),
+            "expected section_aware/hierarchy mention, got: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_section_aware_with_hierarchy_base() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: hierarchical_summary
+  base: { type: hierarchy }
+  summarizer: { mode: passthrough }
+  grouping: { strategy: section_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        load_config(&path).expect("should accept section_aware over hierarchy base");
     }
 }

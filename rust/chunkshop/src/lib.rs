@@ -14,6 +14,7 @@ pub mod runner;
 pub mod sentence_split;
 pub mod sink;
 pub mod source;
+pub mod summarizer;
 
 pub use chunker::{Chunk, SentenceAwareChunker};
 pub use config::{load_config, CellConfig};

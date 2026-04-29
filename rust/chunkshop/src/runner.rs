@@ -6,16 +6,20 @@ use anyhow::Result;
 use tracing::info;
 
 use crate::chunker::{
-    ChunkerImpl, FixedOverlapChunker, HierarchyChunker, NeighborExpandChunker, SemanticChunker,
-    SentenceAwareChunker,
+    ChunkerImpl, FixedOverlapChunker, HierarchicalGrouping, HierarchicalSummaryChunker,
+    HierarchyChunker, NeighborExpandChunker, SemanticChunker, SentenceAwareChunker,
+    SummaryEmbedChunker,
 };
-use crate::config::{CellConfig, ChunkerConfig, EmbedderConfig, FramerConfig, SourceConfig};
+use crate::config::{
+    CellConfig, ChunkerConfig, EmbedderConfig, FramerConfig, GroupingConfig, SourceConfig,
+};
 use crate::embedder::FastembedEmbedder;
 use crate::framer::{
     FramerImpl, HeadingBoundaryFramer, IdentityFramer, JsonPathFramer, RegexBoundaryFramer,
 };
 use crate::sink::PgVectorSink;
 use crate::source::{Document, FilesSource, HttpSource, JsonCorpusSource, PgTableSource};
+use crate::summarizer::build_summarizer;
 
 /// Recursively materialize a `ChunkerConfig` into a boxed trait object.
 /// `NeighborExpand` calls back into this fn to construct its `base`. Adding a
@@ -31,6 +35,25 @@ fn build_chunker(cfg: ChunkerConfig) -> Result<Box<dyn ChunkerImpl + Send + Sync
             Box::new(NeighborExpandChunker::new(window, base))
         }
         ChunkerConfig::Semantic(c) => Box::new(SemanticChunker::new(c)?),
+        ChunkerConfig::SummaryEmbed(c) => {
+            let mode = c.summarizer.mode_str();
+            let base = build_chunker(*c.base)?;
+            let summarizer = build_summarizer(&c.summarizer)?;
+            Box::new(SummaryEmbedChunker::new(base, summarizer, mode))
+        }
+        ChunkerConfig::HierarchicalSummary(c) => {
+            let mode = c.summarizer.mode_str();
+            let base = build_chunker(*c.base)?;
+            let summarizer = build_summarizer(&c.summarizer)?;
+            let grouping = match c.grouping {
+                GroupingConfig::FixedN(g) => HierarchicalGrouping::FixedN(g.n),
+                GroupingConfig::WordBudget(g) => HierarchicalGrouping::WordBudget(g.max_words),
+                GroupingConfig::SectionAware(_) => HierarchicalGrouping::SectionAware,
+            };
+            Box::new(HierarchicalSummaryChunker::new(
+                base, summarizer, mode, grouping,
+            ))
+        }
     })
 }
 

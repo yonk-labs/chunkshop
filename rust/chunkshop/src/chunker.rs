@@ -728,6 +728,251 @@ impl ChunkerImpl for SemanticChunker {
     }
 }
 
+/// Wraps any base chunker; replaces each chunk's `embedded_content` with a
+/// summary. Mirrors `python/src/chunkshop/chunkers/summary_embed.py`.
+/// `original_content` and `seq_num` survive from the base chunk.
+/// `metadata.summarizer` is stamped with the summarizer mode for traceability.
+pub struct SummaryEmbedChunker {
+    base: Box<dyn ChunkerImpl + Send + Sync>,
+    summarizer: Box<dyn crate::summarizer::SummarizerImpl>,
+    mode: &'static str,
+}
+
+impl SummaryEmbedChunker {
+    pub fn new(
+        base: Box<dyn ChunkerImpl + Send + Sync>,
+        summarizer: Box<dyn crate::summarizer::SummarizerImpl>,
+        mode: &'static str,
+    ) -> Self {
+        Self { base, summarizer, mode }
+    }
+
+    pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        let base_chunks = self.base.chunk(doc);
+        let mut out = Vec::with_capacity(base_chunks.len());
+        for bc in base_chunks {
+            let summary = match self
+                .summarizer
+                .summarize(&bc.original_content, &doc.metadata)
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(
+                        "summary_embed: summarizer failed on doc={} seq={}: {e:#}",
+                        bc.doc_id,
+                        bc.seq_num
+                    );
+                    return Vec::new();
+                }
+            };
+            let mut meta = bc.metadata.as_object().cloned().unwrap_or_default();
+            meta.insert(
+                "summarizer".to_string(),
+                serde_json::Value::String(self.mode.to_string()),
+            );
+            out.push(Chunk {
+                doc_id: bc.doc_id,
+                seq_num: bc.seq_num,
+                original_content: bc.original_content,
+                embedded_content: summary,
+                metadata: serde_json::Value::Object(meta),
+            });
+        }
+        out
+    }
+}
+
+impl ChunkerImpl for SummaryEmbedChunker {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        Self::chunk(self, doc)
+    }
+}
+
+/// Emits BOTH base (fine) and per-group coarse summary chunks linked by
+/// `group_id`. Mirrors `python/src/chunkshop/chunkers/hierarchical_summary.py`.
+/// Three grouping strategies: fixed_n, word_budget, section_aware.
+pub struct HierarchicalSummaryChunker {
+    base: Box<dyn ChunkerImpl + Send + Sync>,
+    summarizer: Box<dyn crate::summarizer::SummarizerImpl>,
+    mode: &'static str,
+    grouping: HierarchicalGrouping,
+}
+
+/// Internal grouping handle — owns just the params it needs (no config types).
+pub enum HierarchicalGrouping {
+    FixedN(usize),
+    WordBudget(usize),
+    SectionAware,
+}
+
+impl HierarchicalSummaryChunker {
+    pub fn new(
+        base: Box<dyn ChunkerImpl + Send + Sync>,
+        summarizer: Box<dyn crate::summarizer::SummarizerImpl>,
+        mode: &'static str,
+        grouping: HierarchicalGrouping,
+    ) -> Self {
+        Self {
+            base,
+            summarizer,
+            mode,
+            grouping,
+        }
+    }
+
+    pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        let base_chunks = self.base.chunk(doc);
+        if base_chunks.is_empty() {
+            return Vec::new();
+        }
+        let groups = self.group(base_chunks);
+
+        let mut out: Vec<Chunk> = Vec::new();
+        let mut seq: usize = 0;
+        for (group_idx, group_chunks) in groups.into_iter().enumerate() {
+            let group_id = format!("{}::g{}", doc.id, group_idx);
+
+            // Fine rows: preserve base metadata, stamp granularity + group_id.
+            for bc in &group_chunks {
+                let mut meta = bc.metadata.as_object().cloned().unwrap_or_default();
+                meta.insert(
+                    "granularity".to_string(),
+                    serde_json::Value::String("fine".to_string()),
+                );
+                meta.insert(
+                    "group_id".to_string(),
+                    serde_json::Value::String(group_id.clone()),
+                );
+                meta.insert(
+                    "summarizer".to_string(),
+                    serde_json::Value::String(self.mode.to_string()),
+                );
+                out.push(Chunk {
+                    doc_id: bc.doc_id.clone(),
+                    seq_num: seq,
+                    original_content: bc.original_content.clone(),
+                    embedded_content: bc.embedded_content.clone(),
+                    metadata: serde_json::Value::Object(meta),
+                });
+                seq += 1;
+            }
+
+            // One coarse row per group.
+            let joined = group_chunks
+                .iter()
+                .map(|c| c.original_content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let summary = match self.summarizer.summarize(&joined, &doc.metadata) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(
+                        "hierarchical_summary: summarizer failed on doc={} group={group_idx}: {e:#}",
+                        doc.id
+                    );
+                    return Vec::new();
+                }
+            };
+            let mut coarse_meta = serde_json::Map::new();
+            coarse_meta.insert(
+                "granularity".to_string(),
+                serde_json::Value::String("coarse".to_string()),
+            );
+            coarse_meta.insert(
+                "group_id".to_string(),
+                serde_json::Value::String(group_id),
+            );
+            coarse_meta.insert(
+                "summarizer".to_string(),
+                serde_json::Value::String(self.mode.to_string()),
+            );
+            coarse_meta.insert(
+                "strategy".to_string(),
+                serde_json::Value::String("hierarchical_summary".to_string()),
+            );
+            out.push(Chunk {
+                doc_id: doc.id.clone(),
+                seq_num: seq,
+                original_content: joined,
+                embedded_content: summary,
+                metadata: serde_json::Value::Object(coarse_meta),
+            });
+            seq += 1;
+        }
+        out
+    }
+
+    fn group(&self, chunks: Vec<Chunk>) -> Vec<Vec<Chunk>> {
+        match self.grouping {
+            HierarchicalGrouping::FixedN(n) => {
+                if n == 0 {
+                    return vec![chunks];
+                }
+                let mut groups: Vec<Vec<Chunk>> = Vec::new();
+                let mut cur: Vec<Chunk> = Vec::new();
+                for c in chunks {
+                    if cur.len() == n {
+                        groups.push(std::mem::take(&mut cur));
+                    }
+                    cur.push(c);
+                }
+                if !cur.is_empty() {
+                    groups.push(cur);
+                }
+                groups
+            }
+            HierarchicalGrouping::WordBudget(max_words) => {
+                let mut groups: Vec<Vec<Chunk>> = Vec::new();
+                let mut cur: Vec<Chunk> = Vec::new();
+                let mut cur_words = 0usize;
+                for c in chunks {
+                    let w = c.original_content.split_whitespace().count();
+                    if !cur.is_empty() && cur_words + w > max_words {
+                        groups.push(std::mem::take(&mut cur));
+                        cur_words = 0;
+                    }
+                    cur.push(c);
+                    cur_words += w;
+                }
+                if !cur.is_empty() {
+                    groups.push(cur);
+                }
+                groups
+            }
+            HierarchicalGrouping::SectionAware => {
+                // Group by metadata.heading. Validator guarantees base is hierarchy.
+                let mut groups: Vec<Vec<Chunk>> = Vec::new();
+                let mut cur: Vec<Chunk> = Vec::new();
+                let mut cur_heading: Option<String> = None;
+                let mut have_heading = false;
+                for c in chunks {
+                    let h = c
+                        .metadata
+                        .get("heading")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    if have_heading && h != cur_heading && !cur.is_empty() {
+                        groups.push(std::mem::take(&mut cur));
+                    }
+                    cur_heading = h;
+                    have_heading = true;
+                    cur.push(c);
+                }
+                if !cur.is_empty() {
+                    groups.push(cur);
+                }
+                groups
+            }
+        }
+    }
+}
+
+impl ChunkerImpl for HierarchicalSummaryChunker {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        Self::chunk(self, doc)
+    }
+}
+
 /// numpy.percentile with linear interpolation. Mirrors numpy default.
 /// Returns the percentile **value** (not the index).
 fn percentile_linear(values: &[f32], p: u32) -> f32 {
@@ -867,5 +1112,78 @@ mod tests {
     fn merge_small_spans_empty_returns_empty() {
         let m: Vec<(usize, usize)> = merge_small_spans(Vec::new(), 3);
         assert!(m.is_empty());
+    }
+
+    // --- HierarchicalSummary grouping strategies ---
+
+    fn mk(seq: usize, content: &str, heading: Option<&str>) -> Chunk {
+        let meta = match heading {
+            Some(h) => json!({"heading": h}),
+            None => json!({}),
+        };
+        Chunk {
+            doc_id: "d".into(),
+            seq_num: seq,
+            original_content: content.to_string(),
+            embedded_content: content.to_string(),
+            metadata: meta,
+        }
+    }
+
+    /// Helper: invoke `HierarchicalSummaryChunker::group` without constructing
+    /// a real summarizer/base. Returns the group sizes for compact assertion.
+    fn group_sizes(grouping: HierarchicalGrouping, chunks: Vec<Chunk>) -> Vec<usize> {
+        // Build a minimal chunker by passing dummy base + summarizer. We never
+        // call `chunk()` — only `group()`.
+        struct NoopBase;
+        impl ChunkerImpl for NoopBase {
+            fn chunk(&self, _: &Document) -> Vec<Chunk> {
+                Vec::new()
+            }
+        }
+        struct NoopSum;
+        impl crate::summarizer::SummarizerImpl for NoopSum {
+            fn summarize(&self, _: &str, _: &serde_json::Value) -> anyhow::Result<String> {
+                Ok(String::new())
+            }
+        }
+        let chunker = HierarchicalSummaryChunker::new(
+            Box::new(NoopBase),
+            Box::new(NoopSum),
+            "passthrough",
+            grouping,
+        );
+        chunker.group(chunks).into_iter().map(|g| g.len()).collect()
+    }
+
+    #[test]
+    fn fixed_n_groups_with_leftover() {
+        let chunks: Vec<Chunk> = (0..7).map(|i| mk(i, "x", None)).collect();
+        let sizes = group_sizes(HierarchicalGrouping::FixedN(3), chunks);
+        assert_eq!(sizes, vec![3, 3, 1]);
+    }
+
+    #[test]
+    fn word_budget_starts_new_group_when_over() {
+        // Each chunk has 10 words; budget 25. Group 1 = 2 chunks (20 words),
+        // adding chunk 3 (10 more) would total 30 > 25 → new group.
+        let body = "one two three four five six seven eight nine ten";
+        let chunks: Vec<Chunk> = (0..5).map(|i| mk(i, body, None)).collect();
+        let sizes = group_sizes(HierarchicalGrouping::WordBudget(25), chunks);
+        assert_eq!(sizes, vec![2, 2, 1]);
+    }
+
+    #[test]
+    fn section_aware_groups_by_heading_change() {
+        let chunks = vec![
+            mk(0, "a1", Some("A")),
+            mk(1, "a2", Some("A")),
+            mk(2, "b1", Some("B")),
+            mk(3, "b2", Some("B")),
+            mk(4, "b3", Some("B")),
+            mk(5, "c1", Some("C")),
+        ];
+        let sizes = group_sizes(HierarchicalGrouping::SectionAware, chunks);
+        assert_eq!(sizes, vec![2, 3, 1]);
     }
 }
