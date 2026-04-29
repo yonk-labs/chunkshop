@@ -35,6 +35,27 @@ Pick one per cell. Structural and semantic chunkers can be wrapped by
 `neighbor_expand`; summary-layer chunkers wrap any base chunker in their own
 config.
 
+## At a glance
+
+All seven chunkers, side by side. The first five emit one chunk per chunk; the
+last two are layers that wrap any base chunker.
+
+| Chunker                 | One-line job                                                                | Best for                                                                | Key knobs                                                                                  | Layer? | Cross-language byte-identical? |
+|-------------------------|-----------------------------------------------------------------------------|-------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|:------:|:------------------------------:|
+| `sentence_aware`        | Pack paragraphs/sentences into ≤ `max_chars` chunks, paragraph-respecting   | Plain prose, no headings; code with `doc_type: code`                    | `doc_type` (`prose` / `code`), `max_chars`, `min_chars`                                    |   no   |               ✅               |
+| `hierarchy` (**default**) | Split on `#…` markdown headings; prepend the heading to `embedded_content` | Markdown with structure; the bakeoff-winning default                    | `prefix_heading`, `min_section_chars`, `max_chars`                                         |   no   |               ✅               |
+| `fixed_overlap`         | Sliding word window with stride                                             | QA / FAQ rows; baseline / control in any bakeoff                        | `window_words`, `step_words`                                                               |   no   |               ✅               |
+| `semantic`              | Boundary detection via sentence-embedding similarity drops                  | Transcripts, interviews, auto-captioned audio — anything with no headings | `boundary_model`, `breakpoint_percentile`, `min_sentences_per_chunk`, `max_chunk_chars`    |   no   |    algorithm-only (Rust drift ~1e-3 cos)    |
+| `neighbor_expand`       | Wraps any base; glues ±N neighbors into each row's `embedded_content`       | Boost top-k recall when answers span chunks                             | `base`, `window`                                                                           |  yes   |               ✅               |
+| `summary_embed`         | Wraps any base; replaces `embedded_content` with a summary                  | Match-summary / return-raw retrieval; long docs where raw embeds dilute | `base`, `summarizer` (external / callable / passthrough)                                    |  yes   |   ✅ (passthrough/external; Rust callable currently passthrough-only) |
+| `hierarchical_summary`  | Wraps any base; emits both fine **and** coarse summary rows per group       | Two-stage retrieval (match-coarse → return-fine); long-context corpora  | `base`, `summarizer`, `grouping` (`fixed_n` / `word_budget` / `section_aware`)              |  yes   |   ✅ (passthrough/external)    |
+
+For the two summary layers, see [`summaries.md`](summaries.md) for summarizer-mode
+details (external / callable / passthrough) and grouping strategies. For an
+empirical "which combo wins on **my** corpus" answer, see
+[`tutorial-bakeoff.md`](tutorial-bakeoff.md) and
+[`quickstart-bakeoff.md`](quickstart-bakeoff.md).
+
 ## Quick pick
 
 ```mermaid
