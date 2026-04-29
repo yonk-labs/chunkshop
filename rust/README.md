@@ -40,7 +40,7 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 |-----------|----------------------------------------------------------------|
 | source    | `files`, `json_corpus`, `pg_table`, `http`, `s3` (bucket + prefix + optional `endpoint_url` for minio / R2; via the `object_store` crate; standard AWS credential chain; `metadata` carries `{bucket, key, size, etag}`) — **5/5 sources ship in Rust** |
 | framer    | `identity` (default 1-to-1 pass-through), `heading_boundary` (split markdown on a configurable heading regex with preamble + title-from-heading), `regex_boundary` (split on arbitrary regex; optional title-pattern capture), `jsonpath` (parse content as JSON, walk dotted path with `*` for list iteration; configurable body/title sub-paths) — all byte-identical to Python |
-| chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`, `summary_embed`, `hierarchical_summary` (all byte-identical to Python), `semantic` (algorithm-parity; chunks NOT byte-identical due to MB-1's ~1e-3 ORT drift) — **all 6 Python chunkers ship in Rust**. Summarizer dispatch supports `passthrough` + `external` natively; `callable` mode currently recognizes only `chunkshop.summarizers.passthrough` — lede crate integration is a follow-up brief. |
+| chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`, `summary_embed`, `hierarchical_summary` (all byte-identical to Python), `semantic` (algorithm-parity; chunks NOT byte-identical due to MB-1's ~1e-3 ORT drift) — **all 6 Python chunkers ship in Rust**. Summarizer dispatch supports `passthrough` + `external` natively; `callable` mode recognizes `chunkshop.summarizers.passthrough` always, and `chunkshop.summarizers.lede` behind the `lede` cargo feature (`cargo build --features lede` pulls `lede` from crates.io). |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
 | extractor | `none` (default), `composite`, `rake_keywords` (hand-rolled RAKE + 150-word EN stopword list — algorithm-only parity), `lang_detect` (via `whatlang` crate, ISO 639-3 → 639-1 conversion — algorithm-only parity), `keybert_phrases` + `spacy_entities` (Python-only stubs that error at config-load) |
 | target    | pgvector table; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once on `ON CONFLICT`; `promote_metadata` jsonb-to-typed-column writes; HNSW index optional; concurrent-cell safe via schema-name advisory lock |
@@ -148,9 +148,7 @@ re-creates it under `mode: overwrite`.
 
 | Want                                            | Lift |
 |-------------------------------------------------|------|
-| Lede crate wiring for `callable` summarizer mode | Currently only `chunkshop.summarizers.passthrough` is recognized in Rust. Follow-up brief should pull `lede` from crates.io behind a feature flag and register `chunkshop.summarizers.lede`. |
-| Extractors                                      | Each is an independent pure-Rust port modulo Python-only deps (spaCy can't cross). |
-| Source: `s3`                                    | Needs `aws-sdk-s3`. |
+| Python-only extractors (`keybert_phrases`, `spacy_entities`) | Each needs a Rust-native NER / embedding-keyphrase implementation modulo Python-only deps (spaCy can't cross). |
 | Orchestrator                                    | Spawn N `chunkshop-rs ingest` subprocesses over N YAML configs. |
 
 ## License

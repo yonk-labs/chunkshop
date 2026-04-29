@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Rust: `lede` callable summarizer behind `lede` cargo feature.**
+  `cargo build --features lede` (or `cargo build --workspace --features lede`)
+  pulls `lede 0.3` from crates.io and registers
+  `module: chunkshop.summarizers.lede` in the Rust runtime's callable
+  summarizer dispatch. Default builds don't pull the dep — base
+  `chunkshop-rs` stays small. Kwargs `max_length` (default 500) and `mode`
+  (`"default"` / `"legacy"` / `"coverage"`, default `"default"`) match
+  Python's lede integration; extra kwargs are warn-and-ignored so future
+  upstream params don't trip old binaries. Without the feature, the
+  existing "module not registered" error now hints at `--features lede`.
+  Two feature-gated tests in `summarizer.rs`. Closes the only remaining
+  callable-summarizer gap on the Rust port.
+
 - **`chunkshop-rs` v0.1.0 MVP** (new `rust/` crate). Minimal Rust port that
   proves the cross-language wire-format claim: same YAML, same pgvector
   table, interchangeable chunk ordering. **In:** `files` source,

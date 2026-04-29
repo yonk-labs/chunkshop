@@ -38,3 +38,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 whatlang = "0.16"
 object_store = { version = "0.11", default-features = false, features = ["aws"] }
 futures = "0.3"
+lede = { version = "0.3", optional = true }
+
+[features]
+default = []
+# Enables the `chunkshop.summarizers.lede` callable summarizer module by
+# pulling the `lede` crate from crates.io. Build with: cargo build --features lede
+lede = ["dep:lede"]

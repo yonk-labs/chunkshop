@@ -94,17 +94,101 @@ impl CallableSummarizer {
     pub fn new(cfg: CallableSummarizerConfig) -> Result<Self> {
         let inner: Box<dyn SummarizerImpl> = match cfg.module.as_str() {
             "chunkshop.summarizers.passthrough" => Box::new(PassthroughSummarizer),
+            #[cfg(feature = "lede")]
+            "chunkshop.summarizers.lede" => Box::new(LedeSummarizer::from_kwargs(&cfg.kwargs)?),
             other => {
+                let lede_hint = if cfg!(feature = "lede") {
+                    String::new()
+                } else {
+                    " To enable the lede module, build with --features lede.".to_string()
+                };
                 return Err(anyhow!(
                     "callable summarizer: module {other:?} is not registered in the Rust \
-                     runtime. Built-in modules: \
-                     [\"chunkshop.summarizers.passthrough\"]. \
+                     runtime. Built-in modules: {modules}. \
                      Run this YAML on Python (where lede/sumy modules are registered) or \
-                     compile a custom chunkshop-rs binary that registers your summarizer."
+                     compile a custom chunkshop-rs binary that registers your summarizer.{hint}",
+                    modules = built_in_modules(),
+                    hint = lede_hint,
                 ));
             }
         };
         Ok(Self { cfg, inner })
+    }
+}
+
+fn built_in_modules() -> &'static str {
+    if cfg!(feature = "lede") {
+        "[\"chunkshop.summarizers.passthrough\", \"chunkshop.summarizers.lede\"]"
+    } else {
+        "[\"chunkshop.summarizers.passthrough\"]"
+    }
+}
+
+#[cfg(feature = "lede")]
+pub struct LedeSummarizer {
+    max_length: usize,
+    mode: lede::Mode,
+}
+
+#[cfg(feature = "lede")]
+impl LedeSummarizer {
+    /// Parse `max_length` (usize, default 500 to match Python's lede default)
+    /// and `mode` (string: "default" / "legacy" / "coverage", default "default")
+    /// from the YAML kwargs map. Extra kwargs are ignored with a tracing warn
+    /// so future lede knobs don't break old chunkshop-rs binaries.
+    pub fn from_kwargs(kwargs: &serde_json::Map<String, Value>) -> Result<Self> {
+        let max_length: usize = match kwargs.get("max_length") {
+            Some(Value::Number(n)) => n.as_u64().ok_or_else(|| {
+                anyhow!("callable summarizer (lede): max_length must be a positive integer")
+            })? as usize,
+            Some(other) => {
+                return Err(anyhow!(
+                    "callable summarizer (lede): max_length must be an integer, got {}",
+                    value_type_name(other)
+                ))
+            }
+            None => 500,
+        };
+        let mode = match kwargs.get("mode") {
+            Some(Value::String(s)) => match s.as_str() {
+                "default" => lede::Mode::Default,
+                "legacy" => lede::Mode::Legacy,
+                "coverage" => lede::Mode::Coverage,
+                other => {
+                    return Err(anyhow!(
+                        "callable summarizer (lede): unknown mode {other:?}. \
+                         Valid: \"default\", \"legacy\", \"coverage\"."
+                    ))
+                }
+            },
+            Some(other) => {
+                return Err(anyhow!(
+                    "callable summarizer (lede): mode must be a string, got {}",
+                    value_type_name(other)
+                ))
+            }
+            None => lede::Mode::Default,
+        };
+        // Warn-ignore extra kwargs so future lede params don't trip old binaries.
+        for key in kwargs.keys() {
+            if !matches!(key.as_str(), "max_length" | "mode") {
+                tracing::warn!(
+                    "callable summarizer (lede): ignoring unrecognized kwarg {key:?}"
+                );
+            }
+        }
+        Ok(Self { max_length, mode })
+    }
+}
+
+#[cfg(feature = "lede")]
+impl SummarizerImpl for LedeSummarizer {
+    fn summarize(&self, text: &str, _doc_metadata: &Value) -> Result<String> {
+        if text.trim().is_empty() {
+            return Ok(String::new());
+        }
+        let result = lede::summarize(text, self.max_length, self.mode);
+        Ok(result.summary)
     }
 }
 
@@ -177,7 +261,7 @@ mod tests {
     #[test]
     fn callable_unknown_module_errors_clearly() {
         let cfg = CallableSummarizerConfig {
-            module: "chunkshop.summarizers.lede".into(),
+            module: "chunkshop.summarizers.does_not_exist".into(),
             function: "summarize".into(),
             kwargs: serde_json::Map::new(),
         };
@@ -190,5 +274,64 @@ mod tests {
             "expected 'not registered' in error: {err}"
         );
         assert!(err.contains("passthrough"), "should list built-ins: {err}");
+        // When feature is OFF, error should hint at the feature flag.
+        // When feature is ON, lede is registered (this branch can't run).
+        #[cfg(not(feature = "lede"))]
+        assert!(
+            err.contains("--features lede"),
+            "expected feature-flag hint: {err}"
+        );
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn lede_callable_returns_summary_for_real_text() {
+        let mut kwargs = serde_json::Map::new();
+        kwargs.insert("max_length".into(), json!(120));
+        kwargs.insert("mode".into(), json!("default"));
+        let cfg = CallableSummarizerConfig {
+            module: "chunkshop.summarizers.lede".into(),
+            function: "summarize".into(),
+            kwargs,
+        };
+        let s = CallableSummarizer::new(cfg).expect("lede callable should construct");
+        let text = "The quick brown fox jumps over the lazy dog. \
+                    Pack my box with five dozen liquor jugs. \
+                    How vexingly quick daft zebras jump. \
+                    Sphinx of black quartz, judge my vow. \
+                    The five boxing wizards jump quickly. \
+                    Bright vixens jump; dozy fowl quack. \
+                    Quick wafting zephyrs vex bold Jim.";
+        let out = s.summarize(text, &json!({})).expect("summarize ok");
+        assert!(!out.is_empty(), "summary should be non-empty");
+        assert!(
+            out.chars().count() <= 120,
+            "summary should respect max_length=120, got {} chars: {out:?}",
+            out.chars().count()
+        );
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn lede_callable_errors_on_unknown_mode() {
+        let mut kwargs = serde_json::Map::new();
+        kwargs.insert("mode".into(), json!("bogus"));
+        let cfg = CallableSummarizerConfig {
+            module: "chunkshop.summarizers.lede".into(),
+            function: "summarize".into(),
+            kwargs,
+        };
+        let err = match CallableSummarizer::new(cfg) {
+            Ok(_) => panic!("expected error for unknown mode"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("unknown mode"),
+            "expected 'unknown mode' in error: {err}"
+        );
+        assert!(
+            err.contains("\"default\"") && err.contains("\"legacy\"") && err.contains("\"coverage\""),
+            "expected valid mode list in error: {err}"
+        );
     }
 }
