@@ -1,0 +1,25 @@
+'# NOTE': Top combo from bakeoff 'ntsb_bakeoff' (MRR=0.958, r@1=0.917). Point `source`
+  at your real corpus before running `chunkshop ingest`.
+cell_name: ntsb_bakeoff_recommended
+source:
+  type: files
+  glob: /home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md
+  id_from: stem
+  encoding: utf-8
+framer:
+  type: identity
+chunker:
+  type: hierarchy
+  prefix_heading: true
+  min_section_chars: 100
+  max_chars: 2000
+embedder:
+  type: fastembed
+  model_name: nomic-ai/nomic-embed-text-v1.5-Q
+  dim: 768
+  batch_size: 64
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: chunkshop_bakeoff_ntsb
+  table: ntsb_bakeoff_production
+  mode: overwrite

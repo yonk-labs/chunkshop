@@ -76,17 +76,18 @@ You already have a Postgres table called `sales_notes(id, body, updated_at, ...)
 Wire chunkshop's `pg_table` source straight at it with a sliding window:
 
 ```yaml
-# docs/samples/incremental-pg-table.yaml
+# docs/samples/incremental-pg-table/sample.yaml
 cell_name: sales_notes_incremental
 
 source:
   type: pg_table
   dsn_env: SALES_DB_DSN
+  schema: public
   table: sales_notes
   id_column: id
-  body_column: body
-  metadata_columns: [author, account_id, updated_at, deal_id]
-  where: "updated_at > NOW() - interval '15 minutes'"
+  content_column: body
+  title_column: subject
+  where: "updated_at > NOW() - interval '30 minutes'"
 
 framer: { type: identity }
 
@@ -96,15 +97,16 @@ chunker:
 
 embedder:
   type: fastembed
-  model_name: "Xenova/bge-small-en-v1.5"
-  quantization: int8
+  model_name: "Xenova/bge-small-en-v1.5-int8"
+  dim: 384
   threads: 2
+  batch_size: 64
 
 target:
   dsn_env: VECTORS_DB_DSN
   schema: rag
   table: notes_chunks
-  mode: append
+  mode: create_if_missing  # bootstrap the target on first run
   source_tag: sales_notes
   delete_orphans: true     # close the per-doc shrink gap
   hnsw: true
@@ -165,18 +167,27 @@ CREATE TABLE chunkshop.cursor (
 );
 ```
 
-A thin shell wrapper renders the YAML's `where` clause from the cursor, runs
-chunkshop, then bumps the cursor. See
-[`scripts/run_incremental_watermark.sh`](../scripts/run_incremental_watermark.sh).
+A thin Python wrapper renders the YAML's `where` clause from the cursor,
+runs chunkshop, then bumps the cursor. See
+[`scripts/run_incremental_watermark.py`](../scripts/run_incremental_watermark.py).
 
 ```bash
-./scripts/run_incremental_watermark.sh \
+python3 scripts/run_incremental_watermark.py \
   --source-tag sales_notes \
   --source-dsn-env SALES_DB_DSN \
   --target-dsn-env VECTORS_DB_DSN \
-  --config /etc/chunkshop/sales_notes_incremental.yaml \
-  --cursor-table chunkshop.cursor
+  --source-schema public --source-table sales_notes \
+  --updated-column updated_at \
+  --config docs/samples/incremental-pg-table/sample.yaml \
+  --cursor-schema chunkshop --cursor-table cursor
 ```
+
+The wrapper uses `pyyaml` (already a chunkshop dep) so multi-line block
+scalars and quoted strings in the source YAML round-trip cleanly. End-to-end
+demo: [`docs/samples/incremental-pg-table/run_demo.sh`](samples/incremental-pg-table/run_demo.sh) — sets up a fake source table,
+runs the wrapper twice, inserts a new row, runs again, prints the cursor
+state. Verified to produce the expected windowed-delta behavior on each
+re-run.
 
 The wrapper:
 
@@ -583,6 +594,6 @@ source:
 ```
 
 Plus:
-- the wrapper script: [`scripts/run_incremental_watermark.sh`](../scripts/run_incremental_watermark.sh)
-- the pg_table sample: [`docs/samples/incremental-pg-table.yaml`](samples/incremental-pg-table.yaml)
+- the wrapper script: [`scripts/run_incremental_watermark.py`](../scripts/run_incremental_watermark.py)
+- the pg_table sample (with runnable demo): [`docs/samples/incremental-pg-table/`](samples/incremental-pg-table/)
 - the inline-mode samples (Python + Rust): [`docs/samples/inline-mode/`](samples/inline-mode/)

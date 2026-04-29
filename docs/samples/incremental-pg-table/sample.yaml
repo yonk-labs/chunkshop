@@ -1,12 +1,15 @@
 # Incremental ingest from a Postgres source table.
 #
-# This config pairs with `scripts/run_incremental_watermark.sh` for the
+# This config pairs with `scripts/run_incremental_watermark.py` for the
 # watermarked-cursor flow (Pattern B in docs/incremental.md), or runs as-is
 # under cron for the simpler sliding-window flow (Pattern A).
 #
 # Sliding window: WHERE clause is rendered against `now()`.
 # Watermarked cursor: the wrapper rewrites the WHERE clause to use a state
 # table's last_seen_at before each run.
+#
+# This file is the reference shape. The runnable demo is `demo.yaml` next
+# to this file plus `setup_demo.sh` — see this directory's README.
 
 cell_name: sales_notes_incremental
 
@@ -18,12 +21,12 @@ source:
   id_column: id
   content_column: body
   title_column: subject
-  # Pattern A — sliding 15-minute window, no state.
+  # Pattern A — sliding 30-minute window, no state.
   # Make this strictly larger than your cron interval so clock drift / a
   # slow run never opens a gap. With cron `*/15 * * * *`, 30 minutes is safe.
   where: "updated_at > NOW() - interval '30 minutes'"
-  # Pattern B — the wrapper script overwrites the WHERE with:
-  #   "updated_at > '$last_seen' AND updated_at <= '$new_high'"
+  # Pattern B — the watermark wrapper overwrites the WHERE with:
+  #   "updated_at" > '$last_seen' AND "updated_at" <= '$new_high'
   # before invoking chunkshop.
 
 framer:
@@ -40,23 +43,22 @@ embedder:
   threads: 2
   batch_size: 64
 
+# `lang_detect` (requires `[lang]` extra) and `rake_keywords` (requires
+# `[extractors]`) are great in production. Dropping them here keeps the
+# reference YAML runnable with `uv sync --extra dev` alone.
 extractor:
-  type: composite
-  extractors:
-    - type: lang_detect
-    - type: rake_keywords
-      top_k: 8
+  type: none
 
 target:
   dsn_env: VECTORS_DB_DSN
   schema: rag
   table: notes_chunks
-  mode: append           # first run: switch to create_if_missing, then back to append
+  # `create_if_missing` works for both the first run and subsequent runs.
+  # Switch to `append` once you want strict pre-flight dim/source checks.
+  mode: create_if_missing
   source_tag: sales_notes
   delete_orphans: true   # close the per-doc shrink gap (see docs/incremental.md)
   hnsw: true
-  promote_metadata:
-    - { path: language,   type: text }
 
 runtime:
   omp_num_threads: 2

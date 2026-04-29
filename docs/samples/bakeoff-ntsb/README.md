@@ -21,6 +21,8 @@ embedder, ranks results against the gold doc per query, and writes:
 |---|---|
 | [`bakeoff-ntsb.yaml`](bakeoff-ntsb.yaml) | The matrix: 4 chunkers × 3 embedders = 12 combos |
 | [`gold-ntsb.yaml`](gold-ntsb.yaml) | 12 hand-written queries, each paired with its gold doc_id (file stem) |
+| [`sample-results.md`](sample-results.md) | Committed leaderboard from a verified run (full report.md from the bakeoff CLI) |
+| [`sample-recommended.yaml`](sample-recommended.yaml) | The cell for the top combo, ready to `chunkshop ingest` against your real corpus |
 
 The corpus path is hard-coded to:
 `/home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md`.
@@ -46,7 +48,11 @@ uv run --project python chunkshop bakeoff \
 the per-combo tables in Postgres for post-hoc inspection (default behavior
 drops the schema after the leaderboard is written).
 
-## Sample result (one verified run)
+## Sample result (verified run, committed)
+
+The full leaderboard + per-query detail lives in
+[`sample-results.md`](sample-results.md). The cell for the winning combo is
+in [`sample-recommended.yaml`](sample-recommended.yaml).
 
 ```
 Winner: hierarchy + nomic-ai/nomic-embed-text-v1.5-Q (MRR=0.958, r@1=0.917)

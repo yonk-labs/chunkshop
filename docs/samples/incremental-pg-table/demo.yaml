@@ -1,0 +1,50 @@
+# Demo variant of sample.yaml — points at a fake `sales_notes` table this
+# directory's setup_demo.sh creates in the chunkshop test database. Same
+# shape as sample.yaml; differences:
+#   - source.dsn_env / target.dsn_env both resolve to CHUNKSHOP_TEST_DSN
+#   - source.schema = chunkshop_pg_demo (created by setup_demo.sh)
+#   - target.schema = chunkshop_pg_demo_chunks
+#   - source.where uses a wide window so all demo rows match on first run
+#     (the watermark wrapper overwrites this anyway)
+
+cell_name: sales_notes_incremental_demo
+
+source:
+  type: pg_table
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_pg_demo
+  table: sales_notes
+  id_column: id
+  content_column: body
+  title_column: subject
+  where: "updated_at > NOW() - interval '24 hours'"
+
+framer:
+  type: identity
+
+chunker:
+  type: hierarchy
+  max_chars: 200       # demo size — see all the chunks the upserts touch
+
+embedder:
+  type: fastembed
+  model_name: "Xenova/bge-small-en-v1.5-int8"
+  dim: 384
+  threads: 2
+  batch_size: 64
+
+extractor:
+  type: none
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_pg_demo_chunks
+  table: notes_chunks
+  mode: create_if_missing
+  source_tag: sales_notes_demo
+  delete_orphans: true
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 25

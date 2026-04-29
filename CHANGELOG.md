@@ -2,19 +2,35 @@
 
 ## Unreleased
 
+### Changed
+
+- **`scripts/run_incremental_watermark` rewritten in Python.** The original
+  bash script's `sed`-fallback YAML editor would corrupt non-trivial source
+  blocks when `yq` wasn't on PATH. Replaced with a self-contained Python
+  script that uses `pyyaml` (already a chunkshop dep) — round-trips
+  multi-line block scalars and quoted strings cleanly. Same flag surface;
+  takes a `--chunkshop-bin` for environments where `chunkshop` isn't on PATH
+  (e.g. inside `uv run --project python ...`).
+- **`docs/samples/incremental-pg-table/` is now a directory** with a runnable
+  end-to-end demo (`run_demo.sh` + `setup_demo.sh` + `add_row.sh`). The
+  reference YAML moved to `docs/samples/incremental-pg-table/sample.yaml`;
+  link in `docs/incremental.md` updated.
+
 ### Added
 
 - **NTSB bakeoff sample (`docs/samples/bakeoff-ntsb/`).** Runnable end-to-end
   bakeoff against the 20-doc NTSB aviation-accident corpus shipped with
   `pg-raggraph/benchmarks/kg-rag-eval`. 4 chunkers × 3 embedders = 12 combos,
-  12 hand-written gold queries. One verified run produces a clean leaderboard
-  with `hierarchy + nomic-embed-v1.5-Q` winning at MRR=0.958. Demonstrates the
-  `chunkshop bakeoff` CLI end-to-end on a realistic third-party corpus
-  including all four non-semantic chunkers and three embedder sizes.
+  12 hand-written gold queries. The committed `sample-results.md` is the
+  full leaderboard from a verified run (`hierarchy + nomic-embed-v1.5-Q`
+  wins at MRR=0.958, 11/12 top-1 hits); `sample-recommended.yaml` is the
+  ready-to-run cell for the top combo. Demonstrates the `chunkshop bakeoff`
+  CLI end-to-end on a realistic third-party corpus including all four
+  non-semantic chunkers and three embedder sizes.
 
 - **Incremental ingest, deltas, and inline (library) mode.** Five new patterns
   documented in `docs/incremental.md` for hooking change-data into chunkshop:
-  cron + WHERE clause, watermarked cursor (with a `scripts/run_incremental_watermark.sh`
+  cron + WHERE clause, watermarked cursor (with a `scripts/run_incremental_watermark.py`
   wrapper), staging-file inbox, Postgres CDC → staging table, and object-storage
   events. Plus a third-party-tools guide covering schedulers (Airflow / Prefect /
   Dagster / Temporal / Kestra / cron / k8s CronJob), CDC taps (Debezium / pgoutput /
@@ -36,9 +52,12 @@
   for both languages in `docs/samples/inline-mode/` exercise insert / grow /
   shrink-with-orphan-cleanup / delete and produce identical chunk-count tables
   across Python and Rust.
-- **`docs/samples/incremental-pg-table.yaml`.** Reference YAML for Pattern A
-  (sliding-window) and Pattern B (watermarked) — the WHERE clause shown
-  inline; the wrapper script overwrites it before each run for Pattern B.
+- **`docs/samples/incremental-pg-table/`.** Reference YAML for Pattern A
+  (sliding-window) and Pattern B (watermarked) — plus `setup_demo.sh`,
+  `add_row.sh`, and `run_demo.sh` that exercise the full watermarked-cursor
+  flow end-to-end against a fake source table. Verified to produce 6 chunks
+  on first run (4 docs), no-op on a second identical run, and 1 new chunk
+  after inserting a fifth row.
 
 - **Rust: `lede` callable summarizer behind `lede` cargo feature.**
   `cargo build --features lede` (or `cargo build --workspace --features lede`)
