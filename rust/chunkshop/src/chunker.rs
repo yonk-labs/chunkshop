@@ -91,6 +91,117 @@ pub mod oversize {
     }
 }
 
+/// Apply the `if_oversize` fallback chain to a chunker's output. Mirrors
+/// Python `chunkers/_oversize.py:apply_if_oversize`. Brief SC-004, SC-005,
+/// SC-006, SC-008.
+///
+/// - When `ceiling` is `None`, returns `chunks` unchanged.
+/// - For each chunk, if `skip_check` returns true, the chunk is preserved
+///   verbatim (used by `hierarchical_summary` to exempt coarse rows — Brief
+///   SC-005).
+/// - When a chunk exceeds `ceiling` and `if_oversize_cfg` is set, the
+///   chunk's `original_content` is re-chunked through the fallback chunker,
+///   and each resulting sub-chunk is emitted with both `original_content`
+///   and `embedded_content` set to the fallback's output (the "decision D2"
+///   propagation rule documented in the Python helper).
+/// - When a chunk exceeds `ceiling` and `if_oversize_cfg` is None, the
+///   chunk is preserved as-is and the deduped `warner` (if provided) fires
+///   exactly once per cell (Brief SC-006).
+/// - Recursion guard: descends at most `oversize::MAX_RECURSION_DEPTH`
+///   levels (Brief SC-008). Beyond that, returns `OversizeError::Recursion`.
+pub fn apply_if_oversize(
+    chunks: Vec<Chunk>,
+    ceiling: Option<usize>,
+    if_oversize_cfg: Option<&ChunkerConfig>,
+    chunker_name: &str,
+    document: &Document,
+    depth: usize,
+    skip_check: Option<&dyn Fn(&Chunk) -> bool>,
+    warner: Option<&oversize::DedupedWarner>,
+) -> Result<Vec<Chunk>, oversize::OversizeError> {
+    if depth > oversize::MAX_RECURSION_DEPTH {
+        return Err(oversize::OversizeError::Recursion {
+            chunker: chunker_name.to_string(),
+        });
+    }
+    let Some(ceiling) = ceiling else {
+        return Ok(chunks);
+    };
+    let mut out: Vec<Chunk> = Vec::new();
+    let mut seq = 0usize;
+    for c in chunks {
+        if let Some(f) = skip_check {
+            if f(&c) {
+                out.push(Chunk { seq_num: seq, ..c });
+                seq += 1;
+                continue;
+            }
+        }
+        if !oversize::is_oversize(&c, ceiling) {
+            out.push(Chunk { seq_num: seq, ..c });
+            seq += 1;
+            continue;
+        }
+        let Some(if_cfg) = if_oversize_cfg else {
+            if let Some(w) = warner {
+                let len_chars = c
+                    .embedded_content
+                    .chars()
+                    .count()
+                    .max(c.original_content.chars().count());
+                w.warn_once(len_chars);
+            }
+            out.push(Chunk { seq_num: seq, ..c });
+            seq += 1;
+            continue;
+        };
+        // D2 rule: re-chunk `original_content`; copy fallback output to both
+        // text fields of each replacement chunk.
+        let synth_doc = Document {
+            id: c.doc_id.clone(),
+            content: c.original_content.clone(),
+            title: document.title.clone(),
+            metadata: document.metadata.clone(),
+        };
+        let fallback = crate::runner::build_chunker(if_cfg.clone()).map_err(|_| {
+            oversize::OversizeError::Recursion {
+                chunker: chunker_name.to_string(),
+            }
+        })?;
+        let sub_raw = fallback.chunk(&synth_doc);
+        let nested_ceiling = if_cfg.effective_max_chars();
+        let nested_cfg = if_cfg.if_oversize();
+        let sub = apply_if_oversize(
+            sub_raw,
+            nested_ceiling,
+            nested_cfg,
+            "fallback",
+            &synth_doc,
+            depth + 1,
+            None,
+            warner,
+        )?;
+        for sc in sub {
+            // Merge: parent metadata first, fallback's keys override.
+            let mut merged = c.metadata.as_object().cloned().unwrap_or_default();
+            if let Some(sub_obj) = sc.metadata.as_object() {
+                for (k, v) in sub_obj.iter() {
+                    merged.insert(k.clone(), v.clone());
+                }
+            }
+            out.push(Chunk {
+                doc_id: c.doc_id.clone(),
+                seq_num: seq,
+                original_content: sc.original_content.clone(),
+                embedded_content: sc.original_content.clone(),
+                metadata: serde_json::Value::Object(merged),
+            });
+            seq += 1;
+        }
+    }
+    Ok(out)
+}
+
 /// Chunk emitted by the chunker. `embedded_content` is what gets embedded;
 /// `original_content` is retained for grep / audit.
 #[derive(Debug, Clone)]
@@ -104,11 +215,19 @@ pub struct Chunk {
 
 pub struct SentenceAwareChunker {
     cfg: SentenceAwareChunkerConfig,
+    /// Per-cell deduped warner. `None` when the chunker has no effective
+    /// ceiling (defensive — `SentenceAwareChunkerConfig` always carries
+    /// `max_chars`, so this is always `Some` in practice).
+    warner: Option<oversize::DedupedWarner>,
 }
 
 impl SentenceAwareChunker {
     pub fn new(cfg: SentenceAwareChunkerConfig) -> Self {
-        Self { cfg }
+        let warner = Some(oversize::DedupedWarner::new(
+            "sentence_aware",
+            cfg.max_chars,
+        ));
+        Self { cfg, warner }
     }
 
     pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
@@ -117,7 +236,7 @@ impl SentenceAwareChunker {
         } else {
             split_prose(&doc.content, self.cfg.max_chars, self.cfg.min_chars)
         };
-        splits
+        let chunks: Vec<Chunk> = splits
             .into_iter()
             .enumerate()
             .map(|(i, text)| Chunk {
@@ -127,7 +246,18 @@ impl SentenceAwareChunker {
                 embedded_content: text,
                 metadata: json!({ "strategy": "sentence_aware" }),
             })
-            .collect()
+            .collect();
+        apply_if_oversize(
+            chunks,
+            Some(self.cfg.max_chars),
+            self.cfg.if_oversize.as_deref(),
+            "sentence_aware",
+            doc,
+            0,
+            None,
+            self.warner.as_ref(),
+        )
+        .expect("if_oversize recursion")
     }
 }
 
@@ -368,11 +498,13 @@ fn split_sentences(text: &str, max_chars: usize) -> Vec<String> {
 /// embedder.
 pub struct HierarchyChunker {
     cfg: HierarchyChunkerConfig,
+    warner: Option<oversize::DedupedWarner>,
 }
 
 impl HierarchyChunker {
     pub fn new(cfg: HierarchyChunkerConfig) -> Self {
-        Self { cfg }
+        let warner = Some(oversize::DedupedWarner::new("hierarchy", cfg.max_chars));
+        Self { cfg, warner }
     }
 
     pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
@@ -390,42 +522,54 @@ impl HierarchyChunker {
             })
             .collect();
 
-        if headings.is_empty() {
+        let chunks = if headings.is_empty() {
             let body = text.trim();
             if body.is_empty() {
-                return Vec::new();
-            }
-            let title = doc.title.clone().unwrap_or_default();
-            return self.emit_section_chunks(body, &title, &doc.id, 0);
-        }
-
-        let mut chunks: Vec<Chunk> = Vec::new();
-
-        if headings[0].0 > 0 {
-            let body = text[..headings[0].0].trim();
-            if body.chars().count() >= self.cfg.min_section_chars {
-                let title = doc.title.clone().unwrap_or_default();
-                let start_seq = chunks.len();
-                chunks.extend(self.emit_section_chunks(body, &title, &doc.id, start_seq));
-            }
-        }
-
-        for (i, (_h_start, h_end, h_text)) in headings.iter().enumerate() {
-            let start = *h_end;
-            let end = if i + 1 < headings.len() {
-                headings[i + 1].0
+                Vec::new()
             } else {
-                text.len()
-            };
-            let body = text[start..end].trim();
-            if body.chars().count() < self.cfg.min_section_chars {
-                continue;
+                let title = doc.title.clone().unwrap_or_default();
+                self.emit_section_chunks(body, &title, &doc.id, 0)
             }
-            let start_seq = chunks.len();
-            chunks.extend(self.emit_section_chunks(body, h_text, &doc.id, start_seq));
-        }
+        } else {
+            let mut chunks: Vec<Chunk> = Vec::new();
 
-        chunks
+            if headings[0].0 > 0 {
+                let body = text[..headings[0].0].trim();
+                if body.chars().count() >= self.cfg.min_section_chars {
+                    let title = doc.title.clone().unwrap_or_default();
+                    let start_seq = chunks.len();
+                    chunks.extend(self.emit_section_chunks(body, &title, &doc.id, start_seq));
+                }
+            }
+
+            for (i, (_h_start, h_end, h_text)) in headings.iter().enumerate() {
+                let start = *h_end;
+                let end = if i + 1 < headings.len() {
+                    headings[i + 1].0
+                } else {
+                    text.len()
+                };
+                let body = text[start..end].trim();
+                if body.chars().count() < self.cfg.min_section_chars {
+                    continue;
+                }
+                let start_seq = chunks.len();
+                chunks.extend(self.emit_section_chunks(body, h_text, &doc.id, start_seq));
+            }
+            chunks
+        };
+
+        apply_if_oversize(
+            chunks,
+            Some(self.cfg.max_chars),
+            self.cfg.if_oversize.as_deref(),
+            "hierarchy",
+            doc,
+            0,
+            None,
+            self.warner.as_ref(),
+        )
+        .expect("if_oversize recursion")
     }
 
     fn emit_section_chunks(
@@ -490,6 +634,7 @@ impl ChunkerImpl for HierarchyChunker {
 /// Each chunk carries `metadata.start_word` and `metadata.n_words`.
 pub struct FixedOverlapChunker {
     cfg: FixedOverlapChunkerConfig,
+    warner: Option<oversize::DedupedWarner>,
 }
 
 impl FixedOverlapChunker {
@@ -499,7 +644,10 @@ impl FixedOverlapChunker {
                 "window_words and step_words must be positive"
             ));
         }
-        Ok(Self { cfg })
+        let warner = cfg
+            .max_chars
+            .map(|m| oversize::DedupedWarner::new("fixed_overlap", m));
+        Ok(Self { cfg, warner })
     }
 
     pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
@@ -530,7 +678,17 @@ impl FixedOverlapChunker {
             }
             i += step;
         }
-        chunks
+        apply_if_oversize(
+            chunks,
+            self.cfg.max_chars,
+            self.cfg.if_oversize.as_deref(),
+            "fixed_overlap",
+            doc,
+            0,
+            None,
+            self.warner.as_ref(),
+        )
+        .expect("if_oversize recursion")
     }
 }
 
@@ -548,15 +706,32 @@ impl ChunkerImpl for FixedOverlapChunker {
 pub struct NeighborExpandChunker {
     window: usize,
     base: Box<dyn ChunkerImpl + Send + Sync>,
+    /// Resolved effective ceiling: explicit `max_chars` on the wrapper, else
+    /// `base.effective_max_chars()`. None when no enforcement applies.
+    effective_ceiling: Option<usize>,
+    if_oversize_cfg: Option<ChunkerConfig>,
+    warner: Option<oversize::DedupedWarner>,
 }
 
 impl NeighborExpandChunker {
-    /// Construct a wrapper around `base` with the given window size. The full
-    /// `NeighborExpandChunkerConfig` lives in YAML; the runner extracts the
-    /// `base` ChunkerConfig and recursively builds it before constructing
-    /// this wrapper.
-    pub fn new(window: usize, base: Box<dyn ChunkerImpl + Send + Sync>) -> Self {
-        Self { window, base }
+    /// Construct a wrapper around `base` with the given window size. The
+    /// runner builds `base` recursively from `NeighborExpandChunkerConfig.base`
+    /// then passes resolved `effective_ceiling` and `if_oversize_cfg` here.
+    pub fn new(
+        window: usize,
+        base: Box<dyn ChunkerImpl + Send + Sync>,
+        effective_ceiling: Option<usize>,
+        if_oversize_cfg: Option<ChunkerConfig>,
+    ) -> Self {
+        let warner = effective_ceiling
+            .map(|m| oversize::DedupedWarner::new("neighbor_expand", m));
+        Self {
+            window,
+            base,
+            effective_ceiling,
+            if_oversize_cfg,
+            warner,
+        }
     }
 
     pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
@@ -589,7 +764,17 @@ impl NeighborExpandChunker {
                 metadata: serde_json::Value::Object(merged),
             });
         }
-        out
+        apply_if_oversize(
+            out,
+            self.effective_ceiling,
+            self.if_oversize_cfg.as_ref(),
+            "neighbor_expand",
+            doc,
+            0,
+            None,
+            self.warner.as_ref(),
+        )
+        .expect("if_oversize recursion")
     }
 }
 
@@ -610,6 +795,7 @@ impl ChunkerImpl for NeighborExpandChunker {
 pub struct SemanticChunker {
     cfg: SemanticChunkerConfig,
     boundary: std::sync::Mutex<FastembedEmbedder>,
+    warner: Option<oversize::DedupedWarner>,
 }
 
 impl SemanticChunker {
@@ -651,13 +837,30 @@ impl SemanticChunker {
             additional_files: vec![],
         };
         let boundary = FastembedEmbedder::new(boundary_cfg)?;
+        let warner = Some(oversize::DedupedWarner::new("semantic", cfg.max_chunk_chars));
         Ok(Self {
             cfg,
             boundary: std::sync::Mutex::new(boundary),
+            warner,
         })
     }
 
     pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        let chunks = self.chunk_inner(doc);
+        apply_if_oversize(
+            chunks,
+            Some(self.cfg.max_chunk_chars),
+            self.cfg.if_oversize.as_deref(),
+            "semantic",
+            doc,
+            0,
+            None,
+            self.warner.as_ref(),
+        )
+        .expect("if_oversize recursion")
+    }
+
+    fn chunk_inner(&self, doc: &Document) -> Vec<Chunk> {
         if doc.content.is_empty() || doc.content.trim().is_empty() {
             return Vec::new();
         }
@@ -826,6 +1029,9 @@ pub struct SummaryEmbedChunker {
     base: Box<dyn ChunkerImpl + Send + Sync>,
     summarizer: Box<dyn crate::summarizer::SummarizerImpl>,
     mode: &'static str,
+    effective_ceiling: Option<usize>,
+    if_oversize_cfg: Option<ChunkerConfig>,
+    warner: Option<oversize::DedupedWarner>,
 }
 
 impl SummaryEmbedChunker {
@@ -833,8 +1039,19 @@ impl SummaryEmbedChunker {
         base: Box<dyn ChunkerImpl + Send + Sync>,
         summarizer: Box<dyn crate::summarizer::SummarizerImpl>,
         mode: &'static str,
+        effective_ceiling: Option<usize>,
+        if_oversize_cfg: Option<ChunkerConfig>,
     ) -> Self {
-        Self { base, summarizer, mode }
+        let warner = effective_ceiling
+            .map(|m| oversize::DedupedWarner::new("summary_embed", m));
+        Self {
+            base,
+            summarizer,
+            mode,
+            effective_ceiling,
+            if_oversize_cfg,
+            warner,
+        }
     }
 
     pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
@@ -868,7 +1085,17 @@ impl SummaryEmbedChunker {
                 metadata: serde_json::Value::Object(meta),
             });
         }
-        out
+        apply_if_oversize(
+            out,
+            self.effective_ceiling,
+            self.if_oversize_cfg.as_ref(),
+            "summary_embed",
+            doc,
+            0,
+            None,
+            self.warner.as_ref(),
+        )
+        .expect("if_oversize recursion")
     }
 }
 
@@ -886,6 +1113,9 @@ pub struct HierarchicalSummaryChunker {
     summarizer: Box<dyn crate::summarizer::SummarizerImpl>,
     mode: &'static str,
     grouping: HierarchicalGrouping,
+    effective_ceiling: Option<usize>,
+    if_oversize_cfg: Option<ChunkerConfig>,
+    warner: Option<oversize::DedupedWarner>,
 }
 
 /// Internal grouping handle — owns just the params it needs (no config types).
@@ -901,12 +1131,19 @@ impl HierarchicalSummaryChunker {
         summarizer: Box<dyn crate::summarizer::SummarizerImpl>,
         mode: &'static str,
         grouping: HierarchicalGrouping,
+        effective_ceiling: Option<usize>,
+        if_oversize_cfg: Option<ChunkerConfig>,
     ) -> Self {
+        let warner = effective_ceiling
+            .map(|m| oversize::DedupedWarner::new("hierarchical_summary", m));
         Self {
             base,
             summarizer,
             mode,
             grouping,
+            effective_ceiling,
+            if_oversize_cfg,
+            warner,
         }
     }
 
@@ -989,7 +1226,26 @@ impl HierarchicalSummaryChunker {
             });
             seq += 1;
         }
-        out
+        // Brief SC-005: coarse rows are exempt from the oversize check —
+        // they preserve 1-per-group structure even when large. Pass a
+        // skip_check that returns true for `granularity == "coarse"`.
+        let skip = |c: &Chunk| {
+            c.metadata
+                .get("granularity")
+                .and_then(|v| v.as_str())
+                == Some("coarse")
+        };
+        apply_if_oversize(
+            out,
+            self.effective_ceiling,
+            self.if_oversize_cfg.as_ref(),
+            "hierarchical_summary",
+            doc,
+            0,
+            Some(&skip),
+            self.warner.as_ref(),
+        )
+        .expect("if_oversize recursion")
     }
 
     fn group(&self, chunks: Vec<Chunk>) -> Vec<Vec<Chunk>> {
@@ -1244,6 +1500,8 @@ mod tests {
             Box::new(NoopSum),
             "passthrough",
             grouping,
+            None,
+            None,
         );
         chunker.group(chunks).into_iter().map(|g| g.len()).collect()
     }

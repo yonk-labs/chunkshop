@@ -72,7 +72,7 @@ fn make_base() -> Box<dyn ChunkerImpl + Send + Sync> {
 fn make_chunker(grouping: HierarchicalGrouping) -> HierarchicalSummaryChunker {
     let summarizer_cfg = SummarizerConfig::Passthrough(PassthroughSummarizerConfig::default());
     let summarizer = build_summarizer(&summarizer_cfg).expect("build summarizer");
-    HierarchicalSummaryChunker::new(make_base(), summarizer, "passthrough", grouping)
+    HierarchicalSummaryChunker::new(make_base(), summarizer, "passthrough", grouping, None, None)
 }
 
 #[test]

@@ -87,7 +87,7 @@ fn rust_summary_embed_passthrough_matches_python() {
 
     let summarizer_cfg = SummarizerConfig::Passthrough(PassthroughSummarizerConfig::default());
     let summarizer = build_summarizer(&summarizer_cfg).expect("build summarizer");
-    let chunker = SummaryEmbedChunker::new(make_base_chunker(), summarizer, "passthrough");
+    let chunker = SummaryEmbedChunker::new(make_base_chunker(), summarizer, "passthrough", None, None);
 
     let doc = Document {
         id: r.doc_id.clone(),
@@ -112,7 +112,7 @@ fn rust_summary_embed_external_matches_python() {
         field: "summary".to_string(),
     });
     let summarizer = build_summarizer(&summarizer_cfg).expect("build summarizer");
-    let chunker = SummaryEmbedChunker::new(make_base_chunker(), summarizer, "external");
+    let chunker = SummaryEmbedChunker::new(make_base_chunker(), summarizer, "external", None, None);
 
     let doc = Document {
         id: r.doc_id.clone(),

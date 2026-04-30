@@ -59,7 +59,7 @@ fn rust_neighbor_expand_chunks_match_python() {
         max_chars: r.config.base.max_chars,
         if_oversize: None,
     });
-    let chunker = NeighborExpandChunker::new(r.config.window, Box::new(base));
+    let chunker = NeighborExpandChunker::new(r.config.window, Box::new(base), None, None);
 
     let doc = Document {
         id: r.doc_id.clone(),
