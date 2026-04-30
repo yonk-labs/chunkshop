@@ -43,11 +43,24 @@ def load_chunker(
 
     For nested chunkers (neighbor_expand, summary_embed, hierarchical_summary),
     `main_embedder` and `shared_boundary_model` propagate to the inner call.
+
+    NEW in 0.3.2: chunkers may receive a `build_chunker` callable so they can
+    construct their `if_oversize` fallback at chunk-time. The callable is
+    curried with `main_embedder` and `shared_boundary_model` so nested
+    chunkers see the same embedder context. Currently only FixedOverlapChunker
+    accepts this kwarg; the other chunkers gain it in subsequent tasks.
     """
+    def _build(inner_cfg: ChunkerConfig) -> Chunker:
+        return load_chunker(
+            inner_cfg,
+            main_embedder=main_embedder,
+            shared_boundary_model=shared_boundary_model,
+        )
+
     if isinstance(cfg, SentCfg):
         return SentenceAwareChunker(cfg)
     if isinstance(cfg, FixedCfg):
-        return FixedOverlapChunker(cfg)
+        return FixedOverlapChunker(cfg, build_chunker=_build)
     if isinstance(cfg, HierCfg):
         return HierarchyChunker(cfg)
     if isinstance(cfg, NeighborCfg):
