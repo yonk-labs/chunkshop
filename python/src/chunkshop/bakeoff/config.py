@@ -88,6 +88,11 @@ class ComboResult(_Base):
     table: str
     ingest_chunks: int
     ingest_wall_seconds: float
+    # Subset of ingest_wall_seconds spent inside the embedder. Lets the
+    # leaderboard distinguish "this combo is slow because of the embedder"
+    # from "this combo is slow because of the chunker / sink". 0.0 if the
+    # embedder didn't track timing.
+    ingest_embed_seconds: float = 0.0
     aggregate: dict[str, float]
     per_query: list[dict[str, Any]]
 
@@ -102,3 +107,9 @@ class BakeoffResults(_Base):
     n_combos: int
     combos: list[ComboResult]
     gold_queries: list[dict[str, str]]
+    # Wall time per unique embedder spent embedding all gold queries during
+    # the scoring phase. Indicative of query-time latency at production
+    # scale: the value scaled by your expected QPS predicts CPU cost.
+    # Keys are embedder_key (same as ComboResult.embedder_key); values are
+    # seconds for embedding all `n_queries` queries in one batch.
+    query_embed_seconds_by_embedder: dict[str, float] = {}

@@ -31,7 +31,8 @@ def write_report_md(
     ranked = sorted(results.combos, key=lambda c: -c.aggregate.get("mrr", 0))
 
     header_cols = " | ".join(f"r@{k}" for k in cfg.scoring.k)
-    sep_cells = "|".join(["---"] * (len(cfg.scoring.k) + 4))
+    # Columns: # | Chunker | Embedder | r@k... | MRR | chunks | ingest_s | embed_s
+    sep_cells = "|".join(["---"] * (len(cfg.scoring.k) + 7))
 
     lines = [
         f"# Bakeoff report: {results.run_name}",
@@ -43,7 +44,7 @@ def write_report_md(
         "",
         "## Leaderboard (sorted by MRR)",
         "",
-        f"| # | Chunker | Embedder | {header_cols} | MRR |",
+        f"| # | Chunker | Embedder | {header_cols} | MRR | chunks | ingest_s | embed_s |",
         f"|{sep_cells}|",
     ]
     for i, c in enumerate(ranked, start=1):
@@ -52,7 +53,8 @@ def write_report_md(
         lines.append(
             f"| {i} | `{c.chunker_label}` | `{c.embedder_label}` | "
             + " | ".join(rk)
-            + f" | {mrr} |"
+            + f" | {mrr} | {c.ingest_chunks} | {c.ingest_wall_seconds:.2f} | "
+            f"{c.ingest_embed_seconds:.2f} |"
         )
 
     # Per-query detail: top-1 doc_id per combo, one row per (combo, query).
@@ -71,6 +73,29 @@ def write_report_md(
                 f"{pq['query']} | `{pq['gold_doc_id']}` | "
                 f"`{top1}` | {pq.get('mrr', 0):.3f} |"
             )
+
+    # Query-time embedding cost. Each unique embedder embeds all gold
+    # queries once during scoring; the wall time is a proxy for the
+    # production query-time latency you'd see at scale.
+    if results.query_embed_seconds_by_embedder:
+        n = max(results.n_queries, 1)
+        lines += [
+            "",
+            "## Query-time embedding cost",
+            "",
+            f"Wall time to embed all {results.n_queries} gold queries, per "
+            "unique embedder. At production scale this scales by your "
+            "expected QPS — useful for choosing between a slower-but-better "
+            "embedder and a faster-but-worse one.",
+            "",
+            "| Embedder | total_s | per_query_ms |",
+            "|---|---|---|",
+        ]
+        for k, total in sorted(
+            results.query_embed_seconds_by_embedder.items(), key=lambda kv: kv[1]
+        ):
+            per_q_ms = (total / n) * 1000.0
+            lines.append(f"| `{k}` | {total:.3f} | {per_q_ms:.1f} |")
 
     # Honesty note scaled to n_queries. Load-bearing — never drop this.
     n = max(results.n_queries, 1)

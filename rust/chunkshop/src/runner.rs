@@ -103,6 +103,10 @@ pub struct CellResult {
     pub docs_processed: usize,
     pub chunks_written: usize,
     pub wall_seconds: f64,
+    /// Wall time spent inside the embedder's `embed()` calls. Subset of
+    /// `wall_seconds`; the rest covers chunking, extraction, sink writes,
+    /// source iteration. Mirrors Python's `CellResult.embed_seconds`.
+    pub embed_seconds: f64,
 }
 
 pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
@@ -202,11 +206,13 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     }
 
     let wall = start.elapsed().as_secs_f64();
-    info!(cell = %cfg.cell_name, docs = docs_processed, chunks = chunks_written, wall = wall, "cell DONE");
+    let embed_seconds = embedder.embed_seconds();
+    info!(cell = %cfg.cell_name, docs = docs_processed, chunks = chunks_written, wall = wall, embed = embed_seconds, "cell DONE");
     Ok(CellResult {
         cell_name: cfg.cell_name,
         docs_processed,
         chunks_written,
         wall_seconds: wall,
+        embed_seconds,
     })
 }

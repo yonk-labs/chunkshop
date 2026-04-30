@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Added
+
+- **Bakeoff leaderboard now surfaces speed-vs-quality.** Three new
+  signals in the report:
+  - `chunks` column: how many chunks each combo wrote
+  - `ingest_s` column: total cell wall time (already tracked, finally
+    visible)
+  - `embed_s` column: subset of `ingest_s` spent specifically inside
+    the embedder. Distinguishes "this combo is slow because of the
+    embedder" from "slow because of the chunker / sink"
+  - New "Query-time embedding cost" section: per-embedder wall time to
+    embed all gold queries. At production scale this scales by your
+    expected QPS — useful for choosing between a slower-but-better
+    embedder and a faster-but-worse one. Format: `total_s` and
+    `per_query_ms` per unique embedder.
+- **`embed_seconds` cumulative accessor** on the embedder
+  (Python: `FastembedProvider.embed_seconds`, Rust:
+  `FastembedEmbedder::embed_seconds()`). Plumbed through `CellResult`
+  → `ComboResult` so the bakeoff captures it without instrumenting
+  inside `run_cell`.
+- **`threads:` in YAML now respected by the user-defined Rust path.**
+  Previously the Xenova int8 + BYO Rust path hardcoded
+  `with_intra_threads(1)` (load-bearing for bit-exact parity but
+  bad UX in production). Now defaults to 1, but a user-supplied
+  `threads: 4` is honored — 2-4× faster on multi-core boxes for
+  models where bit-exact parity isn't required. The
+  `tests/embedding_parity.rs` parity check still runs at threads=1
+  to preserve the bit-near-exact envelope.
+
 ### Documentation
 
 - **`docs/embedder-catalogue.md`** — user-facing model catalogue.
@@ -12,9 +41,10 @@
   uses external-data ONNX), dim/max_tokens/precision/pooling per model,
   ONNX file-size table, "what fits in N GB RAM" guidance, int8
   quantization explainer (why we use it, what it costs, what it saves).
-- **`docs/samples/embedder-byo-large/`** — runnable companion sample
-  using BGE-large-int8 (1024 dim, ~340 MB). Verified end-to-end: 5 chunks
-  @ dim=1024 in both languages. Demonstrates BYO scales beyond default 768-dim.
+- **`docs/samples/embedder-byo/byo-large.yaml`** — runnable companion
+  to `byo.yaml` using BGE-large-int8 (1024 dim, ~340 MB). Verified
+  end-to-end: 5 chunks @ dim=1024 in both languages. Demonstrates BYO
+  scales beyond default 768-dim.
 - README + `docs/embedders.md` cross-link to the new catalogue.
 
 ### Added

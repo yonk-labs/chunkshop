@@ -97,6 +97,11 @@ pub struct ComboResult {
     pub table: String,
     pub ingest_chunks: i64,
     pub ingest_wall_seconds: f64,
+    /// Subset of `ingest_wall_seconds`: just the embedder. Distinguishes
+    /// "slow because of the embedder" from "slow because of the chunker /
+    /// sink". Mirrors Python's `ComboResult.ingest_embed_seconds`.
+    #[serde(default)]
+    pub ingest_embed_seconds: f64,
     pub aggregate: BTreeMap<String, f64>,
     pub per_query: Vec<PerQueryResult>,
 }
@@ -127,4 +132,9 @@ pub struct BakeoffResults {
     pub n_combos: usize,
     pub combos: Vec<ComboResult>,
     pub gold_queries: Vec<GoldQuery>,
+    /// Wall time per unique embedder spent embedding all gold queries
+    /// during scoring. Predicts query-time latency at production scale.
+    /// Mirrors Python's `query_embed_seconds_by_embedder`.
+    #[serde(default)]
+    pub query_embed_seconds_by_embedder: BTreeMap<String, f64>,
 }

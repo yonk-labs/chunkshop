@@ -155,18 +155,26 @@ def run_bakeoff(cfg: BakeoffConfig) -> BakeoffResults:
         n_chunks = _count_chunks(dsn, schema, table)
         ingest_meta.append(
             {"chunker": c, "embedder": e, "table": table,
-             "chunks": n_chunks, "wall_seconds": round(wall, 2)}
+             "chunks": n_chunks,
+             "wall_seconds": round(wall, 2),
+             # Subset of wall_seconds: just the embedder's portion.
+             "embed_seconds": round(getattr(res, "embed_seconds", 0.0), 2)}
         )
 
     # ----- Phase 2: embed gold queries once per embedder (not once per combo) -----
     # Two combos sharing an embedder share the same query vectors.
+    # Capture per-embedder query-embed wall time — that's a proxy for
+    # production query-time latency at scale.
     query_vecs_by_emb_key: dict[str, np.ndarray] = {}
+    query_embed_seconds_by_emb_key: dict[str, float] = {}
     for e in cfg.matrix.embedders:
         k = embedder_key(e)
         if k in query_vecs_by_emb_key:
             continue
         embedder = load_embedder(e)
+        t_qe = time.perf_counter()
         vecs = embedder.embed([g.query for g in gold])
+        query_embed_seconds_by_emb_key[k] = round(time.perf_counter() - t_qe, 3)
         query_vecs_by_emb_key[k] = vecs
 
     # ----- Phase 3: score every combo -----
@@ -203,6 +211,7 @@ def run_bakeoff(cfg: BakeoffConfig) -> BakeoffResults:
             table=table,
             ingest_chunks=meta["chunks"],
             ingest_wall_seconds=meta["wall_seconds"],
+            ingest_embed_seconds=meta["embed_seconds"],
             aggregate=agg,
             per_query=per_query,
         ))
@@ -215,4 +224,5 @@ def run_bakeoff(cfg: BakeoffConfig) -> BakeoffResults:
         n_combos=len(combo_results),
         combos=combo_results,
         gold_queries=[{"query": g.query, "gold_doc_id": g.gold_doc_id} for g in gold],
+        query_embed_seconds_by_embedder=query_embed_seconds_by_emb_key,
     )

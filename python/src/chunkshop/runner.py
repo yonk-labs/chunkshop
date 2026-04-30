@@ -22,6 +22,12 @@ class CellResult:
     docs_processed: int
     chunks_written: int
     wall_seconds: float
+    # Wall time spent inside the embedder's `embed()` calls. Subset of
+    # `wall_seconds`; the rest covers chunking, extraction, sink writes,
+    # source iteration. Helps the bakeoff distinguish "this combo is slow
+    # because of the embedder" from "this combo is slow for other reasons".
+    # 0.0 when the run errored before embedding started.
+    embed_seconds: float = 0.0
     error: Optional[str] = None
 
 
@@ -117,6 +123,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
             docs_processed=docs_processed,
             chunks_written=chunks_written,
             wall_seconds=wall,
+            embed_seconds=getattr(embedder, "embed_seconds", 0.0),
             error=None,
         )
     except Exception as exc:

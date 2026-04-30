@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import numpy as np
 from fastembed import TextEmbedding
 
@@ -16,6 +18,11 @@ class FastembedProvider:
     def __init__(self, cfg: Cfg):
         self.cfg = cfg
         self.dim = cfg.dim
+        # Cumulative wall time spent inside `embed()` calls. Used by run_cell
+        # and the bakeoff to break out the embedder's portion of total ingest
+        # wall time — answers "is this combo slow because of the embedder or
+        # because of the chunker/sink?"
+        self.embed_seconds: float = 0.0
         # threads=N caps ORT intra_op_num_threads at session init. Without this,
         # fastembed auto-detects and creates a pool sized to all cores, which
         # thrashes badly when running 4 workers concurrently on a shared box.
@@ -54,8 +61,10 @@ class FastembedProvider:
     def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.empty((0, self.dim), dtype=np.float32)
+        t0 = time.perf_counter()
         vecs = list(self._model.embed(texts, batch_size=self.cfg.batch_size))
         arr = np.stack(vecs).astype(np.float32)
+        self.embed_seconds += time.perf_counter() - t0
         if arr.shape[1] != self.dim:
             raise ValueError(
                 f"model {self.cfg.model_name} produced dim {arr.shape[1]}, "

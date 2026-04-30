@@ -47,8 +47,9 @@ pub fn write_report_md(
         .map(|k| format!("r@{k}"))
         .collect::<Vec<_>>()
         .join(" | ");
+    // Columns: # | Chunker | Embedder | r@k... | MRR | chunks | ingest_s | embed_s
     let sep_cells = std::iter::repeat("---")
-        .take(cfg.scoring.k.len() + 4)
+        .take(cfg.scoring.k.len() + 7)
         .collect::<Vec<_>>()
         .join("|");
 
@@ -62,7 +63,7 @@ pub fn write_report_md(
         String::new(),
         "## Leaderboard (sorted by MRR)".into(),
         String::new(),
-        format!("| # | Chunker | Embedder | {header_cols} | MRR |"),
+        format!("| # | Chunker | Embedder | {header_cols} | MRR | chunks | ingest_s | embed_s |"),
         format!("|{sep_cells}|"),
     ];
     for (i, c) in ranked.iter().enumerate() {
@@ -81,12 +82,15 @@ pub fn write_report_md(
             .collect();
         let mrr = fmt_f3(c.aggregate.get("mrr").copied().unwrap_or(0.0));
         lines.push(format!(
-            "| {n} | `{chunker}` | `{embedder}` | {rks} | {mrr} |",
+            "| {n} | `{chunker}` | `{embedder}` | {rks} | {mrr} | {chunks} | {ingest:.2} | {embed:.2} |",
             n = i + 1,
             chunker = c.chunker_label,
             embedder = c.embedder_label,
             rks = rk.join(" | "),
             mrr = mrr,
+            chunks = c.ingest_chunks,
+            ingest = c.ingest_wall_seconds,
+            embed = c.ingest_embed_seconds,
         ));
     }
 
@@ -114,6 +118,34 @@ pub fn write_report_md(
     }
 
     let n = results.n_queries.max(1) as f64;
+
+    // Query-time embedding cost: per-embedder wall time during scoring.
+    if !results.query_embed_seconds_by_embedder.is_empty() {
+        lines.push(String::new());
+        lines.push("## Query-time embedding cost".into());
+        lines.push(String::new());
+        lines.push(format!(
+            "Wall time to embed all {} gold queries, per unique embedder. \
+             At production scale this scales by your expected QPS — useful \
+             for choosing between a slower-but-better embedder and a \
+             faster-but-worse one.",
+            results.n_queries
+        ));
+        lines.push(String::new());
+        lines.push("| Embedder | total_s | per_query_ms |".into());
+        lines.push("|---|---|---|".into());
+        // Sort by total time ascending (fastest first).
+        let mut entries: Vec<(&String, &f64)> = results
+            .query_embed_seconds_by_embedder
+            .iter()
+            .collect();
+        entries.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
+        for (k, total) in entries {
+            let per_q_ms = (total / n) * 1000.0;
+            lines.push(format!("| `{k}` | {total:.3} | {per_q_ms:.1} |"));
+        }
+    }
+
     lines.push(String::new());
     lines.push("## Statistical power".into());
     lines.push(String::new());

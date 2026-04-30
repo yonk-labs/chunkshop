@@ -31,6 +31,10 @@ use crate::hf_cache::{fetch_user_defined_files, HfModelFiles};
 pub struct FastembedEmbedder {
     cfg: FastembedEmbedderConfig,
     backend: Backend,
+    /// Cumulative wall time spent inside `embed()`. Mirrors Python's
+    /// `FastembedProvider.embed_seconds`. Used by the bakeoff to break out
+    /// the embedder's portion of total cell wall time.
+    embed_seconds: f64,
 }
 
 enum Backend {
@@ -93,7 +97,10 @@ impl FastembedEmbedder {
             let repo = cfg.hf_repo.as_deref().expect("BYO repo present");
             let onnx_path = cfg.onnx_path.as_deref().expect("BYO onnx_path present");
             let pooling = parse_pooling(&cfg.pooling)?;
-            let runner = build_user_defined_runner(repo, onnx_path, pooling)?;
+            // Honor cfg.threads for BYO. Default 1 if unset — conservative
+            // for shared boxes, but users can opt into multi-thread.
+            let intra = cfg.threads.unwrap_or(1);
+            let runner = build_user_defined_runner(repo, onnx_path, pooling, intra)?;
             info!(
                 "embedder loaded (BYO, YAML-driven): {} (dim={}, repo={}, file={}, pooling={:?})",
                 cfg.model_name, cfg.dim, repo, onnx_path, pooling
@@ -101,11 +108,17 @@ impl FastembedEmbedder {
             return Ok(Self {
                 cfg,
                 backend: Backend::UserDefined(runner),
+                embed_seconds: 0.0,
             });
         }
 
         if let Some((repo, onnx_path)) = user_defined_source(&cfg.model_name) {
-            let runner = build_user_defined_runner(repo, onnx_path, Pooling::Cls)?;
+            // Hardcoded Xenova int8 path stays at intra_threads=1 by default
+            // for bit-near-exact parity vs Python (parity tests depend on
+            // this). YAML can override via `threads:` if user prioritizes
+            // speed and accepts the parity drift.
+            let intra = cfg.threads.unwrap_or(1);
+            let runner = build_user_defined_runner(repo, onnx_path, Pooling::Cls, intra)?;
             info!(
                 "embedder loaded (user-defined, bit-exact): {} (dim={}, repo={}, file={})",
                 cfg.model_name, cfg.dim, repo, onnx_path
@@ -113,6 +126,7 @@ impl FastembedEmbedder {
             return Ok(Self {
                 cfg,
                 backend: Backend::UserDefined(runner),
+                embed_seconds: 0.0,
             });
         }
 
@@ -127,7 +141,13 @@ impl FastembedEmbedder {
         Ok(Self {
             cfg,
             backend: Backend::Stock(model),
+            embed_seconds: 0.0,
         })
+    }
+
+    /// Cumulative wall time spent in `embed()` calls so far.
+    pub fn embed_seconds(&self) -> f64 {
+        self.embed_seconds
     }
 
     pub fn dim(&self) -> usize {
@@ -135,11 +155,13 @@ impl FastembedEmbedder {
     }
 
     /// Embed a batch of texts. Returns a flat `Vec<Vec<f32>>` ordered to match
-    /// the input. Verifies the output dim matches the config `dim`.
+    /// the input. Verifies the output dim matches the config `dim`. Tracks
+    /// cumulative wall time in `self.embed_seconds`.
     pub fn embed(&mut self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
+        let t0 = std::time::Instant::now();
         let vecs = match &mut self.backend {
             Backend::Stock(model) => {
                 let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
@@ -157,6 +179,7 @@ impl FastembedEmbedder {
                 out
             }
         };
+        self.embed_seconds += t0.elapsed().as_secs_f64();
         if let Some(first) = vecs.first() {
             if first.len() != self.cfg.dim {
                 return Err(anyhow!(
@@ -175,6 +198,7 @@ fn build_user_defined_runner(
     repo: &str,
     onnx_path: &str,
     pooling: Pooling,
+    intra_threads: usize,
 ) -> Result<UserDefinedRunner> {
     let HfModelFiles {
         onnx,
@@ -185,23 +209,18 @@ fn build_user_defined_runner(
     } = fetch_user_defined_files(repo, onnx_path)
         .with_context(|| format!("fetching user-defined files for {repo}"))?;
 
-    // `with_intra_threads(1)` is the load-bearing line for bit-exactness vs
-    // Python (which we run with `threads=1`). fastembed-rs's stock path
-    // hardcodes available_parallelism() and so produces CPU-count-dependent
-    // reductions. We commit to single-threaded here.
-    // ORT optimization level Level3 + intra_threads=1 — empirically the
-    // closest match to Python's onnxruntime defaults across input distributions
-    // we tested. See `tests/embedding_parity.rs` for the parity envelope.
-    // Strict bitwise equality is unreachable: Python's onnxruntime wheel and
-    // Rust's `ort` crate's bundled binary are independent ORT C++ builds and
-    // produce ULP-level (and occasionally larger) divergences on quantized
-    // matmul paths.
+    // intra_threads = 1 is the bit-exactness setting. Caller passes 1 by
+    // default for the Xenova int8 BGE bit-near-exact path (parity tests
+    // depend on it). For BYO mode with `threads: 4` in YAML, the caller
+    // passes 4 — bit-exactness isn't promised for arbitrary BYO models
+    // anyway, and multi-threaded inference is 2-4× faster on big batches.
+    // ORT optimization level Level3 stays the same regardless.
     let session = Session::builder()
         .map_err(|e| anyhow!("ort session builder: {e}"))?
         .with_optimization_level(GraphOptimizationLevel::Level3)
         .map_err(|e| anyhow!("ort with_optimization_level: {e}"))?
-        .with_intra_threads(1)
-        .map_err(|e| anyhow!("ort with_intra_threads(1): {e}"))?
+        .with_intra_threads(intra_threads)
+        .map_err(|e| anyhow!("ort with_intra_threads({intra_threads}): {e}"))?
         .commit_from_memory(&onnx)
         .map_err(|e| anyhow!("commit ONNX from memory for {repo}: {e}"))?;
 

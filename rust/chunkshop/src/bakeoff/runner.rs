@@ -230,6 +230,7 @@ pub async fn run_bakeoff_with_base(
         table: String,
         chunks: i64,
         wall_seconds: f64,
+        embed_seconds: f64,
     }
     let mut ingest_meta: Vec<IngestMeta> = Vec::with_capacity(combos_in.len());
 
@@ -241,7 +242,6 @@ pub async fn run_bakeoff_with_base(
             .await
             .with_context(|| format!("ingest failed for combo {table}"))?;
         let wall = t0.elapsed().as_secs_f64();
-        let _ = res; // CellResult fields don't carry the table; we count below
         let chunks = count_chunks(&dsn, schema, &table).await?;
         ingest_meta.push(IngestMeta {
             chunker: c.clone(),
@@ -249,12 +249,16 @@ pub async fn run_bakeoff_with_base(
             table,
             chunks,
             wall_seconds: (wall * 100.0).round() / 100.0,
+            embed_seconds: (res.embed_seconds * 100.0).round() / 100.0,
         });
     }
 
     // ----- Phase 2: embed gold queries once per unique embedder -----
+    // Capture wall time per embedder — that's a proxy for production
+    // query-time latency at scale.
     let mut query_vecs_by_emb_key: std::collections::HashMap<String, Vec<Vec<f32>>> =
         std::collections::HashMap::new();
+    let mut query_embed_seconds_by_emb_key: BTreeMap<String, f64> = BTreeMap::new();
     for e in &cfg.matrix.embedders {
         let k = embedder_key(e);
         if query_vecs_by_emb_key.contains_key(&k) {
@@ -262,7 +266,10 @@ pub async fn run_bakeoff_with_base(
         }
         let mut embedder = FastembedEmbedder::new(e.clone())?;
         let texts: Vec<String> = gold.iter().map(|g| g.query.clone()).collect();
+        let t_qe = Instant::now();
         let vecs = embedder.embed(texts)?;
+        let qe_seconds = (t_qe.elapsed().as_secs_f64() * 1000.0).round() / 1000.0;
+        query_embed_seconds_by_emb_key.insert(k.clone(), qe_seconds);
         query_vecs_by_emb_key.insert(k, vecs);
     }
 
@@ -300,6 +307,7 @@ pub async fn run_bakeoff_with_base(
             table: table.clone(),
             ingest_chunks: meta.chunks,
             ingest_wall_seconds: meta.wall_seconds,
+            ingest_embed_seconds: meta.embed_seconds,
             aggregate: agg,
             per_query,
         });
@@ -313,5 +321,6 @@ pub async fn run_bakeoff_with_base(
         n_combos: combo_results.len(),
         combos: combo_results,
         gold_queries: gold,
+        query_embed_seconds_by_embedder: query_embed_seconds_by_emb_key,
     })
 }

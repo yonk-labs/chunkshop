@@ -12,8 +12,16 @@ edits, same YAML works in both languages.
 
 | File | Role |
 |---|---|
-| [`byo.yaml`](byo.yaml) | The YAML, with the four BYO fields highlighted |
-| [`run_demo.sh`](run_demo.sh) | Verifies end-to-end from both languages |
+| [`byo.yaml`](byo.yaml) | Default demo: 384-dim mean-pooled MiniLM (~22 MB) |
+| [`byo-large.yaml`](byo-large.yaml) | Larger demo: 1024-dim CLS-pooled BGE-large int8 (~340 MB) — proves BYO scales |
+| [`run_demo.sh`](run_demo.sh) | Verifies `byo.yaml` end-to-end from both languages |
+
+Run the larger variant manually:
+```bash
+chunkshop ingest --config docs/samples/embedder-byo/byo-large.yaml
+./rust/target/release/chunkshop-rs ingest --config docs/samples/embedder-byo/byo-large.yaml
+```
+Both languages produce 5 chunks @ dim=1024 against `handbook-engineering.md`.
 
 ## The four BYO fields
 
