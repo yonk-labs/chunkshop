@@ -47,6 +47,8 @@ fn rust_fixed_overlap_chunks_match_python() {
     let cfg = FixedOverlapChunkerConfig {
         window_words: r.config.window_words,
         step_words: r.config.step_words,
+        max_chars: None,
+        if_oversize: None,
     };
     let doc = Document {
         id: r.doc_id.clone(),

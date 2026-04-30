@@ -58,6 +58,7 @@ fn rust_hierarchy_chunks_match_python() {
         prefix_heading: r.config.prefix_heading,
         min_section_chars: r.config.min_section_chars,
         max_chars: r.config.max_chars,
+        if_oversize: None,
     };
     let doc = Document {
         id: r.doc_id.clone(),

@@ -102,6 +102,7 @@ mod tests {
             prefix_heading: true,
             min_section_chars: 100,
             max_chars: 2000,
+            if_oversize: None,
         });
         assert_eq!(chunker_key(&h).unwrap(), "hierarchy");
 
@@ -109,12 +110,15 @@ mod tests {
             doc_type: "markdown".into(),
             max_chars: 2000,
             min_chars: 100,
+            if_oversize: None,
         });
         assert_eq!(chunker_key(&s).unwrap(), "sentence_aware");
 
         let f = ChunkerConfig::FixedOverlap(FixedOverlapChunkerConfig {
             window_words: 300,
             step_words: 150,
+            max_chars: None,
+            if_oversize: None,
         });
         assert_eq!(chunker_key(&f).unwrap(), "fixed_overlap_w300_s150");
 
@@ -123,8 +127,11 @@ mod tests {
                 prefix_heading: true,
                 min_section_chars: 100,
                 max_chars: 2000,
+                if_oversize: None,
             })),
             window: 1,
+            max_chars: None,
+            if_oversize: None,
         });
         assert_eq!(
             chunker_key(&n).unwrap(),
@@ -138,6 +145,7 @@ mod tests {
             prefix_heading: true,
             min_section_chars: 100,
             max_chars: 2000,
+            if_oversize: None,
         });
         assert_eq!(
             combo_table(&h, &emb("Xenova/bge-small-en-v1.5-int8")).unwrap(),

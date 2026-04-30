@@ -17,12 +17,79 @@ use regex::Regex;
 use serde_json::json;
 
 use crate::config::{
-    FastembedEmbedderConfig, FixedOverlapChunkerConfig, HierarchyChunkerConfig,
+    ChunkerConfig, FastembedEmbedderConfig, FixedOverlapChunkerConfig, HierarchyChunkerConfig,
     SemanticChunkerConfig, SentenceAwareChunkerConfig,
 };
 use crate::embedder::FastembedEmbedder;
 use crate::sentence_split::naive_sentences;
 use crate::source::Document;
+
+pub mod oversize {
+    //! Shared if_oversize fallback machinery (mirrors Python chunkers/_oversize.py).
+    //! Brief SC-004, SC-005, SC-006, SC-008.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tracing::warn;
+
+    use crate::chunker::Chunk;
+
+    pub const MAX_RECURSION_DEPTH: usize = 5;
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum OversizeError {
+        #[error(
+            "if_oversize chain exceeded depth {} (chunker={chunker})",
+            MAX_RECURSION_DEPTH
+        )]
+        Recursion { chunker: String },
+    }
+
+    /// Per-chunker-instance dedup'd warner. `warn_once` is a no-op after the
+    /// first call, so a chunker that emits 100 oversize chunks in a single
+    /// cell still only logs once.
+    pub struct DedupedWarner {
+        pub chunker_name: String,
+        pub ceiling: usize,
+        warned: AtomicBool,
+    }
+
+    impl DedupedWarner {
+        pub fn new(chunker_name: impl Into<String>, ceiling: usize) -> Self {
+            Self {
+                chunker_name: chunker_name.into(),
+                ceiling,
+                warned: AtomicBool::new(false),
+            }
+        }
+
+        pub fn warn_once(&self, oversize_len: usize) {
+            if self.warned.swap(true, Ordering::Relaxed) {
+                return;
+            }
+            warn!(
+                target: "chunkshop::oversize",
+                chunker = %self.chunker_name,
+                ceiling = self.ceiling,
+                oversize_len = oversize_len,
+                "{} emitted oversize chunk(s) (>{} chars), no if_oversize fallback set; \
+                 first oversize chunk has {} chars. \
+                 To fix: add `if_oversize: {{ type: fixed_overlap, window_words: 200, \
+                 step_words: 160, max_chars: {} }}` to the chunker config.",
+                self.chunker_name,
+                self.ceiling,
+                oversize_len,
+                self.ceiling,
+            );
+        }
+    }
+
+    /// Trigger condition: a chunk is oversize if either text field exceeds
+    /// the ceiling. Counts in `chars()` to match Python's `len(str)` semantics
+    /// for unicode-aware sizing.
+    pub fn is_oversize(c: &Chunk, ceiling: usize) -> bool {
+        c.embedded_content.chars().count() > ceiling
+            || c.original_content.chars().count() > ceiling
+    }
+}
 
 /// Chunk emitted by the chunker. `embedded_content` is what gets embedded;
 /// `original_content` is retained for grep / audit.
@@ -601,7 +668,7 @@ impl SemanticChunker {
         if sentences.len() == 1 {
             // No boundaries possible. Still respect max_chunk_chars.
             let mut chunks = Vec::new();
-            for sub in self.split_if_too_large(&sentences[0]) {
+            for sub in self.split_if_too_large(&sentences[0], (0, 1)) {
                 let seq = chunks.len();
                 chunks.push(self.mk_chunk(&doc.id, seq, &sub));
             }
@@ -666,7 +733,7 @@ impl SemanticChunker {
             if body.is_empty() {
                 continue;
             }
-            for sub in self.split_if_too_large(&body) {
+            for sub in self.split_if_too_large(&body, (s, e)) {
                 let seq = chunks.len();
                 chunks.push(self.mk_chunk(&doc.id, seq, &sub));
             }
@@ -684,45 +751,64 @@ impl SemanticChunker {
         }
     }
 
-    fn split_if_too_large(&self, body: &str) -> Vec<String> {
+    fn split_if_too_large(&self, body: &str, span: (usize, usize)) -> Vec<String> {
+        // Brief SC-007: when a span exceeds max_chunk_chars and we have to
+        // hard-split, log a tracing warning matching Python semantic.py:120
+        // shape. The warning fires only when sub_chunks.len() > 1 — a single
+        // returned chunk means the body fit and didn't actually split.
         if body.chars().count() <= self.cfg.max_chunk_chars {
             return vec![body.to_string()];
         }
         let sents = naive_sentences(body);
-        if sents.is_empty() {
+        let sub_chunks: Vec<String> = if sents.is_empty() {
             let chars: Vec<char> = body.chars().collect();
-            return chars
+            chars
                 .chunks(self.cfg.max_chunk_chars)
                 .map(|c| c.iter().collect())
-                .collect();
-        }
-        let mut out: Vec<String> = Vec::new();
-        let mut cur = String::new();
-        for s in sents {
-            let candidate = if cur.is_empty() {
-                s.clone()
-            } else {
-                let joined = format!("{cur} {s}");
-                joined.trim().to_string()
-            };
-            if candidate.chars().count() > self.cfg.max_chunk_chars && !cur.is_empty() {
-                out.push(cur.trim().to_string());
-                cur = s;
-            } else {
-                cur = candidate;
-            }
-        }
-        if !cur.is_empty() {
-            if cur.chars().count() > self.cfg.max_chunk_chars {
-                let chars: Vec<char> = cur.chars().collect();
-                for window in chars.chunks(self.cfg.max_chunk_chars) {
-                    out.push(window.iter().collect());
+                .collect()
+        } else {
+            let mut out: Vec<String> = Vec::new();
+            let mut cur = String::new();
+            for s in sents {
+                let candidate = if cur.is_empty() {
+                    s.clone()
+                } else {
+                    let joined = format!("{cur} {s}");
+                    joined.trim().to_string()
+                };
+                if candidate.chars().count() > self.cfg.max_chunk_chars && !cur.is_empty() {
+                    out.push(cur.trim().to_string());
+                    cur = s;
+                } else {
+                    cur = candidate;
                 }
-            } else {
-                out.push(cur.trim().to_string());
             }
+            if !cur.is_empty() {
+                if cur.chars().count() > self.cfg.max_chunk_chars {
+                    let chars: Vec<char> = cur.chars().collect();
+                    for window in chars.chunks(self.cfg.max_chunk_chars) {
+                        out.push(window.iter().collect());
+                    }
+                } else {
+                    out.push(cur.trim().to_string());
+                }
+            }
+            out
+        };
+        if sub_chunks.len() > 1 {
+            tracing::warn!(
+                target: "chunkshop::semantic",
+                max_chunk_chars = self.cfg.max_chunk_chars,
+                span_start = span.0,
+                span_end = span.1,
+                body_len = body.chars().count(),
+                sub_chunks = sub_chunks.len(),
+                "semantic chunk exceeded max_chunk_chars={}; hard-split into {} sub-chunks",
+                self.cfg.max_chunk_chars,
+                sub_chunks.len(),
+            );
         }
-        out
+        sub_chunks
     }
 }
 
@@ -1047,6 +1133,7 @@ mod tests {
             doc_type: "prose".into(),
             max_chars: 2000,
             min_chars: 200,
+            if_oversize: None,
         });
         let chunks = chunker.chunk(&doc);
         assert_eq!(chunks.len(), 1);
@@ -1067,6 +1154,7 @@ mod tests {
             doc_type: "prose".into(),
             max_chars: 2000,
             min_chars: 0,
+            if_oversize: None,
         });
         let chunks = chunker.chunk(&doc);
         // 3 headings -> 3 sections

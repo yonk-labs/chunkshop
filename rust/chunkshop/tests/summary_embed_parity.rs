@@ -71,6 +71,7 @@ fn make_base_chunker() -> Box<dyn ChunkerImpl + Send + Sync> {
         prefix_heading: true,
         min_section_chars: 100,
         max_chars: 400,
+        if_oversize: None,
     }))
 }
 

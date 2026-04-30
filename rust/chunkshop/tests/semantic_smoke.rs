@@ -27,6 +27,7 @@ fn semantic_chunker_runs_end_to_end() {
         min_sentences_per_chunk: 3,
         max_chunk_chars: 2000,
         sentence_splitter: "naive".to_string(),
+        if_oversize: None,
     };
 
     // Construction triggers boundary-model download. If HF is unreachable,

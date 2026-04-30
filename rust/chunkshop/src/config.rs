@@ -345,6 +345,59 @@ pub enum ChunkerConfig {
     HierarchicalSummary(HierarchicalSummaryChunkerConfig),
 }
 
+impl ChunkerConfig {
+    /// Resolve the effective `max_chars` ceiling for this chunker. Wrappers
+    /// (`neighbor_expand`, `summary_embed`, `hierarchical_summary`) fall back
+    /// to `base.effective_max_chars()` when no explicit override is set.
+    /// `fixed_overlap` returns `None` unless the user opted in via `max_chars`.
+    /// Mirrors Python's `ChunkerConfig.effective_max_chars` resolver.
+    /// Brief SC-003.
+    pub fn effective_max_chars(&self) -> Option<usize> {
+        match self {
+            ChunkerConfig::SentenceAware(c) => Some(c.max_chars),
+            ChunkerConfig::Hierarchy(c) => Some(c.max_chars),
+            ChunkerConfig::FixedOverlap(c) => c.max_chars,
+            ChunkerConfig::Semantic(c) => Some(c.max_chunk_chars),
+            ChunkerConfig::NeighborExpand(c) => {
+                c.max_chars.or_else(|| c.base.effective_max_chars())
+            }
+            ChunkerConfig::SummaryEmbed(c) => {
+                c.max_chars.or_else(|| c.base.effective_max_chars())
+            }
+            ChunkerConfig::HierarchicalSummary(c) => {
+                c.max_chars.or_else(|| c.base.effective_max_chars())
+            }
+        }
+    }
+
+    /// Borrow the optional `if_oversize` fallback chunker config. Returns
+    /// `None` for chunkers that haven't opted in. Brief SC-001.
+    pub fn if_oversize(&self) -> Option<&ChunkerConfig> {
+        match self {
+            ChunkerConfig::SentenceAware(c) => c.if_oversize.as_deref(),
+            ChunkerConfig::Hierarchy(c) => c.if_oversize.as_deref(),
+            ChunkerConfig::FixedOverlap(c) => c.if_oversize.as_deref(),
+            ChunkerConfig::Semantic(c) => c.if_oversize.as_deref(),
+            ChunkerConfig::NeighborExpand(c) => c.if_oversize.as_deref(),
+            ChunkerConfig::SummaryEmbed(c) => c.if_oversize.as_deref(),
+            ChunkerConfig::HierarchicalSummary(c) => c.if_oversize.as_deref(),
+        }
+    }
+
+    /// Stable lower-snake-case discriminator string for logs/error messages.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            ChunkerConfig::SentenceAware(_) => "sentence_aware",
+            ChunkerConfig::Hierarchy(_) => "hierarchy",
+            ChunkerConfig::FixedOverlap(_) => "fixed_overlap",
+            ChunkerConfig::NeighborExpand(_) => "neighbor_expand",
+            ChunkerConfig::Semantic(_) => "semantic",
+            ChunkerConfig::SummaryEmbed(_) => "summary_embed",
+            ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SentenceAwareChunkerConfig {
     #[serde(default = "default_doc_type")]
@@ -353,6 +406,8 @@ pub struct SentenceAwareChunkerConfig {
     pub max_chars: usize,
     #[serde(default = "default_min_chars")]
     pub min_chars: usize,
+    #[serde(default)]
+    pub if_oversize: Option<Box<ChunkerConfig>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -363,6 +418,8 @@ pub struct HierarchyChunkerConfig {
     pub min_section_chars: usize,
     #[serde(default = "default_max_chars")]
     pub max_chars: usize,
+    #[serde(default)]
+    pub if_oversize: Option<Box<ChunkerConfig>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -371,6 +428,15 @@ pub struct FixedOverlapChunkerConfig {
     pub window_words: usize,
     #[serde(default = "default_step_words")]
     pub step_words: usize,
+    /// Optional post-hoc char ceiling for emitted chunks. Mirrors Python's
+    /// `FixedOverlapChunker.max_chars` added in 0.3.2 (Brief SC-002). When
+    /// `None`, behavior is unchanged from 0.3.1 (word-only window). When set,
+    /// the chunker pairs with `if_oversize` to fall back over chunks that
+    /// exceed this ceiling.
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+    #[serde(default)]
+    pub if_oversize: Option<Box<ChunkerConfig>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -378,6 +444,12 @@ pub struct NeighborExpandChunkerConfig {
     pub base: Box<ChunkerConfig>,
     #[serde(default = "default_neighbor_window")]
     pub window: usize,
+    /// Explicit char ceiling override. When `None`, the wrapper inherits
+    /// `base.effective_max_chars()` (Brief SC-003).
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+    #[serde(default)]
+    pub if_oversize: Option<Box<ChunkerConfig>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -392,6 +464,8 @@ pub struct SemanticChunkerConfig {
     pub max_chunk_chars: usize,
     #[serde(default = "default_sentence_splitter")]
     pub sentence_splitter: String,
+    #[serde(default)]
+    pub if_oversize: Option<Box<ChunkerConfig>>,
 }
 
 /// Discriminated union over summarizer modes. Mirrors Python's `SummarizerConfig`.
@@ -489,6 +563,12 @@ fn default_word_budget() -> usize {
 pub struct SummaryEmbedChunkerConfig {
     pub base: Box<ChunkerConfig>,
     pub summarizer: SummarizerConfig,
+    /// Explicit char ceiling override. When `None`, the wrapper inherits
+    /// `base.effective_max_chars()` (Brief SC-003).
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+    #[serde(default)]
+    pub if_oversize: Option<Box<ChunkerConfig>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -497,6 +577,13 @@ pub struct HierarchicalSummaryChunkerConfig {
     pub summarizer: SummarizerConfig,
     #[serde(default)]
     pub grouping: GroupingConfig,
+    /// Explicit char ceiling override. When `None`, the wrapper inherits
+    /// `base.effective_max_chars()` (Brief SC-003). Only fine rows are
+    /// checked; coarse rows are exempt by design (Brief SC-005).
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+    #[serde(default)]
+    pub if_oversize: Option<Box<ChunkerConfig>>,
 }
 
 fn default_window_words() -> usize {
@@ -721,6 +808,20 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
 /// `Box<ChunkerConfig>` base fields). Mirrors Python's pydantic model
 /// validators that fire at config-load time.
 fn validate_chunker_config(c: &ChunkerConfig) -> Result<()> {
+    // Brief SC-001: `if_oversize` without an effective ceiling is nonsensical
+    // — there's nothing to compare against. Reject at config-load.
+    if c.if_oversize().is_some() && c.effective_max_chars().is_none() {
+        return Err(anyhow!(
+            "chunker {:?} has `if_oversize` set but no effective `max_chars` ceiling. \
+             Either set `max_chars` on this chunker (or on its `base` for wrappers), \
+             or remove `if_oversize`.",
+            c.type_name()
+        ));
+    }
+    // Recurse into the fallback chunker config so nested chains are validated.
+    if let Some(nested) = c.if_oversize() {
+        validate_chunker_config(nested)?;
+    }
     match c {
         ChunkerConfig::SentenceAware(_)
         | ChunkerConfig::Hierarchy(_)
@@ -732,15 +833,7 @@ fn validate_chunker_config(c: &ChunkerConfig) -> Result<()> {
             // Mirror Python's _section_aware_requires_hierarchy_base: when
             // grouping is section_aware, the base chunker MUST be hierarchy.
             if matches!(c.grouping, GroupingConfig::SectionAware(_)) {
-                let base_type_name = match &*c.base {
-                    ChunkerConfig::Hierarchy(_) => "hierarchy",
-                    ChunkerConfig::SentenceAware(_) => "sentence_aware",
-                    ChunkerConfig::FixedOverlap(_) => "fixed_overlap",
-                    ChunkerConfig::NeighborExpand(_) => "neighbor_expand",
-                    ChunkerConfig::Semantic(_) => "semantic",
-                    ChunkerConfig::SummaryEmbed(_) => "summary_embed",
-                    ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
-                };
+                let base_type_name = c.base.type_name();
                 if base_type_name != "hierarchy" {
                     return Err(anyhow!(
                         "hierarchical_summary with strategy='section_aware' requires \
@@ -885,6 +978,135 @@ target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
             err.contains("section_aware") && err.contains("hierarchy"),
             "expected section_aware/hierarchy mention, got: {err}"
         );
+    }
+
+    #[test]
+    fn parses_if_oversize_on_every_chunker_variant() {
+        // Brief SC-001: every chunker variant accepts an optional if_oversize
+        // pointing at any other chunker config.
+        for kind in [
+            "sentence_aware",
+            "hierarchy",
+            "fixed_overlap",
+            "neighbor_expand",
+            "semantic",
+            "summary_embed",
+            "hierarchical_summary",
+        ] {
+            let chunker_yaml = match kind {
+                "sentence_aware" => "{ type: sentence_aware }".to_string(),
+                "hierarchy" => "{ type: hierarchy }".to_string(),
+                "fixed_overlap" => "{ type: fixed_overlap, max_chars: 1500 }".to_string(),
+                "neighbor_expand" => {
+                    "{ type: neighbor_expand, base: { type: hierarchy } }".to_string()
+                }
+                "semantic" => "{ type: semantic }".to_string(),
+                "summary_embed" => "{ type: summary_embed, base: { type: hierarchy }, summarizer: { mode: passthrough } }".to_string(),
+                "hierarchical_summary" => "{ type: hierarchical_summary, base: { type: hierarchy }, summarizer: { mode: passthrough } }".to_string(),
+                _ => unreachable!(),
+            };
+            // Inline a minimal cell config and inject if_oversize on the chunker.
+            let yaml = format!(
+                r#"
+cell_name: t
+source: {{ type: files, glob: "x", id_from: stem }}
+chunker:
+  type: {kind}
+  {extra}
+  if_oversize:
+    type: fixed_overlap
+    window_words: 100
+    step_words: 100
+    max_chars: 500
+embedder: {{ type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }}
+target: {{ dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }}
+"#,
+                kind = kind,
+                extra = match kind {
+                    "fixed_overlap" => "max_chars: 1500".to_string(),
+                    "neighbor_expand" => "base: { type: hierarchy }".to_string(),
+                    "summary_embed" =>
+                        "base: { type: hierarchy }\n  summarizer: { mode: passthrough }".to_string(),
+                    "hierarchical_summary" =>
+                        "base: { type: hierarchy }\n  summarizer: { mode: passthrough }"
+                            .to_string(),
+                    _ => "".to_string(),
+                }
+            );
+            let _ = chunker_yaml; // suppress unused-var lint in this branch
+            let path = write_yaml(&yaml);
+            let cfg = load_config(&path).unwrap_or_else(|e| {
+                panic!("if_oversize on {kind} failed to parse: {e:#}");
+            });
+            assert!(
+                cfg.chunker.if_oversize().is_some(),
+                "if_oversize missing for {kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_if_oversize_without_effective_ceiling() {
+        // Brief SC-001 NEVER: fixed_overlap without max_chars and with
+        // if_oversize is rejected at config-load — there's nothing to
+        // compare against.
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: fixed_overlap
+  window_words: 200
+  step_words: 100
+  if_oversize:
+    type: fixed_overlap
+    window_words: 100
+    step_words: 50
+    max_chars: 500
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("if_oversize") && err.contains("max_chars"),
+            "expected if_oversize/max_chars complaint, got: {err}"
+        );
+    }
+
+    #[test]
+    fn effective_max_chars_falls_through_to_base() {
+        // Brief SC-003: wrapper without explicit max_chars inherits from base.
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: neighbor_expand
+  window: 2
+  base:
+    type: hierarchy
+    max_chars: 1234
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        assert_eq!(cfg.chunker.effective_max_chars(), Some(1234));
+    }
+
+    #[test]
+    fn fixed_overlap_max_chars_is_optional_unset() {
+        // Brief SC-002: fixed_overlap without max_chars parses and resolves
+        // to None (legacy word-only behavior).
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: fixed_overlap, window_words: 200, step_words: 100 }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        assert!(cfg.chunker.effective_max_chars().is_none());
     }
 
     #[test]
