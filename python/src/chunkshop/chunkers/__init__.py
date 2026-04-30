@@ -76,7 +76,7 @@ def load_chunker(
             main_embedder=main_embedder,
             shared_boundary_model=shared_boundary_model,
         )
-        return SummaryEmbedChunker(cfg, base)
+        return SummaryEmbedChunker(cfg, base, build_chunker=_build)
     if isinstance(cfg, HierSummaryCfg):
         base = load_chunker(
             cfg.base,
