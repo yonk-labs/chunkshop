@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 0.3.0 — 2026-04-30
+
+First release published to PyPI (`chunkshop`) and crates.io
+(`chunkshop-rs`). The detailed bullets below cover what shipped in
+this version. Highlights:
+
+- **Rust port at parity with Python** for the single-cell pipeline
+  AND the bakeoff. Same canonical YAML runs from both languages and
+  produces equivalent leaderboards (verified by
+  `scripts/parity_check_bakeoff.py`). Orchestrator remains Python-only.
+- **YAML-driven HuggingFace embedder pointer** — point at any HF ONNX
+  model from YAML alone, no rebuild. Mean pooling in both languages.
+- **Bakeoff leaderboard surfaces speed-vs-quality** — chunks /
+  ingest_s / embed_s columns + per-embedder query-time cost.
+- **Inline (library) mode** — `chunkshop.Pipeline` (Python) and
+  `chunkshop::Pipeline` (Rust) for embedding chunkshop in your service.
+- **`pg_table` source `metadata_columns`** + VIEW pattern for
+  bringing JOINed metadata into chunk metadata.
+- **`target.delete_orphans`** — atomic per-doc shrink cleanup.
+- **Bundled sample corpora** — NTSB (20 docs), sales-crm (974 notes +
+  SQL dump). Compressed in-tree; total ~700 KB.
+- **User-journey-first docs** — README leads with bring-corpus →
+  bakeoff → recommended → ingest → repeat.
+
 ### Added
 
 - **`pg_table` source — `metadata_columns` field (Python + Rust).**

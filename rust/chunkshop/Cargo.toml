@@ -4,7 +4,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Minimal Rust port of chunkshop — one source, one chunker, one embedder, one pgvector sink."
+homepage.workspace = true
+authors.workspace = true
+description = "Standalone ingest-to-pgvector: source -> chunker -> embedder -> extractor -> table. int8 BGE by default; bakeoff matrix evaluator built in. Cross-language wire-format compatible with the Python `chunkshop` package."
+readme = "../README.md"
+keywords = ["rag", "pgvector", "embeddings", "chunking", "fastembed"]
+categories = ["database", "science", "text-processing"]
+
+# Keep the published .crate tarball lean. Without these excludes, cargo
+# bundles all the parity-test JSON references — useful for repo CI but
+# noise for users who install the crate.
+exclude = [
+    "tests/parity-fixtures/*",
+]
 
 [lib]
 name = "chunkshop"

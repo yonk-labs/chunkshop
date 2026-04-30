@@ -1,15 +1,33 @@
-name: Release to PyPI
+name: Release (PyPI + crates.io)
 
-# Triggered by pushing a semver tag (e.g. `v0.3.0`). Uses PyPI's Trusted
-# Publishing (OIDC) — no API token to manage. One-time maintainer setup on
-# PyPI: Settings → Publishing → Add trusted publisher → GitHub
-#   Owner:   yonk-labs
-#   Repo:    chunkshop
-#   Workflow: release.yml
-#   Environment: pypi
+# Triggered by pushing a semver tag (e.g. `v0.3.0`). Publishes BOTH the
+# Python package (chunkshop) and the Rust crate (chunkshop-rs) at the
+# matching version. The two publish paths are independent — if PyPI
+# fails for any reason, the crates.io publish still runs (and vice-
+# versa). Tag-vs-source-version mismatch fails the run before either
+# publishes.
 #
-# The tag must match python/pyproject.toml's `version` — we verify before
-# building to avoid publishing a mismatch.
+# One-time maintainer setup:
+#
+#   PyPI Trusted Publishing (no token):
+#     pypi.org → Account → Publishing → Add trusted publisher
+#       Owner:        yonk-labs
+#       Repo:         chunkshop
+#       Workflow:     release.yml
+#       Environment:  pypi
+#
+#   crates.io API token:
+#     crates.io → Account Settings → API Tokens → New Token
+#       Scopes:  publish-new + publish-update
+#     Then in this repo: Settings → Secrets and variables → Actions →
+#       New repository secret:
+#         Name:   CARGO_REGISTRY_TOKEN
+#         Value:  <the token>
+#
+#   GitHub repo environments (recommended for protection):
+#     Settings → Environments → New environment "pypi" and "cargo".
+#     Add required-reviewer rules if you want a manual approval gate
+#     between the build and the publish step.
 
 on:
   push:
@@ -18,7 +36,7 @@ on:
 
 jobs:
   verify:
-    name: Verify tag matches pyproject version
+    name: Verify tag matches both source versions
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get.outputs.version }}
@@ -26,18 +44,32 @@ jobs:
       - uses: actions/checkout@v4
       - name: Extract versions and compare
         id: get
+        # Python's version lives in python/pyproject.toml ([project].version).
+        # Rust's lives in rust/Cargo.toml ([workspace.package].version) and
+        # is inherited by rust/chunkshop/Cargo.toml via `version.workspace = true`.
+        # Both must match the pushed tag.
         run: |
+          set -euo pipefail
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PYPROJECT_VERSION=$(grep -E '^version\s*=' python/pyproject.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+          # Read the workspace version from rust/Cargo.toml — only the
+          # FIRST `version = "..."` line under [workspace.package] counts.
+          # awk handles the section gating cleanly.
+          CARGO_VERSION=$(awk '/^\[workspace\.package\]/{f=1; next} /^\[/{f=0} f && /^version\s*=/{gsub(/[" ]/,"",$3); print $3; exit}' rust/Cargo.toml)
           echo "tag=$TAG_VERSION"
           echo "pyproject=$PYPROJECT_VERSION"
+          echo "cargo=$CARGO_VERSION"
           if [[ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]]; then
-            echo "ERROR: tag v$TAG_VERSION does not match python/pyproject.toml version $PYPROJECT_VERSION"
+            echo "ERROR: tag v$TAG_VERSION does not match python/pyproject.toml version $PYPROJECT_VERSION" >&2
+            exit 1
+          fi
+          if [[ "$TAG_VERSION" != "$CARGO_VERSION" ]]; then
+            echo "ERROR: tag v$TAG_VERSION does not match rust/Cargo.toml workspace version $CARGO_VERSION" >&2
             exit 1
           fi
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
-  build:
+  build-python:
     name: Build sdist + wheel
     needs: verify
     runs-on: ubuntu-latest
@@ -61,13 +93,52 @@ jobs:
       - name: Upload distributions as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: python-dist
           path: python/dist/
           if-no-files-found: error
 
-  publish:
+  build-cargo:
+    name: Cargo test + package
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/**/Cargo.toml') }}
+
+      - name: Run lib tests
+        working-directory: rust
+        run: cargo test --workspace --lib --no-fail-fast
+
+      - name: Package crate
+        working-directory: rust
+        run: cargo package -p chunkshop-rs
+
+      - name: Show packaged file list
+        working-directory: rust
+        run: cargo package -p chunkshop-rs --list
+
+      - name: Upload .crate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-crate
+          path: rust/target/package/chunkshop-rs-*.crate
+          if-no-files-found: error
+
+  publish-pypi:
     name: Publish to PyPI
-    needs: build
+    needs: [verify, build-python]
     runs-on: ubuntu-latest
 
     # Isolate the trusted-publisher environment — maintainers add this as a
@@ -85,10 +156,45 @@ jobs:
       - name: Download dist artifact
         uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: python-dist
           path: dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+
+  publish-cargo:
+    name: Publish to crates.io
+    needs: [verify, build-cargo]
+    runs-on: ubuntu-latest
+
+    # Independent of the PyPI publish — if PyPI fails, this still runs.
+    # Optional protected environment for required-reviewer gates.
+    environment:
+      name: cargo
+      url: https://crates.io/crates/chunkshop-rs/${{ needs.verify.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/**/Cargo.toml') }}
+
+      - name: Publish chunkshop-rs
+        working-directory: rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        # `--no-verify` skips re-running the build (build-cargo already
+        # verified) — saves a few minutes on the publish path.
+        run: cargo publish -p chunkshop-rs --no-verify
