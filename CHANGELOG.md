@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## 0.3.2 — 2026-04-30
+
+Adds the `if_oversize` fallback chain across all seven chunker configs
+in both Python and Rust. Closes the silent-oversize gap in the wrapper
+chunkers and brings Rust's `semantic` chunker to warning-parity with Python.
+
+- **Universal `if_oversize: ChunkerConfig` field** on every chunker config
+  in both languages. Routes any chunk whose `embedded_content` or
+  `original_content` exceeds the effective ceiling through a fallback
+  chunker. Chains up to 5 levels deep (deeper raises explicit error).
+- **`fixed_overlap.max_chars` (optional)** — the chunker is now char-bounded
+  too, not just word-bounded.
+- **Wrapper effective ceiling** — `neighbor_expand` / `summary_embed` /
+  `hierarchical_summary` resolve their ceiling as `cfg.max_chars >
+  base.max_chars > None`. Wrappers inherit by default; override per cell.
+- **Dedup'd WARN-once-per-cell** when `if_oversize` is unset and an
+  oversize chunk would be emitted. Names the chunker, ceiling, and a
+  copy-paste suggestion. No log spam.
+- **Coarse-row exemption** on `hierarchical_summary` — coarse rows
+  (one-per-group) are skipped from the check by design.
+- **Rust `semantic` chunker** now logs `tracing::warn!` on hard-split,
+  matching Python's `semantic.py:120`. Parity gap closed.
+- **NEW `docs/samples/if-oversize/`** — runnable demo showing both the
+  WARN behavior (no fallback) and the fallback chain (with fallback).
+- **Recursion guard** — `if_oversize` chains beyond depth 5 raise
+  `OversizeRecursionError` (Python) / `Error::OversizeRecursion` (Rust).
+- **`docs/chunkers.md`** oversize-behavior table refreshed; the foreshadow
+  sentence about 0.3.2 replaced by a concrete `Setting if_oversize` section.
+
 ## 0.3.1 — 2026-04-30
 
 Documentation maintenance. No behavior changes.

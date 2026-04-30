@@ -105,31 +105,43 @@ chunks. But several chunkers can emit `embedded_content` that exceeds the base
 
 | Chunker                | Char ceiling                | Behavior on overflow                                                                                           | Warns? |
 |------------------------|-----------------------------|-----------------------------------------------------------------------------------------------------------------|:------:|
-| `sentence_aware`       | `max_chars` (default 2000)  | Cascades paragraph → sentence → hard char-slice. Hard ceiling.                                                  | —      |
-| `hierarchy`            | `max_chars` (default 2000)  | Same cascade applied per section. Hard ceiling.                                                                 | —      |
-| `semantic`             | `max_chunk_chars` (default 2000) | Hard-splits on sentence boundary within the over-large span. Hard ceiling.                                   | Python only ⚠ |
-| `fixed_overlap`        | **none** (word-level)       | No char ceiling — `window_words` controls word count, resulting chars are unbounded for word-dense inputs.      | —      |
-| `neighbor_expand`      | **none** (inherits base)    | Joins base chunks with `\n\n`. Joined `embedded_content` can be `(2·window+1) ×` the base ceiling.              | —      |
-| `summary_embed`        | **none** (inherits base)    | Replaces `embedded_content` with summarizer output — re-cap not enforced. Most summarizers shrink, not grow.    | —      |
-| `hierarchical_summary` | **none** (inherits base)    | Coarse-row `original_content` is the concatenation of grouped base chunks. Unbounded by group size.             | —      |
+| `sentence_aware`       | `max_chars` (default 2000)  | Cascades paragraph → sentence → hard char-slice. `if_oversize` rarely fires.                                    | dedup'd warn (rare) |
+| `hierarchy`            | `max_chars` (default 2000)  | Same cascade applied per section. `if_oversize` rarely fires.                                                   | dedup'd warn (rare) |
+| `semantic`             | `max_chunk_chars` (default 2000) | Hard-splits on sentence boundary; logs WARN with span / body_len / sub-chunk count.                          | always |
+| `fixed_overlap`        | `max_chars` (optional, new in 0.3.2) | If unset, char-unbounded (word-level only). If set: emits oversize chunks normally; if `if_oversize` set, routes through fallback; else logs ONE WARN per cell. | dedup'd if set |
+| `neighbor_expand`      | `max_chars` (wrapper override) or `base.max_chars` (default) | If `if_oversize` set, oversize chunks routed through fallback. Else logs ONE WARN per cell.            | dedup'd |
+| `summary_embed`        | `max_chars` (wrapper override) or `base.max_chars` (default) | Same as above.                                                                                          | dedup'd |
+| `hierarchical_summary` | `max_chars` (wrapper override) or `base.max_chars` (default) | Fine rows: same as above. **Coarse rows are exempt** by design — they preserve 1-per-group structure.    | dedup'd (fine only) |
 
-**Practical guidance:**
+## Setting `if_oversize`
 
-- If you use `neighbor_expand` with `window: 1` and base `max_chars: 2000`,
-  expect `embedded_content` up to ~6000 chars — verify it fits your embedder.
-  Drop the base chunker's `max_chars` if you see truncation.
-- If you use `summary_embed`, the summarizer is responsible for staying under
-  the limit. The default `lede` summarizer is well-behaved; user-supplied
-  callable summarizers are not validated.
-- If you use `hierarchical_summary`, the coarse rows can be very large. Pick
-  a `grouping` strategy (`fixed_n` or `word_budget`) that bounds the group
-  size to something your embedder can handle.
-- The Rust `semantic` chunker currently does NOT log a warning on hard-split
-  (parity gap with Python — fixing in 0.3.2).
+Every chunker config accepts an optional `if_oversize: ChunkerConfig` field
+that points at a fallback chunker. When the parent chunker emits a chunk
+whose `embedded_content` OR `original_content` exceeds the effective
+ceiling, that chunk is replaced by the output of running `if_oversize`
+over the offending text.
 
-A planned `if_oversize` fallback chain (slated for 0.3.2) will catch oversized
-chunks at the wrapper boundary and re-chunk them through a fallback chunker
-before they reach the embedder. Until then, the rules above are the contract.
+```yaml
+chunker:
+  type: neighbor_expand
+  window: 2
+  base:
+    type: hierarchy
+    max_chars: 1500
+  if_oversize:
+    type: fixed_overlap
+    window_words: 200
+    step_words: 160
+    max_chars: 1500
+```
+
+The fallback chunker can itself have `if_oversize` (chains up to 5 levels deep).
+
+When `if_oversize` is unset and a chunker would emit oversize chunks, you get
+**one WARN line per cell** naming the chunker, ceiling, and a copy-paste
+suggestion for setting `if_oversize`. No silent truncation.
+
+For a runnable demo, see [`samples/if-oversize/`](samples/if-oversize/README.md).
 
 ## 1. `sentence_aware` — paragraph-respecting prose splitter
 
