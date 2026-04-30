@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.3.1 — 2026-04-30
+
+Documentation maintenance. No behavior changes.
+
+- **`docs/samples/README.md` rewritten** to list all worked-example
+  sub-samples (`bakeoff-ntsb/`, `sales-crm/`, `embedder-byo/`,
+  `incremental-pg-table/`, `inline-mode/`) with links to each
+  sub-README, and to cover every recipe YAML — including the previously
+  undocumented `sample-semantic.yaml`, `sample-summary-embed.yaml`,
+  `sample-hierarchical.yaml`, and `bakeoff.yaml` / `bakeoff-gold.yaml`.
+- **README badges modernized.** Static "v0.2.0" / "v0.1.0 MVP" badges
+  replaced with dynamic shields.io PyPI and crates.io version badges
+  that auto-update with each release. Status table and monorepo-layout
+  diagram refreshed to reflect Python and Rust as published packages.
+
 ## 0.3.0 — 2026-04-30
 
 First release published to PyPI (`chunkshop`) and crates.io

@@ -1,11 +1,11 @@
 # chunkshop
 
 [![CI](https://github.com/yonk-labs/chunkshop/actions/workflows/ci.yml/badge.svg)](https://github.com/yonk-labs/chunkshop/actions/workflows/ci.yml)
-[![PyPI status](https://img.shields.io/badge/status-alpha-orange)](python/pyproject.toml)
+[![PyPI](https://img.shields.io/pypi/v/chunkshop?label=pypi&color=blueviolet)](https://pypi.org/project/chunkshop/)
+[![crates.io](https://img.shields.io/crates/v/chunkshop?label=crates.io&color=blueviolet)](https://crates.io/crates/chunkshop)
+[![status: alpha](https://img.shields.io/badge/status-alpha-orange)](python/pyproject.toml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue)](python/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Python v0.2.0](https://img.shields.io/badge/python--impl-v0.2.0-blueviolet)](python/)
-[![Rust v0.1.0 MVP](https://img.shields.io/badge/rust--impl-v0.1.0_MVP-blueviolet)](rust/)
 [![Go: planned](https://img.shields.io/badge/go--impl-planned-lightgrey)](go/)
 
 A small, standalone, embeddable ingestion tool. Pulls text from a source, chunks it, embeds it,
@@ -71,8 +71,8 @@ Already past step 3 and just want the runtime? `chunkshop ingest --config <your-
 
 | Impl             | Path       | State                                                |
 |------------------|------------|------------------------------------------------------|
-| Python reference | `python/`  | v0.2.0. All features. int8 default.                  |
-| Rust             | `rust/`    | v0.1.x. **Single-cell pipeline + bakeoff at parity.** Same canonical `bakeoff-ntsb.yaml` runs from both languages and produces equivalent leaderboards (verified by `scripts/parity_check_bakeoff.py`). Orchestrator still Python-only. See [`rust/README.md`](rust/README.md). |
+| Python reference | `python/`  | Published on [PyPI](https://pypi.org/project/chunkshop/). All features. int8 default. |
+| Rust             | `rust/`    | Published on [crates.io](https://crates.io/crates/chunkshop). **Single-cell pipeline + bakeoff at parity.** Same canonical `bakeoff-ntsb.yaml` runs from both languages and produces equivalent leaderboards (verified by `scripts/parity_check_bakeoff.py`). Orchestrator still Python-only. See [`rust/README.md`](rust/README.md). |
 | Go               | `go/`      | Not started.                                         |
 
 ### What "parity" means and doesn't mean
@@ -187,10 +187,11 @@ CREATE TABLE {schema}.{table} (
 
 ```
 chunkshop/
-├── python/                 reference implementation; runs today
+├── python/                 reference implementation; published to PyPI
 │   ├── src/chunkshop/
 │   └── tests/
-├── rust/                   planned
+├── rust/                   second implementation; published to crates.io
+│   └── chunkshop/
 ├── go/                     planned
 └── docs/
     ├── tutorial.md
