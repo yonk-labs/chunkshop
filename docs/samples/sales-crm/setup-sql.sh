@@ -20,10 +20,12 @@ case "$TIER" in
   *) echo "tier must be 'small' or 'medium', got: $TIER" >&2; exit 2 ;;
 esac
 
-SQL_PATH="/home/yonk/yonk-tools/pg-raggraph/docs/cookbook/samples/sales-crm-demo-${TIER}.sql"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+SQL_PATH="$REPO_ROOT/docs/samples/sales-crm/sql/sales-crm-demo-${TIER}.sql"
 if [[ ! -f "$SQL_PATH" ]]; then
   echo "SQL file not found: $SQL_PATH" >&2
-  echo "(Adjust the path if your pg-raggraph checkout is elsewhere.)" >&2
+  echo "(Are you running from a chunkshop checkout? The sample SQL ships in" >&2
+  echo "docs/samples/sales-crm/sql/.)" >&2
   exit 2
 fi
 

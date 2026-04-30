@@ -33,7 +33,7 @@ with each embedder, ranks results against the gold doc per query, and writes:
 | [`sample-recommended-rust.yaml`](sample-recommended-rust.yaml) | Top-combo cell from the Rust run, ready to `chunkshop-rs ingest`. |
 
 The corpus path is hard-coded in the YAML to:
-`/home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md`.
+`docs/samples/bakeoff-ntsb/corpus/*.md`.
 Edit if your `pg-raggraph` checkout lives elsewhere.
 
 ## Run it (Python)

@@ -14,7 +14,7 @@ framer:
   type: identity
 source:
   encoding: utf-8
-  glob: /home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md
+  glob: docs/samples/bakeoff-ntsb/corpus/*.md
   id_from: stem
   type: files
 target:

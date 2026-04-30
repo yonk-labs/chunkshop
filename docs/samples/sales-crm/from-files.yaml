@@ -14,7 +14,7 @@ cell_name: sales_crm_from_files
 
 source:
   type: files
-  glob: /home/yonk/yonk-tools/pg-raggraph/benchmarks/sales-crm-demo/docs/note-*.md
+  glob: docs/samples/sales-crm/notes/note-*.md
   id_from: stem    # doc_id = filename minus extension, e.g. "note-000012-Insightful-Strategy-Group"
 
 framer:

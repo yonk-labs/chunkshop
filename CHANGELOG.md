@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed
+
+- **Sample corpora are now bundled with chunkshop.** The NTSB bakeoff
+  corpus (20 .md files, ~150 KB) ships at
+  `docs/samples/bakeoff-ntsb/corpus/`; the sales-crm SQL dumps (small
+  + medium tiers, ~3.3 MB) ship at `docs/samples/sales-crm/sql/`; the
+  sales-crm markdown dump (649 notes, ~2.6 MB) ships at
+  `docs/samples/sales-crm/notes/`. All sample YAMLs and scripts now
+  reference these local paths instead of `pg-raggraph` sibling-checkout
+  paths — clone chunkshop, run any sample, no other repos needed.
+  The pg-raggraph originals are untouched (sources, not moves).
+
 ### Added
 
 - **Sales CRM demo** (`docs/samples/sales-crm/`) — ingests the same

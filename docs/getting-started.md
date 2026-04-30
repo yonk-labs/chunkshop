@@ -52,7 +52,7 @@ cd python && uv sync --extra dev && cd ..
 For this walkthrough we use a checked-in corpus from a sibling repo:
 
 ```bash
-ls /home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md | wc -l
+ls docs/samples/bakeoff-ntsb/corpus/*.md | wc -l
 # 20
 ```
 
@@ -137,7 +137,7 @@ The bakeoff already wrote a runnable cell at `skill-output/bakeoff/ntsb_bakeoff/
 cell_name: ntsb_bakeoff_recommended
 source:
   type: files
-  glob: /home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md
+  glob: docs/samples/bakeoff-ntsb/corpus/*.md
   id_from: stem
 chunker:
   type: hierarchy

@@ -12,7 +12,7 @@
 > `skill-output/bakeoff/ntsb_bakeoff/report.md` on every run.
 
 - Run: 2026-04-29 12:29:15
-- Corpus: /home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md
+- Corpus: docs/samples/bakeoff-ntsb/corpus/*.md
 - Queries: 12
 - Combos: 12
 

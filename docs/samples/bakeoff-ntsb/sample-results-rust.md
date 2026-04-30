@@ -9,7 +9,7 @@
 > drift tolerance).
 
 - Run: 2026-04-29 19:38:14
-- Corpus: /home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md
+- Corpus: docs/samples/bakeoff-ntsb/corpus/*.md
 - Queries: 12
 - Combos: 12
 

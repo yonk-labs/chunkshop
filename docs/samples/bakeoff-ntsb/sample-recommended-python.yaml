@@ -3,7 +3,7 @@
 cell_name: ntsb_bakeoff_recommended
 source:
   type: files
-  glob: /home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/*.md
+  glob: docs/samples/bakeoff-ntsb/corpus/*.md
   id_from: stem
   encoding: utf-8
 framer:

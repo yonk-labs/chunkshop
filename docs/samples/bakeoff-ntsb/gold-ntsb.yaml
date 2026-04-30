@@ -2,7 +2,7 @@
 # Each entry pairs a user-plausible question with the doc that should rank #1.
 #
 # Doc IDs are file stems from
-# /home/yonk/yonk-tools/pg-raggraph/benchmarks/kg-rag-eval/extracted/ntsb/<id>.md
+# docs/samples/bakeoff-ntsb/corpus/<id>.md
 #
 # Statistical-power note: 12 queries is a low floor. One query flipping
 # moves aggregate recall@1 by ~0.08. Add more queries before treating the
