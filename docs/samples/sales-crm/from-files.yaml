@@ -1,0 +1,43 @@
+# Sales CRM ingest — from flat markdown files.
+#
+# Reads the same sales-note dataset, but as one .md file per note from
+# pg-raggraph/benchmarks/sales-crm-demo/docs/. This is the "the OLTP
+# data was exported as documents and we need to ingest those" path —
+# common when the data is shared as a doc set, when you don't have
+# Postgres access to the source, or when you're staging files into an
+# inbox (see docs/incremental.md Pattern C).
+#
+# Same target schema as the pg-table variant but a different table, so
+# both can co-exist for side-by-side comparison.
+
+cell_name: sales_crm_from_files
+
+source:
+  type: files
+  glob: /home/yonk/yonk-tools/pg-raggraph/benchmarks/sales-crm-demo/docs/note-*.md
+  id_from: stem    # doc_id = filename minus extension, e.g. "note-000012-Insightful-Strategy-Group"
+
+framer:
+  type: identity
+
+chunker:
+  type: hierarchy
+  max_chars: 1200
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 2
+  batch_size: 32
+
+extractor:
+  type: none
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_sales_chunks
+  table: notes_from_files
+  mode: overwrite
+  source_tag: sales_files
+  hnsw: false

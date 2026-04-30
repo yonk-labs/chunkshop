@@ -1,0 +1,46 @@
+# Sales CRM ingest — from a Postgres source table.
+#
+# Reads sales notes directly from chunkshop_sales_demo.sales_notes (loaded
+# by setup-sql.sh). This is the "I already have an OLTP database with the
+# data, just chunk and embed it" path.
+#
+# Promotes select metadata columns (sentiment, product_name, use_case)
+# directly into the target table so you can filter on them at query time
+# without parsing JSON. Useful pattern for any database-backed corpus.
+
+cell_name: sales_crm_from_pg
+
+source:
+  type: pg_table
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_sales_demo
+  table: sales_notes
+  id_column: note_id
+  content_column: note_text
+  # Notes don't have a natural title — leave it unset; chunkshop synthesises
+  # the doc_id from note_id.
+
+framer:
+  type: identity
+
+chunker:
+  type: hierarchy
+  max_chars: 1200
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 2
+  batch_size: 32
+
+extractor:
+  type: none
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_sales_chunks
+  table: notes_from_pg
+  mode: overwrite
+  source_tag: sales_pg
+  hnsw: false

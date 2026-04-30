@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Sales CRM demo** (`docs/samples/sales-crm/`) — ingests the same
+  realistic CRM dataset (974 sales notes, 300 deals) two ways:
+  `pg_table` source against the SQL-loaded `chunkshop_sales_demo`
+  schema, and `files` source against the markdown dump at
+  `pg-raggraph/benchmarks/sales-crm-demo/docs/`. Both verified
+  end-to-end producing 384-dim vectors (1062 chunks from pg_table,
+  1675 from files — files have richer markdown structure that the
+  hierarchy chunker splits more finely). The setup script renames the
+  source SQL schema (`sales_demo_app` → `chunkshop_sales_demo`) before
+  loading, so the chunkshop demo never collides with AGE testing that
+  uses the original schema. README documents both paths and how to
+  adapt to your own OLTP database.
+
 - **Bakeoff leaderboard now surfaces speed-vs-quality.** Three new
   signals in the report:
   - `chunks` column: how many chunks each combo wrote
