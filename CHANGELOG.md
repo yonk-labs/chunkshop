@@ -33,6 +33,17 @@ Documentation maintenance. No behavior changes.
   with the chunker-wins precedence rule. Steers users toward
   `pg_table.metadata_columns` for source-side structured metadata
   rather than extractors.
+- **`docs/architecture.md` diagrams fixed.** Component map redrawn as
+  a left-to-right pipeline (Source → Framer → Chunker → Embedder →
+  Extractor → Sink → DB) so the sink sits visually downstream of the
+  providers. Sequence diagram ("One ingest, step by step") rewritten
+  to remove `<br/>` line breaks inside message text — they aren't
+  supported by mermaid's sequenceDiagram parser and were silently
+  breaking the render on GitHub. Nested loop (per source row → per
+  framed document) preserved and called out in prose.
+- **README crates.io link fixed.** Badge and status-table link were
+  pointing at `crates.io/crates/chunkshop` (404). Real package name
+  is `chunkshop-rs` — both updated.
 
 ## 0.3.0 — 2026-04-30
 

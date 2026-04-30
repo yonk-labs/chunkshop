@@ -13,55 +13,38 @@ here describe them too once they land.
 
 ```mermaid
 flowchart TB
-    subgraph cli[CLI]
-      I[chunkshop ingest]
-      O[chunkshop orchestrate]
-    end
+    I[chunkshop ingest]
+    O[chunkshop orchestrate]
+    Y[YAML file]
+    P[pydantic models<br/>config.py]
+    R[runner.run_cell]
 
-    subgraph config[Config layer]
-      Y[YAML file]
-      P[pydantic models<br/>config.py]
-    end
+    SRC[sources/<br/>files · json_corpus<br/>pg_table · http · s3]
+    FRM[framers/<br/>identity · heading_boundary<br/>regex_boundary · jsonpath]
+    CHK[chunkers/<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand<br/>semantic · summary_embed · hierarchical_summary]
+    EMB[embedders/<br/>fastembed_provider<br/>+ int8 _registry]
+    EXT[extractors/<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · composite]
+    SUM[summarizers/<br/>lede · sumy shims]
+    SK[PgVectorSink<br/>sink.py]
+    DB[(pgvector table<br/>+ HNSW)]
 
-    subgraph runner[Single-cell runner]
-      R[runner.run_cell]
-    end
-
-    subgraph providers[Pluggable providers]
-      SRC[sources/<br/>files · json_corpus<br/>pg_table · http · s3]
-      FRM[framers/<br/>identity · heading_boundary<br/>regex_boundary · jsonpath]
-      CHK[chunkers/<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand<br/>semantic<br/>summary_embed · hierarchical_summary]
-      EMB[embedders/<br/>fastembed_provider<br/>+ int8 _registry]
-      EXT[extractors/<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · composite]
-      SUM[summarizers/<br/>lede · sumy shims]
-    end
-
-    subgraph sink[Sink]
-      SK[PgVectorSink<br/>sink.py]
-      DB[(pgvector table<br/>+ HNSW)]
-    end
-
-    subgraph orch[Orchestrator + bakeoff]
-      OR[orchestrator.py<br/>subprocess pool]
-      BO[bakeoff/<br/>matrix eval + leaderboard]
-    end
+    OR[orchestrator.py<br/>subprocess pool]
+    BO[bakeoff/<br/>matrix eval + leaderboard]
 
     I --> Y
     O --> Y
     Y --> P
     P --> R
-    R --> SRC
-    R --> FRM
-    R --> CHK
-    R --> EMB
-    R --> EXT
+
+    R --> SRC --> FRM --> CHK --> EMB --> EXT --> SK --> DB
     CHK -.summary_embed · hierarchical_summary.-> SUM
-    R --> SK
-    SK --> DB
+
     O -.spawns N.-> I
     OR --- O
     BO -.N combos × run_cell.-> R
 ```
+
+Read top to bottom: CLI loads YAML → pydantic config → runner. Runner drives the pipeline left-to-right (Source → Framer → Chunker → Embedder → Extractor → Sink → pgvector table). Orchestrator and bakeoff sit alongside the runner — they don't sit *in* the data path, they fan out cells across it.
 
 Each provider type is a `Protocol` with one method. `load_*()` factories dispatch on the
 pydantic discriminator. Adding a new source/framer/chunker/embedder/extractor = drop a file
@@ -126,25 +109,38 @@ sequenceDiagram
     U->>CLI: chunkshop ingest -c cell.yaml
     CLI->>R: load_config + run_cell(cfg)
     R->>R: cap OMP/MKL/OPENBLAS threads
-    R->>K: create_table (schema + HNSW index)
-    K->>DB: CREATE EXTENSION vector<br/>CREATE TABLE / INDEX
+    R->>K: create_table
+    K->>DB: CREATE EXTENSION vector
+    K->>DB: CREATE TABLE + indexes
+
     loop for each raw row from source
-      R->>S: iter_documents → RawDoc
-      R->>F: frame(raw) → [Document ...]
-      loop for each framed doc
-      R->>C: chunk(doc) → list[Chunk]
-      R->>E: embed([c.embedded_content ...]) → np.ndarray
-      R->>X: extract(c.original_content) per chunk
-      R->>K: write_document(doc_id, chunks, embeddings, tags)
-      K->>DB: INSERT ... ON CONFLICT DO UPDATE (one txn per doc)
-      alt every heartbeat_every docs
-        R-->>U: stdout heartbeat
-      end
-      end
+        R->>S: iter_documents
+        S-->>R: raw row
+        R->>F: frame(raw)
+        F-->>R: list of Documents
+
+        loop for each framed document
+            R->>C: chunk(doc)
+            C-->>R: list of Chunks
+            R->>E: embed(chunk.embedded_content)
+            E-->>R: ndarray of vectors
+            R->>X: extract(chunk.original_content)
+            X-->>R: ExtractResult per chunk
+            R->>K: write_document(doc_id, chunks, vectors, tags)
+            K->>DB: INSERT ON CONFLICT DO UPDATE
+            K-->>R: row count (one txn per doc)
+        end
     end
+
     R-->>CLI: CellResult (docs, chunks, wall_seconds)
     CLI-->>U: JSON summary; exit 0/1
 ```
+
+The outer loop runs once per source row; the inner loop once per framed
+document. A single source row fans out to one or more framed documents
+(e.g. `heading_boundary` splits a giant markdown into one Document per `##`
+section); each framed doc flows independently through chunker → embedder →
+extractor → sink, one Postgres transaction each.
 
 ### Why per-document transactions
 
