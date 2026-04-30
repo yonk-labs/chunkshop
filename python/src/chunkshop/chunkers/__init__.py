@@ -69,7 +69,7 @@ def load_chunker(
             main_embedder=main_embedder,
             shared_boundary_model=shared_boundary_model,
         )
-        return NeighborExpandChunker(cfg, base)
+        return NeighborExpandChunker(cfg, base, build_chunker=_build)
     if isinstance(cfg, SummaryEmbedCfg):
         base = load_chunker(
             cfg.base,
