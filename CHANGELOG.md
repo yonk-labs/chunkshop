@@ -16,6 +16,23 @@ Documentation maintenance. No behavior changes.
   replaced with dynamic shields.io PyPI and crates.io version badges
   that auto-update with each release. Status table and monorepo-layout
   diagram refreshed to reflect Python and Rust as published packages.
+- **NEW `docs/storage-model.md`** — answers "is the original text stored
+  next to the embedding?" (yes, by default and unconditionally).
+  Documents the three-payload row shape (`original_content` /
+  `embedded_content` / `embedding`), explains which chunkers make the
+  two text columns diverge, and gives copy-paste query patterns for
+  vector search vs. UI display vs. retrieval debugging.
+- **`docs/chunkers.md` — oversize behavior table.** New section
+  documenting how each chunker handles inputs that would exceed
+  `max_chars`. Calls out the three "no char ceiling" wrappers
+  (`neighbor_expand`, `summary_embed`, `hierarchical_summary`) and the
+  Python-only warning on `semantic` overflow (Rust parity gap).
+  Foreshadows the `if_oversize` fallback chain coming in 0.3.2.
+- **`docs/extractors.md` — "where chunk metadata comes from" section.**
+  Spells out the four sources (source / framer / chunker / extractor)
+  with the chunker-wins precedence rule. Steers users toward
+  `pg_table.metadata_columns` for source-side structured metadata
+  rather than extractors.
 
 ## 0.3.0 — 2026-04-30
 

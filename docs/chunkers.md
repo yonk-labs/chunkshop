@@ -96,6 +96,41 @@ Character-to-token ratio is corpus-dependent (~4 chars/token for English prose;
 less for code, URLs, or non-Latin scripts). Defaults leave headroom. If you see
 truncation warnings from the embedder, lower `max_chars`.
 
+## What happens when a chunk would exceed `max_chars`
+
+Each chunker handles "this chunk is too big" differently. **No chunker silently
+drops content** — every character of the input is preserved across the output
+chunks. But several chunkers can emit `embedded_content` that exceeds the base
+`max_chars`, and that vector may then get truncated by the embedder.
+
+| Chunker                | Char ceiling                | Behavior on overflow                                                                                           | Warns? |
+|------------------------|-----------------------------|-----------------------------------------------------------------------------------------------------------------|:------:|
+| `sentence_aware`       | `max_chars` (default 2000)  | Cascades paragraph → sentence → hard char-slice. Hard ceiling.                                                  | —      |
+| `hierarchy`            | `max_chars` (default 2000)  | Same cascade applied per section. Hard ceiling.                                                                 | —      |
+| `semantic`             | `max_chunk_chars` (default 2000) | Hard-splits on sentence boundary within the over-large span. Hard ceiling.                                   | Python only ⚠ |
+| `fixed_overlap`        | **none** (word-level)       | No char ceiling — `window_words` controls word count, resulting chars are unbounded for word-dense inputs.      | —      |
+| `neighbor_expand`      | **none** (inherits base)    | Joins base chunks with `\n\n`. Joined `embedded_content` can be `(2·window+1) ×` the base ceiling.              | —      |
+| `summary_embed`        | **none** (inherits base)    | Replaces `embedded_content` with summarizer output — re-cap not enforced. Most summarizers shrink, not grow.    | —      |
+| `hierarchical_summary` | **none** (inherits base)    | Coarse-row `original_content` is the concatenation of grouped base chunks. Unbounded by group size.             | —      |
+
+**Practical guidance:**
+
+- If you use `neighbor_expand` with `window: 1` and base `max_chars: 2000`,
+  expect `embedded_content` up to ~6000 chars — verify it fits your embedder.
+  Drop the base chunker's `max_chars` if you see truncation.
+- If you use `summary_embed`, the summarizer is responsible for staying under
+  the limit. The default `lede` summarizer is well-behaved; user-supplied
+  callable summarizers are not validated.
+- If you use `hierarchical_summary`, the coarse rows can be very large. Pick
+  a `grouping` strategy (`fixed_n` or `word_budget`) that bounds the group
+  size to something your embedder can handle.
+- The Rust `semantic` chunker currently does NOT log a warning on hard-split
+  (parity gap with Python — fixing in 0.3.2).
+
+A planned `if_oversize` fallback chain (slated for 0.3.2) will catch oversized
+chunks at the wrapper boundary and re-chunk them through a fallback chunker
+before they reach the embedder. Until then, the rules above are the contract.
+
 ## 1. `sentence_aware` — paragraph-respecting prose splitter
 
 Source: `python/src/chunkshop/chunkers/sentence_aware.py`

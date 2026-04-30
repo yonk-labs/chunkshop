@@ -31,6 +31,39 @@ uv sync --extra lang              # just language detection
 uv sync --extra nlp               # keybert + spacy + langdetect
 ```
 
+## Where chunk metadata comes from
+
+Extractors are **one of four sources** that populate the `metadata jsonb`
+column. If you're looking for a key in a chunk's metadata and don't see it,
+work down this list:
+
+| Source                              | Stage      | What it contributes                                                                                              |
+|-------------------------------------|------------|-------------------------------------------------------------------------------------------------------------------|
+| **Source — `pg_table.metadata_columns`** | Read       | Lifts named columns from the source row into chunk metadata (`product_name`, `customer_name`, `order_id`, …). Use a Postgres VIEW for JOINed columns. |
+| **Source — file path / URL**        | Read       | `files` and `s3` sources record the path / URL on each chunk's metadata so you can trace back to the source file. |
+| **Framer**                          | Frame      | The frame's section path or JSON pointer (e.g. `heading_path: ["Engineering", "Code review"]`).                  |
+| **Chunker**                         | Chunk      | `strategy`, `heading`, `start_word`, `group_id`, etc. Chunker keys **win on collision** with extractor keys.      |
+| **Extractor**                       | Extract    | This page's subject — `entities`, `language`, `language_confidence`, etc. Should namespace to avoid colliding with chunker keys. |
+
+**Precedence on collision (later loses):** source → framer → chunker → extractor.
+Chunker-emitted keys (`strategy`, `heading`, `start_word`) survive the merge.
+Extractors should namespace their keys (`entities`, `language`, never bare
+`strategy`). See `extractors/result.py`'s class docstring for the full merge
+rule.
+
+### Practical implication
+
+If you want a structured metadata field like `product_name` next to your
+vector — use the source layer (`pg_table.metadata_columns`), not an
+extractor. Extractors are for derived metadata you compute *from the chunk
+text*. Source columns and JOINed values belong on the read side.
+
+For the JOIN-via-VIEW pattern with `pg_table.metadata_columns`, see
+[`samples/sales-crm/README.md`](samples/sales-crm/README.md). Once metadata
+lands in the `metadata jsonb` column, promote selected paths to typed
+Postgres columns with `target.promote_metadata` — see
+[`quickstart-multi-source.md`](quickstart-multi-source.md).
+
 ## 1. `rake_keywords` — classical keyword extraction (RAKE)
 
 > **Why use this.** You want a cheap, no-model, no-GPU keyword tag list on

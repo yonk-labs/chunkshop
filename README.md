@@ -175,7 +175,8 @@ CREATE TABLE {schema}.{table} (
 | [`docs/quickstart-bakeoff.md`](docs/quickstart-bakeoff.md) | Recipe card: common bakeoff shapes (embedder-only, chunker-only, full factorial). |
 | [`python/README.md`](python/README.md)         | Reference: install, CLI flags, YAML field-by-field, troubleshooting. |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit: components, data flow, extension points.     |
-| [`docs/chunkers.md`](docs/chunkers.md)         | Each chunker: what it does, when to pick it, knobs incl. `max_chars`. |
+| [`docs/storage-model.md`](docs/storage-model.md) | What chunkshop writes per row: `original_content` / `embedded_content` / `embedding`, when they diverge, and how to query each. |
+| [`docs/chunkers.md`](docs/chunkers.md)         | Each chunker: what it does, when to pick it, knobs incl. `max_chars`, oversize behavior. |
 | [`docs/summaries.md`](docs/summaries.md)       | Summary-embed + hierarchical chunker reference, summarizer modes, grouping strategies. |
 | [`docs/embedders.md`](docs/embedders.md)       | Embedder mechanics: registration patterns, BYO mode, A/B testing.     |
 | [`docs/embedder-catalogue.md`](docs/embedder-catalogue.md) | Verified-working models, known-broken ones, dim / max_tokens / size, int8 explainer. |
