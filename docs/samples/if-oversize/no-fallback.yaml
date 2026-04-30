@@ -1,0 +1,27 @@
+# Brief SC-010 — same shape, no fallback. Demonstrates the WARN-once log
+# and the resulting oversize embedded_content rows.
+cell_name: if_oversize_no_fallback
+source:
+  type: files
+  glob: docs/samples/*-*.md
+  id_from: stem
+chunker:
+  type: neighbor_expand
+  window: 2
+  max_chars: 1500
+  base:
+    type: hierarchy
+    max_chars: 1500
+  # NOTE: no if_oversize — chunks may exceed 1500 chars; expect a single
+  # WARN line in stderr.
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: chunkshop_if_oversize_demo
+  table: no_fallback
+  mode: overwrite
+runtime:
+  omp_num_threads: 4

@@ -14,6 +14,7 @@ Each entry has its own README with full walkthrough.
 | [`embedder-byo/`](embedder-byo/README.md) | Bring your own HuggingFace ONNX embedder. Four YAML lines — `hf_repo`, `onnx_path`, `pooling`, `dim` — no code edits, no rebuild. Same YAML works in Python and Rust. |
 | [`incremental-pg-table/`](incremental-pg-table/README.md) | Watermarked-cursor pattern for incremental ingest from a live Postgres source. Re-runs only pick up rows changed since last successful run. |
 | [`inline-mode/`](inline-mode/README.md) | Library / inline mode — embed chunkshop in your service and drive it document-by-document via `Pipeline.ingest_text(...)`. Python AND Rust demos. Includes orphan-cleanup verification on shrinking updates. |
+| [`if-oversize/`](if-oversize/README.md) | The `if_oversize` fallback chain — route oversized chunks (e.g. from `neighbor_expand`'s ±N joins) through a secondary chunker before they hit the embedder. Same YAML, Python + Rust. |
 
 ## Single-file recipe configs
 
