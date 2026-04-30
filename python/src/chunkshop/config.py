@@ -84,12 +84,30 @@ class SentenceAwareChunker(_Base):
     doc_type: Literal["prose", "code"] = "prose"
     max_chars: int = 2000
     min_chars: int = 200
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        return self.max_chars
 
 
 class FixedOverlapChunker(_Base):
     type: Literal["fixed_overlap"]
     window_words: int = 300
     step_words: int = 150
+    max_chars: Optional[int] = None
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        return self.max_chars
+
+    @model_validator(mode="after")
+    def _if_oversize_requires_ceiling(self):
+        if self.if_oversize is not None and self.effective_max_chars() is None:
+            raise ValueError(
+                "fixed_overlap with if_oversize set must also set max_chars "
+                "(no effective ceiling otherwise)"
+            )
+        return self
 
 
 class HierarchyChunker(_Base):
@@ -97,12 +115,33 @@ class HierarchyChunker(_Base):
     prefix_heading: bool = True
     min_section_chars: int = 100
     max_chars: int = 2000
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        return self.max_chars
 
 
 class NeighborExpandChunker(_Base):
     type: Literal["neighbor_expand"]
     base: "ChunkerConfig"
     window: int = 1  # seq ± window
+    max_chars: Optional[int] = None
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        if self.max_chars is not None:
+            return self.max_chars
+        getter = getattr(self.base, "effective_max_chars", None)
+        return getter() if getter else None
+
+    @model_validator(mode="after")
+    def _if_oversize_requires_ceiling(self):
+        if self.if_oversize is not None and self.effective_max_chars() is None:
+            raise ValueError(
+                "neighbor_expand with if_oversize set must have an effective ceiling "
+                "(set max_chars on the wrapper or on the base chunker)"
+            )
+        return self
 
 
 class SemanticChunker(_Base):
@@ -121,6 +160,10 @@ class SemanticChunker(_Base):
     # so semantic chunks respect the 512-token ceiling on bge-small/bge-base.
     max_chunk_chars: int = Field(default=2000, ge=100)
     sentence_splitter: Literal["naive", "nltk"] = "naive"
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        return self.max_chunk_chars
 
 
 # --- Summarizer config (origin-agnostic; see brief SC-002, SC-005) ---
@@ -179,6 +222,22 @@ class SummaryEmbedChunker(_Base):
     type: Literal["summary_embed"]
     base: "ChunkerConfig"
     summarizer: SummarizerConfig
+    max_chars: Optional[int] = None
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        if self.max_chars is not None:
+            return self.max_chars
+        getter = getattr(self.base, "effective_max_chars", None)
+        return getter() if getter else None
+
+    @model_validator(mode="after")
+    def _if_oversize_requires_ceiling(self):
+        if self.if_oversize is not None and self.effective_max_chars() is None:
+            raise ValueError(
+                "summary_embed with if_oversize set must have an effective ceiling"
+            )
+        return self
 
 
 class HierarchicalSummaryChunker(_Base):
@@ -187,6 +246,14 @@ class HierarchicalSummaryChunker(_Base):
     base: "ChunkerConfig"
     summarizer: SummarizerConfig
     grouping: GroupingConfig = Field(default_factory=lambda: FixedNGrouping())
+    max_chars: Optional[int] = None
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        if self.max_chars is not None:
+            return self.max_chars
+        getter = getattr(self.base, "effective_max_chars", None)
+        return getter() if getter else None
 
     @model_validator(mode="after")
     def _section_aware_requires_hierarchy_base(self):
@@ -197,6 +264,14 @@ class HierarchicalSummaryChunker(_Base):
                     f"hierarchical_summary with strategy='section_aware' requires "
                     f"base.type='hierarchy', got {base_type!r}"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _if_oversize_requires_ceiling(self):
+        if self.if_oversize is not None and self.effective_max_chars() is None:
+            raise ValueError(
+                "hierarchical_summary with if_oversize set must have an effective ceiling"
+            )
         return self
 
 
@@ -212,7 +287,11 @@ ChunkerConfig = Annotated[
     ],
     Field(discriminator="type"),
 ]
+SentenceAwareChunker.model_rebuild()
+FixedOverlapChunker.model_rebuild()
+HierarchyChunker.model_rebuild()
 NeighborExpandChunker.model_rebuild()
+SemanticChunker.model_rebuild()
 SummaryEmbedChunker.model_rebuild()
 HierarchicalSummaryChunker.model_rebuild()
 
