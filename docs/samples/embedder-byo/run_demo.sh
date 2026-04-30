@@ -81,6 +81,7 @@ echo "  schema dropped"
 
 echo
 echo "PASS — both languages successfully ingested via YAML-only BYO embedder."
-echo "       Model: byo-demo-bge-small-fp32 (CLS-pooled, 384-dim, made-up name"
-echo "       pointing at Xenova/bge-small-en-v1.5/onnx/model.onnx — NOT in either"
-echo "       registry, so the BYO path is provably what loaded it)."
+echo "       Model: byo-demo-minilm-mean (mean-pooled, 384-dim, made-up name"
+echo "       pointing at Xenova/all-MiniLM-L6-v2/onnx/model_quantized.onnx — NOT"
+echo "       in either registry, so the BYO path is provably what loaded it."
+echo "       Exercises Rust's mean-pool branch + Python's BatchLongest fix end-to-end.)"

@@ -184,16 +184,21 @@ that masks padding tokens correctly (verified by
 `chunkshop ingest` and `chunkshop-rs ingest` against a YAML pointing at a
 non-registered model. Verifies dim and chunk count from both languages.
 
-**Two known fastembed-py gotchas** (Rust side handles both cleanly):
+**Two fastembed-py quirks chunkshop handles internally:**
 
-- Mean-pooled BYO models can hit `inhomogeneous shape` tokenization errors
-  on the Python side for certain tokenizer configs. Rust path works fine.
-  If you hit this, the workaround is to use the Rust runtime for the
-  affected cell.
-- fastembed-py's per-repo cache reuses a snapshot if it exists, so a
-  second BYO registration against the same `hf_repo` with a different
-  `onnx_path` won't auto-fetch the new file. chunkshop's `register_byo_model`
-  pre-fetches via `huggingface_hub.hf_hub_download` to side-step this.
+- *Tokenizer padding normalization.* Some HF-uploaded `tokenizer.json`
+  files (notably Xenova sentence-transformers conversions) ship with
+  `Fixed=128` padding. fastembed-py's loader doesn't override existing
+  padding, producing inhomogeneous batches for chunks > 128 tokens.
+  chunkshop's `FastembedProvider.__init__` post-init normalizes the
+  tokenizer to `BatchLongest`, which works for any tokenizer.json
+  regardless of how it was authored. Both CLS- and mean-pooled BYO
+  models now work end-to-end through Python.
+- *Per-repo cache reuse.* fastembed-py's cache reuses a snapshot if it
+  exists; a second BYO registration against the same `hf_repo` with a
+  different `onnx_path` won't auto-fetch the new file. chunkshop's
+  `register_byo_model` pre-fetches via `huggingface_hub.hf_hub_download`
+  to side-step this.
 
 ### Case B-legacy: register in the hardcoded list (when YAML-pointer doesn't fit)
 

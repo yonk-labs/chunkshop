@@ -84,20 +84,23 @@ The Rust mean-pooling implementation has unit tests
 that verify it masks padding tokens correctly — this is the bug that bites
 naive mean-pooling implementations on short inputs.
 
-## Known gotchas
+## Known gotchas (handled internally; documented so you understand why)
 
-- **fastembed-py is finicky with some mean-pooled tokenizer configs** when
-  registered via `add_custom_model`. If you hit `inhomogeneous shape after
-  1 dimensions` errors during ingest, that's a fastembed-py bug, not
-  chunkshop's. The Rust path handles the same models without issue
-  (it tokenizes through the `tokenizers` crate with explicit padding
-  config). For now, prefer CLS-pooled BYO models on the Python side.
+- **Tokenizer-padding normalization (Python).** Some HF-uploaded
+  `tokenizer.json` files (notably Xenova sentence-transformers
+  conversions) ship with `Fixed=128` padding. fastembed-py's loader
+  doesn't override an existing padding config, which produces
+  inhomogeneous batches when chunks are longer than 128 tokens (short
+  ones pad to 128, long ones stay at natural length → batch tensor fails
+  to construct). chunkshop's `FastembedProvider.__init__` re-enables
+  padding as `BatchLongest` post-init to handle this universally —
+  works for any tokenizer.json regardless of how it was authored.
 
 - **HuggingFace cache reuse:** if the same `hf_repo` was previously
   cached (e.g. you registered the int8 sibling earlier), fastembed-py's
-  cache won't auto-fetch new files. chunkshop's `register_byo_model`
-  works around this by pre-fetching via `huggingface_hub.hf_hub_download`
-  before calling `add_custom_model`.
+  cache won't auto-fetch new files for a different `model_file`.
+  chunkshop's `register_byo_model` works around this by pre-fetching via
+  `huggingface_hub.hf_hub_download` before calling `add_custom_model`.
 
 - **`dim` is a contract.** If your YAML says `dim: 768` but the model
   produces 384, both implementations error before writing anything to

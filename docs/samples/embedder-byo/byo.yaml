@@ -33,22 +33,16 @@ embedder:
   # this. (You'd normally set model_name to a meaningful HF identifier
   # like `intfloat/e5-small-v2`. For this demo we use a made-up name so
   # the BYO dispatch is provably what's running, not a registry hit.)
-  model_name: byo-demo-bge-small-fp32
+  model_name: byo-demo-minilm-mean
   dim: 384
   threads: 2
   batch_size: 32
   # BYO fields — the four lines that turn "edit code" into "edit YAML":
-  hf_repo: Xenova/bge-small-en-v1.5
-  onnx_path: onnx/model.onnx             # fp32 sibling of the registered int8
-  pooling: cls                           # BGE family is CLS-pooled
+  hf_repo: Xenova/all-MiniLM-L6-v2
+  onnx_path: onnx/model_quantized.onnx
+  pooling: mean                          # MiniLM is mean-pooled — exercises the mean-pool branch in Rust
   # additional_files: defaults to the standard four
   # (tokenizer.json, tokenizer_config.json, special_tokens_map.json, config.json)
-  #
-  # Mean-pooled BYO models work in Rust today (the hand-rolled forward has a
-  # mean-pooling branch — see embedder.rs::mean_pool). Python fastembed's
-  # `add_custom_model` is finicky with some tokenizer configs for mean-pooled
-  # models; if you hit "inhomogeneous shape" errors when registering a
-  # mean-pooled model, that's a known fastembed-py issue and not chunkshop's.
 
 extractor:
   type: none
