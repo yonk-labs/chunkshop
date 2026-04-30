@@ -1,0 +1,38 @@
+# BYO embedder — larger model (1024 dim, BGE-large int8).
+#
+# Demonstrates that the YAML-only BYO path scales beyond the default
+# 768-dim BGE-base. BGE-large is ~3× the disk size of bge-base-int8
+# (~340 MB vs ~110 MB) and adds ~1pp on MTEB but ~3× the inference cost.
+# Whether the gain is worth it depends on your corpus — the bakeoff CLI
+# will tell you.
+#
+# Verified end-to-end May 2026: 5 chunks @ dim=1024 in both Python and
+# Rust against docs/samples/handbook-engineering.md.
+
+cell_name: byo_large_test
+
+source:
+  type: files
+  glob: docs/samples/handbook-engineering.md
+  id_from: stem
+
+chunker:
+  type: hierarchy
+  max_chars: 1200
+
+embedder:
+  type: fastembed
+  model_name: byo-test-bge-large-int8
+  dim: 1024
+  threads: 2
+  hf_repo: Xenova/bge-large-en-v1.5
+  onnx_path: onnx/model_quantized.onnx
+  pooling: cls
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_byo_large
+  table: chunks
+  mode: overwrite
+  source_tag: byo_large
+  hnsw: false

@@ -177,7 +177,8 @@ CREATE TABLE {schema}.{table} (
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit: components, data flow, extension points.     |
 | [`docs/chunkers.md`](docs/chunkers.md)         | Each chunker: what it does, when to pick it, knobs incl. `max_chars`. |
 | [`docs/summaries.md`](docs/summaries.md)       | Summary-embed + hierarchical chunker reference, summarizer modes, grouping strategies. |
-| [`docs/embedders.md`](docs/embedders.md)       | Model catalogue, int8 registry, A/B testing embedders, measured bench. |
+| [`docs/embedders.md`](docs/embedders.md)       | Embedder mechanics: registration patterns, BYO mode, A/B testing.     |
+| [`docs/embedder-catalogue.md`](docs/embedder-catalogue.md) | Verified-working models, known-broken ones, dim / max_tokens / size, int8 explainer. |
 | [`docs/extractors.md`](docs/extractors.md)     | Each extractor: why use it, config, promoted-column pairing.     |
 | [`docs/query-clients.md`](docs/query-clients.md) | Query the ingested table from Python, JS/TS, Rust, Go.          |
 | [`docs/samples/`](docs/samples/)               | Sample markdown + runnable configs + framer demo fixtures.       |

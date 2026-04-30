@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Documentation
+
+- **`docs/embedder-catalogue.md`** — user-facing model catalogue.
+  Tested-working models (5 verified end-to-end in both Python and Rust:
+  Xenova/bge-small-fp32, Xenova/all-MiniLM-int8 mean, Xenova/bge-large-int8,
+  Xenova/bge-m3, Xenova/jina-embeddings-v2-base-en), should-work shortlist,
+  known-broken cases (intfloat/e5-small-v2 has no ONNX, jinaai/jina-v3
+  uses external-data ONNX), dim/max_tokens/precision/pooling per model,
+  ONNX file-size table, "what fits in N GB RAM" guidance, int8
+  quantization explainer (why we use it, what it costs, what it saves).
+- **`docs/samples/embedder-byo-large/`** — runnable companion sample
+  using BGE-large-int8 (1024 dim, ~340 MB). Verified end-to-end: 5 chunks
+  @ dim=1024 in both languages. Demonstrates BYO scales beyond default 768-dim.
+- README + `docs/embedders.md` cross-link to the new catalogue.
+
 ### Added
 
 - **YAML-driven HuggingFace embedder pointer ("BYO embedder").** Adding a

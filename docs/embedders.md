@@ -14,6 +14,11 @@ This doc covers: the shipped model catalogue (with Python/Rust support per
 model), the registration patterns in both languages, how to add a new model
 in either, and how to A/B two embedders on the same corpus.
 
+> **Just looking for a list of models that work?** See
+> [**`docs/embedder-catalogue.md`**](embedder-catalogue.md) — the
+> user-facing catalogue: verified-working models, known-broken ones,
+> dimensions, max tokens, ONNX file sizes, and an int8 explainer.
+
 ## Catalogue
 
 | `model_name`                             | dim | Precision | Python | Rust  | Notes                                  |
