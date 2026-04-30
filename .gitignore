@@ -43,3 +43,6 @@ fastembed_cache/
 !src/**/*.onnx
 *.data
 sym_shape_infer_temp.onnx
+
+# Sample notes archive — extracted on demand by docs/samples/sales-crm/run-demo.sh
+docs/samples/sales-crm/notes/

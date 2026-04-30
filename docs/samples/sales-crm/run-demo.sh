@@ -35,14 +35,24 @@ heading() { echo; echo "==== $* ===="; }
 heading "step 1: load SQL into chunkshop_sales_demo (tier=$TIER)"
 bash "$REPO_ROOT/docs/samples/sales-crm/setup-sql.sh" "$TIER"
 
-heading "step 2: ingest via pg_table source"
+heading "step 2: extract notes archive (if not already extracted)"
+NOTES_DIR="$REPO_ROOT/docs/samples/sales-crm/notes"
+NOTES_TGZ="$REPO_ROOT/docs/samples/sales-crm/notes.tar.gz"
+if [[ -d "$NOTES_DIR" && -n "$(ls -A "$NOTES_DIR" 2>/dev/null)" ]]; then
+  echo "  $NOTES_DIR exists with content; skipping extract"
+else
+  tar xzf "$NOTES_TGZ" -C "$REPO_ROOT/docs/samples/sales-crm/"
+  echo "  extracted $(ls "$NOTES_DIR" | wc -l) notes from $NOTES_TGZ"
+fi
+
+heading "step 3: ingest via pg_table source"
 psql "$DSN" -c "DROP SCHEMA IF EXISTS chunkshop_sales_chunks CASCADE" >/dev/null
 "$PY_BIN" ingest --config docs/samples/sales-crm/from-pg-table.yaml
 
-heading "step 3: ingest via files source"
+heading "step 4: ingest via files source"
 "$PY_BIN" ingest --config docs/samples/sales-crm/from-files.yaml
 
-heading "step 4: side-by-side comparison"
+heading "step 5: side-by-side comparison"
 psql "$DSN" -c "
   WITH pg_stats AS (
     SELECT
@@ -65,7 +75,7 @@ psql "$DSN" -c "
   SELECT 'files',                * FROM file_stats
 "
 
-heading "step 5: sample query — top-5 'price negotiation' across both"
+heading "step 6: sample query — top-5 'price negotiation' across both"
 psql "$DSN" -At -c "
   WITH q AS (
     -- Use any chunk that mentions price negotiation as a proxy query vector.

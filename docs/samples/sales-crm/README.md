@@ -33,18 +33,20 @@ lost deals, 974 sales-call notes, "small" tier — there's also a
 | File | Role |
 |---|---|
 | [`from-pg-table.yaml`](from-pg-table.yaml) | Ingest YAML using `pg_table` source against `chunkshop_sales_demo.sales_notes` |
-| [`from-files.yaml`](from-files.yaml) | Ingest YAML using `files` source against the markdown dump |
-| [`setup-sql.sh`](setup-sql.sh) | Loads the `.sql` dump into a chunkshop-namespaced schema |
-| [`run-demo.sh`](run-demo.sh) | End-to-end: load → ingest both → compare |
+| [`from-files.yaml`](from-files.yaml) | Ingest YAML using `files` source against the (extracted) markdown dump |
+| [`setup-sql.sh`](setup-sql.sh) | Streams the gzipped SQL dump into a chunkshop-namespaced schema via `gunzip \| sed \| psql` |
+| [`run-demo.sh`](run-demo.sh) | End-to-end: load SQL → extract notes → ingest both → compare |
+| `sql/sales-crm-demo-{small,medium}.sql.gz` | Compressed schema + data dump (108 KB / 320 KB; ~6× compression) |
+| `notes.tar.gz` | 649 sales-note markdown files compressed (~130 KB; ~20× compression). `run-demo.sh` extracts to `notes/` on first run; `notes/` is gitignored. |
 
 ## ⚠️ Schema rename — why we don't load `sales_demo_app` directly
 
-The `.sql` dumps shipped at `pg-raggraph/docs/cookbook/samples/` create a
-`sales_demo_app` schema. That schema is also used by the pg-raggraph
-AGE testing setup. **`setup-sql.sh` rewrites every reference to
-`sales_demo_app` → `chunkshop_sales_demo` before loading**, so chunkshop's
-demo data lives in its own namespace and never collides with whatever
-AGE testing has loaded elsewhere.
+The `.sql` dumps (sourced from `pg-raggraph/docs/cookbook/samples/`,
+bundled here gzipped) create a `sales_demo_app` schema. That same
+schema name is used by pg-raggraph's AGE testing setup. **`setup-sql.sh`
+rewrites every reference to `sales_demo_app` → `chunkshop_sales_demo`
+before loading**, so chunkshop's demo data lives in its own namespace
+and never collides with whatever AGE testing has loaded elsewhere.
 
 If you want to load the schema as-shipped (because you're not running
 AGE tests), edit `setup-sql.sh` to skip the `sed` step.

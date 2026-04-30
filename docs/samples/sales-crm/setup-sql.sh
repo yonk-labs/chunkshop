@@ -21,11 +21,11 @@ case "$TIER" in
 esac
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-SQL_PATH="$REPO_ROOT/docs/samples/sales-crm/sql/sales-crm-demo-${TIER}.sql"
+SQL_PATH="$REPO_ROOT/docs/samples/sales-crm/sql/sales-crm-demo-${TIER}.sql.gz"
 if [[ ! -f "$SQL_PATH" ]]; then
   echo "SQL file not found: $SQL_PATH" >&2
-  echo "(Are you running from a chunkshop checkout? The sample SQL ships in" >&2
-  echo "docs/samples/sales-crm/sql/.)" >&2
+  echo "(Are you running from a chunkshop checkout? The sample SQL ships" >&2
+  echo "gzipped in docs/samples/sales-crm/sql/.)" >&2
   exit 2
 fi
 
@@ -38,9 +38,11 @@ echo "==== loading $TIER tier into $SCHEMA ($DSN) ===="
 # chunkshop_sales_demo namespace — never the original sales_demo_app.
 psql "$DSN" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS $SCHEMA CASCADE"
 
-# Substitute schema name and load. sed handles all `sales_demo_app.X`
-# occurrences plus the bare `CREATE SCHEMA sales_demo_app` line.
-sed "s/sales_demo_app/$SCHEMA/g" "$SQL_PATH" \
+# Decompress, substitute schema name, and load. The sed substitution
+# handles all `sales_demo_app.X` occurrences plus the bare
+# `CREATE SCHEMA sales_demo_app` line. gunzip streams; no temp file.
+gunzip -c "$SQL_PATH" \
+  | sed "s/sales_demo_app/$SCHEMA/g" \
   | psql "$DSN" -v ON_ERROR_STOP=1 --quiet
 
 echo

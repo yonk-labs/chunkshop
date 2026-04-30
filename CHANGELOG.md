@@ -4,6 +4,17 @@
 
 ### Changed
 
+- **Sample corpora compressed in-tree.** Bundled samples dropped from
+  ~6 MB to ~700 KB:
+  - SQL dumps gzipped (`sql/sales-crm-demo-{small,medium}.sql.gz`,
+    3.2 MB → 423 KB total). `setup-sql.sh` streams via
+    `gunzip -c | sed | psql` — no temp file, no visible decompression step.
+  - Sales-note markdown bundled as `notes.tar.gz` (2.6 MB → 130 KB,
+    ~20× compression since the templated notes are highly redundant).
+    `run-demo.sh` extracts to `notes/` on first run; that directory is
+    `.gitignore`d so the archive remains the source of truth.
+  - NTSB corpus left uncompressed (152 KB; the friction of a decompression
+    step isn't worth saving 130 KB).
 - **Sample corpora are now bundled with chunkshop.** The NTSB bakeoff
   corpus (20 .md files, ~150 KB) ships at
   `docs/samples/bakeoff-ntsb/corpus/`; the sales-crm SQL dumps (small
