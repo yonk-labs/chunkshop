@@ -285,6 +285,11 @@ pub struct PgTableSourceConfig {
     /// don't expose this field to untrusted YAML authors.
     #[serde(default, rename = "where")]
     pub where_clause: Option<String>,
+    /// Extra columns to pull alongside id/content/title and put into each
+    /// Document's metadata. Pair with `target.promote_metadata` to surface
+    /// specific keys as typed columns in the target table.
+    #[serde(default)]
+    pub metadata_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

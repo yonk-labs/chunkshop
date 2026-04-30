@@ -1,12 +1,19 @@
-# Sales CRM ingest — from a Postgres source table.
+# Sales CRM ingest — from a Postgres source table (with JOINed metadata).
 #
-# Reads sales notes directly from chunkshop_sales_demo.sales_notes (loaded
-# by setup-sql.sh). This is the "I already have an OLTP database with the
-# data, just chunk and embed it" path.
+# Reads sales notes from chunkshop_sales_demo.sales_notes_enriched, a VIEW
+# created by setup-sql.sh that pre-joins:
+#   sales_notes  →  sales_orders  →  customers
+#   sales_notes  →  salespeople
 #
-# Promotes select metadata columns (sentiment, product_name, use_case)
-# directly into the target table so you can filter on them at query time
-# without parsing JSON. Useful pattern for any database-backed corpus.
+# This is the canonical "I want columns from joined tables in my chunk
+# metadata" pattern: chunkshop's pg_table source reads ONE table, so let
+# Postgres do the join in a VIEW and point chunkshop at the view as if
+# it were a table.
+#
+# Why customer_name doesn't live on sales_notes: it's on the customers
+# table. The view reaches it via sales_notes.order_id → sales_orders →
+# customers.company_name. Sentiment / product_name / use_case ARE on
+# sales_notes (denormalized in the source schema) so they need no join.
 
 cell_name: sales_crm_from_pg
 
@@ -14,11 +21,26 @@ source:
   type: pg_table
   dsn_env: CHUNKSHOP_TEST_DSN
   schema: chunkshop_sales_demo
-  table: sales_notes
+  table: sales_notes_enriched     # the JOINed view, not the raw notes table
   id_column: note_id
   content_column: note_text
-  # Notes don't have a natural title — leave it unset; chunkshop synthesises
-  # the doc_id from note_id.
+  # Pull these structured columns alongside the chunk content. They land
+  # in each chunk's metadata jsonb and `target.promote_metadata` below
+  # surfaces the most-used ones as typed columns for fast filtered queries.
+  metadata_columns:
+    # On sales_notes (no join):
+    - sentiment              # 'positive' / 'neutral' / 'negative' / 'unspecified'
+    - product_name           # e.g. 'ClarityDB Guardian'
+    - use_case               # short tag like 'observability' / 'compliance'
+    - note_type              # 'demo' / 'discovery' / 'follow-up' / etc.
+    - order_id               # FK back to sales_orders for downstream JOINs
+    # JOINed columns (from the view) — answer the user's "where does customer_name come from?":
+    - customer_name          # customers.company_name (joined via sales_orders)
+    - customer_industry      # customers.industry
+    - customer_country       # customers.hq_country
+    - salesperson_name       # salespeople.name
+    - deal_status            # sales_orders.status — 'won' / 'lost' / 'open'
+    - deal_value             # sales_orders.total_value (numeric)
 
 framer:
   type: identity
@@ -44,3 +66,18 @@ target:
   mode: overwrite
   source_tag: sales_pg
   hnsw: false
+  # Promote the most-queried metadata to typed columns. The path is the
+  # jsonb path in chunk.metadata; the column_name (in the target table)
+  # is the path with `.` replaced by `__` and lowercased — automatic.
+  # Use these in WHERE clauses for fast filtering:
+  #   SELECT * FROM chunkshop_sales_chunks.notes_from_pg
+  #   WHERE customer_name = 'Acme Corp'
+  #     AND deal_status   = 'won'
+  promote_metadata:
+    - { path: customer_name,     type: text }
+    - { path: customer_industry, type: text }
+    - { path: salesperson_name,  type: text }
+    - { path: sentiment,         type: text }
+    - { path: product_name,      type: text }
+    - { path: deal_status,       type: text }
+    - { path: order_id,          type: int }

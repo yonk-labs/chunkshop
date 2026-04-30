@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- **`pg_table` source — `metadata_columns` field (Python + Rust).**
+  Pull arbitrary additional columns alongside id/content/title; they
+  land in each chunk's metadata jsonb. Pair with `target.promote_metadata`
+  to surface specific keys as typed columns for fast filtered queries.
+  Coerces non-JSON-native types (Decimal → float, datetime → ISO string,
+  bytes → base64) so json.dumps round-trips cleanly to the sink.
+- **VIEW pattern documented for JOINed metadata.** `setup-sql.sh` now
+  creates `sales_notes_enriched` — a Postgres VIEW that joins notes →
+  orders → customers and notes → salespeople — and `from-pg-table.yaml`
+  pulls `customer_name`, `customer_industry`, `salesperson_name`,
+  `deal_status`, etc. via the view. Demonstrates "I need columns from
+  joined tables in chunk metadata" without bloating chunkshop's YAML
+  with a `joins:` field.
+- **Compatibility matrix** in `docs/samples/sales-crm/README.md`
+  showing which incremental-ingest patterns (cron + WHERE, watermarked
+  cursor, CDC → staging, inline mode) compose with the view pattern,
+  plus the "what about updates to JOINed columns?" caveat with three
+  resolution options (periodic full re-ingest, trigger-based
+  invalidation, multi-table CDC). Verified: `run_incremental_watermark.py`
+  drives the view with `WHERE created_at > '$cursor'` cleanly — 974
+  notes processed, cursor advanced as expected.
+
 ### Changed
 
 - **Sample corpora compressed in-tree.** Bundled samples dropped from

@@ -55,3 +55,39 @@ psql "$DSN" -c "
   SELECT 'sales_orders', COUNT(*) FROM $SCHEMA.sales_orders UNION ALL
   SELECT 'sales_notes',  COUNT(*) FROM $SCHEMA.sales_notes
 "
+
+# Create a denormalized VIEW that pre-joins notes → orders → customers
+# and notes → salespeople. chunkshop's pg_table source reads ONE table
+# at a time, so when you want columns from JOINED tables (e.g.
+# customer.industry, salesperson.region), the canonical pattern is:
+# define a Postgres view that does the join in SQL, then point chunkshop
+# at the view as if it were a table. The view costs nothing at write
+# time; chunkshop pays the join cost once at ingest.
+echo
+echo "Creating denormalized view sales_notes_enriched (notes → orders → customers, salespeople)..."
+psql "$DSN" -v ON_ERROR_STOP=1 -q <<SQL
+CREATE OR REPLACE VIEW $SCHEMA.sales_notes_enriched AS
+SELECT
+  n.note_id,
+  n.note_text,
+  n.note_type,
+  n.sentiment,
+  n.product_name,
+  n.use_case,
+  n.created_at,
+  o.order_id,
+  o.status              AS deal_status,
+  o.total_value         AS deal_value,
+  o.actual_close_date   AS deal_closed_at,
+  c.company_name        AS customer_name,
+  c.industry            AS customer_industry,
+  c.hq_country          AS customer_country,
+  c.hq_state            AS customer_state,
+  sp.name               AS salesperson_name,
+  sp.region             AS salesperson_region
+FROM $SCHEMA.sales_notes n
+LEFT JOIN $SCHEMA.sales_orders o  ON n.order_id        = o.order_id
+LEFT JOIN $SCHEMA.customers   c  ON o.customer_id     = c.customer_id
+LEFT JOIN $SCHEMA.salespeople sp ON n.salesperson_id  = sp.salesperson_id;
+SQL
+psql "$DSN" -c "SELECT COUNT(*) AS enriched_view_rows FROM $SCHEMA.sales_notes_enriched"

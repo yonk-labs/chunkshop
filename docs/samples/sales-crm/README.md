@@ -120,6 +120,116 @@ corresponding markdown file. That's why distinct_docs differ (974 vs
 the rows exactly; for a "two viable load paths" demo, the difference
 is informative.
 
+## Pulling JOINed columns into chunk metadata (the VIEW pattern)
+
+A common question: chunkshop's `pg_table` source reads ONE table at a
+time, so how do you get `customer_name` (which lives on the
+`customers` table, not `sales_notes`) into your chunk metadata?
+
+**Answer:** define a Postgres VIEW that pre-joins, then point chunkshop
+at the view as if it were a table. `setup-sql.sh` ships an example:
+
+```sql
+CREATE OR REPLACE VIEW chunkshop_sales_demo.sales_notes_enriched AS
+SELECT
+  n.note_id, n.note_text, n.note_type, n.sentiment, n.product_name,
+  n.use_case, n.created_at, n.order_id,
+  o.status              AS deal_status,
+  o.total_value         AS deal_value,
+  o.actual_close_date   AS deal_closed_at,
+  c.company_name        AS customer_name,        -- ← from customers, joined via order_id
+  c.industry            AS customer_industry,
+  c.hq_country          AS customer_country,
+  c.hq_state            AS customer_state,
+  sp.name               AS salesperson_name,
+  sp.region             AS salesperson_region
+FROM chunkshop_sales_demo.sales_notes n
+LEFT JOIN chunkshop_sales_demo.sales_orders o ON n.order_id      = o.order_id
+LEFT JOIN chunkshop_sales_demo.customers   c ON o.customer_id   = c.customer_id
+LEFT JOIN chunkshop_sales_demo.salespeople sp ON n.salesperson_id = sp.salesperson_id;
+```
+
+The YAML then targets the view, listing the JOINed columns under
+`metadata_columns` and promoting the most-queried ones to typed columns
+via `target.promote_metadata`:
+
+```yaml
+source:
+  type: pg_table
+  schema: chunkshop_sales_demo
+  table: sales_notes_enriched      # the VIEW, not the raw notes table
+  id_column: note_id
+  content_column: note_text
+  metadata_columns:
+    - customer_name                # ← lives on customers, surfaced via the view
+    - customer_industry
+    - salesperson_name
+    - deal_status
+    - sentiment
+    - product_name
+
+target:
+  promote_metadata:
+    - { path: customer_name,     type: text }
+    - { path: customer_industry, type: text }
+    - { path: deal_status,       type: text }
+    - { path: salesperson_name,  type: text }
+```
+
+After ingest you can filter retrievals by joined columns directly:
+
+```sql
+SELECT customer_name, salesperson_name, left(original_content, 60)
+FROM chunkshop_sales_chunks.notes_from_pg
+WHERE customer_industry = 'Consulting'
+  AND deal_status = 'won'
+ORDER BY embedding <=> (SELECT embedding FROM ...) LIMIT 5;
+```
+
+**Why a view instead of a `joins:` field in the YAML?** Postgres views
+are the right place for join logic — they're SQL, and SQL is what
+Postgres optimizes. Putting JOIN expressions in YAML would either be a
+weak shadow of SQL or a SQL-injection hazard. The view is also reusable
+for non-chunkshop callers (analytics, dashboards).
+
+### Composability with the incremental-ingest patterns
+
+The view pattern works with every change-detection pattern in
+[`docs/incremental.md`](../../incremental.md), with one important caveat
+about updates to JOINed-table columns:
+
+| Incremental pattern | Works with view? | Notes |
+|---|---|---|
+| **A. Cron + sliding `WHERE`** | ✅ | The view passes `WHERE updated_at > NOW() - interval '15 min'` straight through to the underlying notes table. New notes get picked up. |
+| **B. Watermarked cursor** (`run_incremental_watermark.py`) | ✅ | Same as A — wrapper rewrites the WHERE; view substitutes transparently. |
+| **C. Staging-file inbox** | N/A | Files-source pattern. |
+| **D. CDC → staging table → chunkshop** | ✅ | Point the view at the staging table; rest is identical. |
+| **E. Object-storage events** | N/A | Files-source pattern. |
+| **F. Inline / library mode** | ✅ | Pipeline.ingest_text driven by your app — view is irrelevant; you push pre-joined docs in. |
+
+**The caveat — updates to JOINed columns:** chunkshop only re-ingests
+rows that match the WHERE clause on each run. If a customer renames
+(`customers.company_name` changes) but no new `sales_notes` are inserted
+for that customer, the watermark patterns won't pick up the change —
+existing chunks keep the stale `customer_name`.
+
+Three options for handling it:
+
+1. **Periodic full re-ingest.** Run with `mode: overwrite` and no WHERE
+   clause every N hours. Wasteful at scale; fine when JOINed-table data
+   changes rarely (the customer table updates monthly, say).
+2. **Trigger-based invalidation.** Add a Postgres trigger on `customers`
+   that bumps `sales_notes.updated_at` for every related note. The
+   watermark pattern then catches the cascade naturally.
+3. **CDC on the dependency tables.** Pattern D, but tap `customers` and
+   `sales_orders` too. Drives a re-ingest of affected `note_id`s into
+   a staging table.
+
+For this sales-crm dataset (notes are append-only; customer/order data
+is stable) option 1 plus a low cron cadence is sufficient. For
+production OLTP where customers do rename, options 2 or 3 are real
+considerations.
+
 ## Adapting this to your own data
 
 **You have a Postgres OLTP schema with documents in a column.** Use

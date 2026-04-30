@@ -38,6 +38,11 @@ class PgTableSource(_Base):
     content_column: str
     title_column: Optional[str] = None
     where: Optional[str] = None
+    # Extra columns to pull alongside id/content/title and put into each
+    # Document's metadata dict (key = column name, value = psycopg return).
+    # Pair with `target.promote_metadata` to surface specific keys as typed
+    # columns in the target table for fast filtered queries.
+    metadata_columns: list[str] = Field(default_factory=list)
 
 
 class HttpSource(_Base):
