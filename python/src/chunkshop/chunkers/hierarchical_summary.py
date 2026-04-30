@@ -14,11 +14,17 @@ Three grouping strategies:
 
 ``group_id`` is ``{doc.id}::g{group_index}`` — deterministic, stable across reruns,
 unique per (doc, group) tuple. Not a UUID to keep joins greppable.
+
+0.3.2: ``if_oversize`` applies only to fine rows (Brief SC-005). Coarse rows
+(one-per-group, with concat'd ``original_content`` and summarized
+``embedded_content``) are explicitly skipped — preserving the 1-per-group
+structural invariant the match-coarse / return-fine retrieval pattern depends on.
 """
 from __future__ import annotations
 from dataclasses import replace
 
 from chunkshop.chunkers.base import Chunk, Chunker
+from chunkshop.chunkers._oversize import DedupedWarner, apply_if_oversize
 from chunkshop.chunkers._summarizer import build_summarizer
 from chunkshop.config import (
     HierarchicalSummaryChunker as Cfg,
@@ -29,12 +35,20 @@ from chunkshop.config import (
 from chunkshop.sources.base import Document
 
 
+def _is_coarse_row(c: Chunk) -> bool:
+    """Brief SC-005: coarse rows are exempt from the if_oversize check."""
+    return c.metadata.get("granularity") == "coarse"
+
+
 class HierarchicalSummaryChunker:
-    def __init__(self, cfg: Cfg, base: Chunker):
+    def __init__(self, cfg: Cfg, base: Chunker, build_chunker=None):
         self.cfg = cfg
         self.base = base
         self._summarize = build_summarizer(cfg.summarizer)
         self._mode = cfg.summarizer.mode
+        self._build_chunker = build_chunker
+        ceiling = cfg.effective_max_chars()
+        self._warner = DedupedWarner("hierarchical_summary", ceiling) if ceiling is not None else None
 
     def chunk(self, doc: Document) -> list[Chunk]:
         base_chunks = self.base.chunk(doc)
@@ -75,7 +89,17 @@ class HierarchicalSummaryChunker:
                 },
             ))
             seq += 1
-        return out
+
+        return apply_if_oversize(
+            out,
+            ceiling=self.cfg.effective_max_chars(),
+            if_oversize_cfg=self.cfg.if_oversize,
+            chunker_name="hierarchical_summary",
+            build_chunker=self._build_chunker,
+            document=doc,
+            skip_check=_is_coarse_row,  # SC-005
+            warner=self._warner,
+        )
 
     def _group(self, chunks: list[Chunk]) -> list[list[Chunk]]:
         g = self.cfg.grouping

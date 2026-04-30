@@ -2,6 +2,7 @@ from __future__ import annotations
 import re
 
 from chunkshop.chunkers.base import Chunk
+from chunkshop.chunkers._oversize import DedupedWarner, apply_if_oversize
 from chunkshop.chunkers._splitting import split_to_max_chars
 from chunkshop.config import HierarchyChunker as Cfg
 from chunkshop.sources.base import Document
@@ -36,8 +37,10 @@ def _emit_section_chunks(
 
 
 class HierarchyChunker:
-    def __init__(self, cfg: Cfg):
+    def __init__(self, cfg: Cfg, build_chunker=None):
         self.cfg = cfg
+        self._build_chunker = build_chunker
+        self._warner = DedupedWarner("hierarchy", cfg.max_chars)
 
     def chunk(self, doc: Document) -> list[Chunk]:
         text = doc.content
@@ -46,13 +49,22 @@ class HierarchyChunker:
             body = text.strip()
             if not body:
                 return []
-            return _emit_section_chunks(
+            chunks = _emit_section_chunks(
                 body=body,
                 heading_text=doc.title or "",
                 doc_id=doc.id,
                 start_seq=0,
                 prefix_heading=self.cfg.prefix_heading,
                 max_chars=self.cfg.max_chars,
+            )
+            return apply_if_oversize(
+                chunks,
+                ceiling=self.cfg.effective_max_chars(),
+                if_oversize_cfg=self.cfg.if_oversize,
+                chunker_name="hierarchy",
+                build_chunker=self._build_chunker,
+                document=doc,
+                warner=self._warner,
             )
         chunks: list[Chunk] = []
         if headings[0].start() > 0:
@@ -81,4 +93,12 @@ class HierarchyChunker:
                 prefix_heading=self.cfg.prefix_heading,
                 max_chars=self.cfg.max_chars,
             ))
-        return chunks
+        return apply_if_oversize(
+            chunks,
+            ceiling=self.cfg.effective_max_chars(),
+            if_oversize_cfg=self.cfg.if_oversize,
+            chunker_name="hierarchy",
+            build_chunker=self._build_chunker,
+            document=doc,
+            warner=self._warner,
+        )

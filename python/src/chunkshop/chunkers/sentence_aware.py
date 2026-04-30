@@ -2,6 +2,7 @@ from __future__ import annotations
 import re
 
 from chunkshop.chunkers.base import Chunk
+from chunkshop.chunkers._oversize import DedupedWarner, apply_if_oversize
 from chunkshop.chunkers._splitting import split_to_max_chars
 from chunkshop.config import SentenceAwareChunker as Cfg
 from chunkshop.sources.base import Document
@@ -51,15 +52,17 @@ def _split_prose(text: str, max_chars: int, min_chars: int) -> list[str]:
 
 
 class SentenceAwareChunker:
-    def __init__(self, cfg: Cfg):
+    def __init__(self, cfg: Cfg, build_chunker=None):
         self.cfg = cfg
+        self._build_chunker = build_chunker
+        self._warner = DedupedWarner("sentence_aware", cfg.max_chars)
 
     def chunk(self, doc: Document) -> list[Chunk]:
         if self.cfg.doc_type == "code":
             splits = _split_plain(doc.content, self.cfg.max_chars, self.cfg.min_chars)
         else:
             splits = _split_prose(doc.content, self.cfg.max_chars, self.cfg.min_chars)
-        return [
+        chunks = [
             Chunk(
                 doc_id=doc.id,
                 seq_num=i,
@@ -69,3 +72,12 @@ class SentenceAwareChunker:
             )
             for i, text in enumerate(splits)
         ]
+        return apply_if_oversize(
+            chunks,
+            ceiling=self.cfg.effective_max_chars(),
+            if_oversize_cfg=self.cfg.if_oversize,
+            chunker_name="sentence_aware",
+            build_chunker=self._build_chunker,
+            document=doc,
+            warner=self._warner,
+        )

@@ -140,7 +140,7 @@ def test_hierarchical_summary_coarse_rows_exempt(caplog):
         grouping=FixedNGrouping(strategy="fixed_n", n=5),
         # No if_oversize — coarse rows would be flagged if we DID check them.
     )
-    sections = ["## Section " + str(i) + "\n" + ("lorem ipsum " * 130) for i in range(1, 6)]
+    sections = ["## Section " + str(i) + "\n" + ("lorem ipsum " * 100) for i in range(1, 6)]
     text = "\n\n".join(sections)
     out = load_chunker(cfg).chunk(_doc(text))
 

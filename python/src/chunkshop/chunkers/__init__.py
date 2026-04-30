@@ -58,11 +58,11 @@ def load_chunker(
         )
 
     if isinstance(cfg, SentCfg):
-        return SentenceAwareChunker(cfg)
+        return SentenceAwareChunker(cfg, build_chunker=_build)
     if isinstance(cfg, FixedCfg):
         return FixedOverlapChunker(cfg, build_chunker=_build)
     if isinstance(cfg, HierCfg):
-        return HierarchyChunker(cfg)
+        return HierarchyChunker(cfg, build_chunker=_build)
     if isinstance(cfg, NeighborCfg):
         base = load_chunker(
             cfg.base,
@@ -83,7 +83,7 @@ def load_chunker(
             main_embedder=main_embedder,
             shared_boundary_model=shared_boundary_model,
         )
-        return HierarchicalSummaryChunker(cfg, base)
+        return HierarchicalSummaryChunker(cfg, base, build_chunker=_build)
     if isinstance(cfg, SemanticCfg):
         main_model_name = getattr(main_embedder, "model_name", None) if main_embedder else None
         # Only pass shared_boundary_model when the chunker actually wants "same".
@@ -92,6 +92,7 @@ def load_chunker(
             cfg,
             main_embedder_model_name=main_model_name,
             shared_model=shared,
+            build_chunker=_build,
         )
     raise ValueError(f"unknown chunker type: {type(cfg).__name__}")
 

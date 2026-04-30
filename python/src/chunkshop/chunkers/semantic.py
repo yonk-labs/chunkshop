@@ -20,6 +20,7 @@ from typing import Any, Optional
 
 import numpy as np
 
+from chunkshop.chunkers._oversize import DedupedWarner, apply_if_oversize
 from chunkshop.chunkers._sentence_split import load_sentence_splitter
 from chunkshop.chunkers.base import Chunk
 from chunkshop.config import SemanticChunker as Cfg
@@ -35,6 +36,7 @@ class SemanticChunker:
         *,
         main_embedder_model_name: Optional[str] = None,
         shared_model: Any = None,
+        build_chunker=None,
     ):
         """Construct a semantic chunker.
 
@@ -46,6 +48,8 @@ class SemanticChunker:
           shared_model: an already-instantiated `fastembed.TextEmbedding`. When
             provided, the chunker reuses this instance rather than loading its
             own — critical for SC-002 (no double-load when `boundary_model="same"`).
+          build_chunker: optional callable for constructing the if_oversize
+            fallback chunker (0.3.2).
         """
         self.cfg = cfg
         self._split = load_sentence_splitter(cfg.sentence_splitter)
@@ -58,6 +62,8 @@ class SemanticChunker:
             model_name = main_embedder_model_name
         self._model_name = model_name
         self._model = shared_model  # may be None — lazy-load on first chunk()
+        self._build_chunker = build_chunker
+        self._warner = DedupedWarner("semantic", cfg.max_chunk_chars)
 
     def _get_model(self):
         if self._model is None:
@@ -81,7 +87,7 @@ class SemanticChunker:
             chunks: list[Chunk] = []
             for sub in self._split_if_too_large(sentences[0], self.cfg.max_chunk_chars):
                 chunks.append(self._mk_chunk(doc.id, len(chunks), sub))
-            return chunks
+            return self._apply_if_oversize(chunks, doc)
 
         model = self._get_model()
         embeddings = np.asarray(list(model.embed(sentences)), dtype=np.float32)
@@ -124,7 +130,18 @@ class SemanticChunker:
                 )
             for sub in sub_chunks:
                 chunks.append(self._mk_chunk(doc.id, len(chunks), sub))
-        return chunks
+        return self._apply_if_oversize(chunks, doc)
+
+    def _apply_if_oversize(self, chunks: list[Chunk], doc: Document) -> list[Chunk]:
+        return apply_if_oversize(
+            chunks,
+            ceiling=self.cfg.effective_max_chars(),
+            if_oversize_cfg=self.cfg.if_oversize,
+            chunker_name="semantic",
+            build_chunker=self._build_chunker,
+            document=doc,
+            warner=self._warner,
+        )
 
     def _merge_small(self, spans, min_sents):
         """Merge spans smaller than `min_sents` into neighbors.
