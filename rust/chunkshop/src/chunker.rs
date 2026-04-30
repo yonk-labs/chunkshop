@@ -578,6 +578,10 @@ impl SemanticChunker {
             dim: 384,
             batch_size: 16,
             threads: Some(2),
+            hf_repo: None,
+            onnx_path: None,
+            pooling: "cls".to_string(),
+            additional_files: vec![],
         };
         let boundary = FastembedEmbedder::new(boundary_cfg)?;
         Ok(Self {

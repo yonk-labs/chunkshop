@@ -146,11 +146,64 @@ embedder:
 `dim` is a contract — if the model produces a different dimension at runtime,
 both implementations raise a clear error before writing anything.
 
-### Case B: HF repo has an ONNX file, but neither library has it built in
+### Case B: any HuggingFace ONNX file (YAML-only, the recommended path)
 
-This case requires editing both languages today. (The
-[YAML-driven HF pointer brief](#yaml-driven-hf-pointer-feature-pending) tracks
-making this a YAML-only path.)
+If your model isn't built into either fastembed library but **does** have an
+ONNX file on HuggingFace, you can point at it from YAML alone. No code
+edits, no rebuild.
+
+```yaml
+embedder:
+  type: fastembed
+  model_name: byo-demo-bge-small-fp32   # any unique label
+  dim: 384                              # contract — must match runtime output
+
+  hf_repo: Xenova/bge-small-en-v1.5     # where to fetch from
+  onnx_path: onnx/model.onnx            # file inside the repo
+  pooling: cls                          # "cls" or "mean", default "cls"
+  # additional_files: [...]             # optional, defaults sane
+```
+
+`hf_repo` and `onnx_path` are paired: set both (BYO mode) or neither
+(registry mode). Same YAML works in both languages.
+
+**Pooling choice.** Most retrieval models are one of:
+
+| Family | `pooling:` value |
+|---|---|
+| BGE family (BAAI / Xenova bge variants) | `cls` |
+| sentence-transformers / MiniLM / e5 / nomic | `mean` |
+
+If you're not sure, default to `cls` and run a small bakeoff with both
+values to compare. Rust's hand-rolled forward has a mean-pooling branch
+that masks padding tokens correctly (verified by
+`rust/chunkshop/src/embedder.rs::tests::mean_pool_*`).
+
+**End-to-end demo:**
+[`docs/samples/embedder-byo/`](samples/embedder-byo/) — runs both
+`chunkshop ingest` and `chunkshop-rs ingest` against a YAML pointing at a
+non-registered model. Verifies dim and chunk count from both languages.
+
+**Two known fastembed-py gotchas** (Rust side handles both cleanly):
+
+- Mean-pooled BYO models can hit `inhomogeneous shape` tokenization errors
+  on the Python side for certain tokenizer configs. Rust path works fine.
+  If you hit this, the workaround is to use the Rust runtime for the
+  affected cell.
+- fastembed-py's per-repo cache reuses a snapshot if it exists, so a
+  second BYO registration against the same `hf_repo` with a different
+  `onnx_path` won't auto-fetch the new file. chunkshop's `register_byo_model`
+  pre-fetches via `huggingface_hub.hf_hub_download` to side-step this.
+
+### Case B-legacy: register in the hardcoded list (when YAML-pointer doesn't fit)
+
+Pre-Case-B, the way to add a model was to edit the registry in both
+languages. That path still works and is the right tool when:
+
+- You want a permanent, "shipped with chunkshop" registration (e.g. you're
+  contributing a new default model).
+- You need the bit-near-exact Rust path with custom thread-pinning, not
+  the YAML-pointer's runtime-loaded variant.
 
 **Python side** — add an entry to `_INT8_VARIANTS` in
 `python/src/chunkshop/embedders/_registry.py`:
@@ -160,17 +213,15 @@ making this a YAML-only path.)
     "model": "your-org/your-model-name",
     "dim": 768,
     "pooling": PoolingType.CLS,      # or PoolingType.MEAN, check the model card
-    "normalization": True,           # usually true for retrieval models
+    "normalization": True,
     "sources": ModelSource(hf="your-org/your-model"),
-    "model_file": "onnx/model.onnx", # path inside the HF repo
+    "model_file": "onnx/model.onnx",
     "description": "short label",
     "license": "...",
     "size_in_gb": 0.123,
     "additional_files": [
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-        "config.json",
+        "tokenizer.json", "tokenizer_config.json",
+        "special_tokens_map.json", "config.json",
     ],
 },
 ```
@@ -184,18 +235,10 @@ making this a YAML-only path.)
   ```
   Then update the helpful error message to list it. Rebuild. Done.
 
-- *If `fastembed-rs` doesn't have it but the model is CLS-pooled:* add to
-  `user_defined_source`:
-  ```rust
-  "your-org/your-model-name" => Some(("your-org/your-model", "onnx/model.onnx")),
-  ```
-  This routes through the hand-rolled `ort` path (bit-near-exact with Python
-  if Python loads the same ONNX file).
-
-- *If `fastembed-rs` doesn't have it and the model uses mean pooling:* the
-  hand-rolled forward in `embedder.rs` is CLS-only today. You'd need to add
-  a mean-pooling branch that averages the token-level outputs before
-  L2-normalizing. Tracked in the brief below.
+- *If `fastembed-rs` doesn't have it:* add to `user_defined_source` (CLS-pooled
+  models go through the bit-near-exact hand-rolled path). Mean-pooled models
+  can use either the registry path with a hardcoded entry OR the Case B
+  YAML-pointer (which routes through the same forward pass with `Pooling::Mean`).
 
 ### Case C: you want a different backend entirely
 
@@ -215,28 +258,6 @@ Add a new provider:
 
 This is the path for things like external API-backed embedders, where ONNX
 isn't involved. Bigger lift than Case B; usually warrants its own brief.
-
-### YAML-driven HF pointer (feature pending)
-
-The "edit code in both languages" friction in Case B is a real UX wart.
-There's a queued brief to add YAML fields that let a user point at any HF
-ONNX file from configuration alone — no recompile:
-
-```yaml
-embedder:
-  type: fastembed
-  model_name: my-org/my-finetuned-model        # used as the column label
-  hf_repo: my-org/my-finetuned-model           # NEW — where to fetch from
-  onnx_path: onnx/model.onnx                   # NEW — file inside the repo
-  pooling: cls                                  # NEW — cls | mean (default cls)
-  dim: 768
-  # additional_files: [ ... ]                   # NEW (optional)
-```
-
-Both languages would dynamically register at config-load. Python's path is
-small (`fastembed.add_custom_model` already does the work). Rust's path
-needs the mean-pooling branch added to the hand-rolled forward. See the
-mission brief queue.
 
 ## A/B testing two embedders
 

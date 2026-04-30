@@ -1,0 +1,65 @@
+# YAML-driven HuggingFace embedder pointer ("BYO embedder").
+#
+# This config points at `Xenova/all-MiniLM-L6-v2` (the FP32 variant —
+# distinct from the int8 variant `Xenova/all-MiniLM-L6-v2-int8` which is
+# already in chunkshop's hardcoded registry). With the four BYO fields
+# below (`hf_repo`, `onnx_path`, `pooling`, plus the standard
+# `model_name` and `dim`), the model loads dynamically from HF at
+# config-load. No `_INT8_VARIANTS` edit, no `embedder.rs` edit, no
+# rebuild required — same YAML works in `chunkshop ingest` and
+# `chunkshop-rs ingest`.
+#
+# This is the ergonomic story for "I just want to try a different
+# embedder on my corpus."
+
+cell_name: byo_demo
+
+source:
+  type: files
+  glob: docs/samples/handbook-*.md
+  id_from: stem
+
+framer:
+  type: identity
+
+chunker:
+  type: hierarchy
+  max_chars: 1200
+
+embedder:
+  type: fastembed
+  # `model_name` is a UNIQUE label — picked to NOT match anything in either
+  # language's hardcoded registry, so the BYO path is the only way to load
+  # this. (You'd normally set model_name to a meaningful HF identifier
+  # like `intfloat/e5-small-v2`. For this demo we use a made-up name so
+  # the BYO dispatch is provably what's running, not a registry hit.)
+  model_name: byo-demo-bge-small-fp32
+  dim: 384
+  threads: 2
+  batch_size: 32
+  # BYO fields — the four lines that turn "edit code" into "edit YAML":
+  hf_repo: Xenova/bge-small-en-v1.5
+  onnx_path: onnx/model.onnx             # fp32 sibling of the registered int8
+  pooling: cls                           # BGE family is CLS-pooled
+  # additional_files: defaults to the standard four
+  # (tokenizer.json, tokenizer_config.json, special_tokens_map.json, config.json)
+  #
+  # Mean-pooled BYO models work in Rust today (the hand-rolled forward has a
+  # mean-pooling branch — see embedder.rs::mean_pool). Python fastembed's
+  # `add_custom_model` is finicky with some tokenizer configs for mean-pooled
+  # models; if you hit "inhomogeneous shape" errors when registering a
+  # mean-pooled model, that's a known fastembed-py issue and not chunkshop's.
+
+extractor:
+  type: none
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_byo_demo
+  table: chunks
+  mode: overwrite
+  source_tag: byo_demo
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2

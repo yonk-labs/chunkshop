@@ -82,6 +82,10 @@ mod tests {
             dim: 384,
             batch_size: 64,
             threads: None,
+            hf_repo: None,
+            onnx_path: None,
+            pooling: "cls".to_string(),
+            additional_files: vec![],
         }
     }
 

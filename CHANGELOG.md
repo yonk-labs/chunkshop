@@ -4,6 +4,29 @@
 
 ### Added
 
+- **YAML-driven HuggingFace embedder pointer ("BYO embedder").** Adding a
+  new embedding model is now a YAML edit, not a code edit + rebuild.
+  Four new optional fields on `embedder` (when `type: fastembed`):
+  `hf_repo`, `onnx_path`, `pooling` (cls/mean, default cls), and
+  `additional_files`. When `hf_repo` is set, both implementations
+  dynamically register the model with their respective backend at
+  config-load time. When unset, the existing registry dispatch runs
+  unchanged — every existing YAML keeps working.
+  - **Python:** `register_byo_model` calls `TextEmbedding.add_custom_model`
+    after pre-fetching files via `huggingface_hub.hf_hub_download`
+    (works around fastembed-py's per-repo cache reuse).
+  - **Rust:** new `Pooling` enum + `mean_pool` helper in `embedder.rs`.
+    The hand-rolled forward pass now dispatches CLS or mean per the
+    YAML's `pooling` field. Mean-pooling correctly masks padding tokens
+    (verified by `embedder::tests::mean_pool_masks_padding`).
+  - **Sample:** `docs/samples/embedder-byo/` — YAML + run script that
+    verifies end-to-end from both languages. Verified PASS: 12 chunks
+    @ dim=384 from each language using a model name not in either
+    registry.
+  - **`docs/embedders.md` rewritten** so YAML-only is the recommended
+    path. Old "edit registry + rebuild" Case B becomes "Case B-legacy"
+    for cases where shipping a permanent registration is preferred.
+
 - **Nomic embedder wired into the Rust dispatch.** `nomic-ai/nomic-embed-text-v1.5`
   and `nomic-ai/nomic-embed-text-v1.5-Q` now resolve to fastembed-rs's
   `NomicEmbedTextV15` / `NomicEmbedTextV15Q` variants. The canonical

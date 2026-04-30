@@ -1,5 +1,5 @@
 from chunkshop.config import EmbedderConfig, FastembedEmbedder as FastCfg
-from chunkshop.embedders._registry import register_int8_variants
+from chunkshop.embedders._registry import register_int8_variants, register_byo_model
 from chunkshop.embedders.base import Embedder
 from chunkshop.embedders.fastembed_provider import FastembedProvider
 
@@ -10,8 +10,13 @@ register_int8_variants()
 
 def load_embedder(cfg: EmbedderConfig) -> Embedder:
     if isinstance(cfg, FastCfg):
+        # BYO mode: register on-the-fly with fastembed before constructing
+        # the provider. Idempotent — safe across multiple cells in one
+        # process, and across orchestrator-spawned subprocesses.
+        if cfg.hf_repo is not None:
+            register_byo_model(cfg)
         return FastembedProvider(cfg)
     raise ValueError(f"unknown embedder type: {type(cfg).__name__}")
 
 
-__all__ = ["Embedder", "load_embedder", "register_int8_variants"]
+__all__ = ["Embedder", "load_embedder", "register_int8_variants", "register_byo_model"]

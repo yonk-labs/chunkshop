@@ -278,6 +278,34 @@ class FastembedEmbedder(_Base):
     threads: Optional[int] = None  # None = fastembed auto-detects (bad on shared boxes);
                                     # set to N to cap ORT intra_op_num_threads at session init
 
+    # YAML-driven HF pointer ("BYO embedder"). When `hf_repo` is set, chunkshop
+    # registers the model_name with fastembed at config-load time using the
+    # values below — no `_INT8_VARIANTS` edit, no rebuild required. When it's
+    # NOT set, dispatch falls back to the existing registry (built-in fastembed
+    # models, the chunkshop-registered Xenova int8 variants, etc.).
+    hf_repo: Optional[str] = None
+    onnx_path: Optional[str] = None
+    pooling: Literal["cls", "mean"] = "cls"
+    additional_files: list[str] = Field(
+        default_factory=lambda: [
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "config.json",
+        ]
+    )
+
+    @model_validator(mode="after")
+    def _byo_fields_paired(self):
+        # `hf_repo` and `onnx_path` are paired: either both set (BYO mode) or
+        # both unset (registry mode). Dim must always be set.
+        if (self.hf_repo is None) != (self.onnx_path is None):
+            raise ValueError(
+                "embedder.hf_repo and embedder.onnx_path must be set together "
+                "(BYO mode) or both omitted (registry mode)."
+            )
+        return self
+
 
 EmbedderConfig = Annotated[Union[FastembedEmbedder], Field(discriminator="type")]
 

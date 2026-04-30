@@ -549,10 +549,62 @@ pub struct FastembedEmbedderConfig {
     pub batch_size: usize,
     #[serde(default)]
     pub threads: Option<usize>,
+
+    // YAML-driven HF pointer ("BYO embedder"). When `hf_repo` is set, the
+    // Rust dispatch routes through the user-defined ONNX path with these
+    // values at runtime — no `user_defined_source` edit, no rebuild
+    // required. When NOT set, dispatch falls back to the registry
+    // (resolve_model_name + user_defined_source for known names).
+    #[serde(default)]
+    pub hf_repo: Option<String>,
+    #[serde(default)]
+    pub onnx_path: Option<String>,
+    #[serde(default = "default_pooling")]
+    pub pooling: String, // "cls" | "mean"
+    #[serde(default = "default_additional_files")]
+    pub additional_files: Vec<String>,
 }
 
 fn default_batch_size() -> usize {
     64
+}
+
+fn default_pooling() -> String {
+    "cls".to_string()
+}
+
+fn default_additional_files() -> Vec<String> {
+    vec![
+        "tokenizer.json".to_string(),
+        "tokenizer_config.json".to_string(),
+        "special_tokens_map.json".to_string(),
+        "config.json".to_string(),
+    ]
+}
+
+impl FastembedEmbedderConfig {
+    /// True when YAML opted into BYO mode (both hf_repo + onnx_path set).
+    pub fn is_byo(&self) -> bool {
+        self.hf_repo.is_some() && self.onnx_path.is_some()
+    }
+
+    /// Validate field pairing: `hf_repo` and `onnx_path` go together. Called
+    /// post-deserialize alongside `validate_ident` in `load_config`.
+    pub fn validate(&self) -> Result<()> {
+        if self.hf_repo.is_some() != self.onnx_path.is_some() {
+            return Err(anyhow!(
+                "embedder.hf_repo and embedder.onnx_path must be set together \
+                 (BYO mode) or both omitted (registry mode)."
+            ));
+        }
+        if self.hf_repo.is_some() && !matches!(self.pooling.as_str(), "cls" | "mean") {
+            return Err(anyhow!(
+                "embedder.pooling must be 'cls' or 'mean' for BYO embedders, got {:?}",
+                self.pooling
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -654,6 +706,9 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
     }
     cfg.target.validate()?;
     validate_chunker_config(&cfg.chunker)?;
+    match &cfg.embedder {
+        EmbedderConfig::Fastembed(e) => e.validate()?,
+    }
     Ok(cfg)
 }
 

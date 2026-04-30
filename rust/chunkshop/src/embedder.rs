@@ -38,10 +38,32 @@ enum Backend {
     UserDefined(UserDefinedRunner),
 }
 
+/// Pooling strategy for the user-defined ONNX path. Stock fastembed-rs
+/// variants pool internally; this enum only governs the hand-rolled forward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pooling {
+    /// Take the [CLS] token's hidden state. Used by BGE family + most BERT-derived retrieval models.
+    Cls,
+    /// Mean of token-level hidden states, masked to non-padding tokens.
+    /// Used by sentence-transformers / e5 / etc.
+    Mean,
+}
+
+fn parse_pooling(s: &str) -> Result<Pooling> {
+    match s {
+        "cls" => Ok(Pooling::Cls),
+        "mean" => Ok(Pooling::Mean),
+        other => Err(anyhow!(
+            "embedder.pooling must be 'cls' or 'mean', got {other:?}"
+        )),
+    }
+}
+
 struct UserDefinedRunner {
     session: Session,
     tokenizer: Tokenizer,
     need_token_type_ids: bool,
+    pooling: Pooling,
 }
 
 /// Returns `Some((repo, onnx_path))` when `model_name` is a Xenova int8 variant
@@ -60,8 +82,30 @@ fn user_defined_source(model_name: &str) -> Option<(&'static str, &'static str)>
 
 impl FastembedEmbedder {
     pub fn new(cfg: FastembedEmbedderConfig) -> Result<Self> {
+        // Priority order for embedder dispatch:
+        //   1. BYO mode (cfg.hf_repo set): user-defined ONNX path, runtime
+        //      pooling per cfg.pooling. No registry lookups.
+        //   2. Hardcoded user_defined_source (Xenova int8 BGE): bit-near-exact
+        //      hand-rolled CLS-pooled path.
+        //   3. fastembed-rs stock variants (resolve_model_name).
+        if cfg.is_byo() {
+            // Already validated by FastembedEmbedderConfig::validate() at config-load.
+            let repo = cfg.hf_repo.as_deref().expect("BYO repo present");
+            let onnx_path = cfg.onnx_path.as_deref().expect("BYO onnx_path present");
+            let pooling = parse_pooling(&cfg.pooling)?;
+            let runner = build_user_defined_runner(repo, onnx_path, pooling)?;
+            info!(
+                "embedder loaded (BYO, YAML-driven): {} (dim={}, repo={}, file={}, pooling={:?})",
+                cfg.model_name, cfg.dim, repo, onnx_path, pooling
+            );
+            return Ok(Self {
+                cfg,
+                backend: Backend::UserDefined(runner),
+            });
+        }
+
         if let Some((repo, onnx_path)) = user_defined_source(&cfg.model_name) {
-            let runner = build_user_defined_runner(repo, onnx_path)?;
+            let runner = build_user_defined_runner(repo, onnx_path, Pooling::Cls)?;
             info!(
                 "embedder loaded (user-defined, bit-exact): {} (dim={}, repo={}, file={})",
                 cfg.model_name, cfg.dim, repo, onnx_path
@@ -127,7 +171,11 @@ impl FastembedEmbedder {
     }
 }
 
-fn build_user_defined_runner(repo: &str, onnx_path: &str) -> Result<UserDefinedRunner> {
+fn build_user_defined_runner(
+    repo: &str,
+    onnx_path: &str,
+    pooling: Pooling,
+) -> Result<UserDefinedRunner> {
     let HfModelFiles {
         onnx,
         tokenizer,
@@ -205,6 +253,7 @@ fn build_user_defined_runner(repo: &str, onnx_path: &str) -> Result<UserDefinedR
         session,
         tokenizer,
         need_token_type_ids,
+        pooling,
     })
 }
 
@@ -237,9 +286,12 @@ impl UserDefinedRunner {
         let type_ids_arr: Array2<i64> = Array2::from_shape_vec((batch_size, seq_len), type_ids)
             .context("type_ids array shape")?;
 
+        // Clone mask for ORT input — we need to keep a copy for mean_pool below.
+        // Keeping the clone close to the move site so the diff explains itself.
+        let mask_for_ort = mask_arr.clone();
         let mut session_inputs = ort::inputs![
             "input_ids" => Value::from_array(ids_arr)?,
-            "attention_mask" => Value::from_array(mask_arr)?,
+            "attention_mask" => Value::from_array(mask_for_ort)?,
         ];
         if self.need_token_type_ids {
             session_inputs.push((
@@ -266,17 +318,20 @@ impl UserDefinedRunner {
         let last_hidden = last_hidden
             .ok_or_else(|| anyhow!("no f32 output tensor found in session outputs"))?;
 
-        // Expect shape (batch, seq, hidden). CLS-pool: take [:, 0, :].
+        // Expect shape (batch, seq, hidden). Pool per `self.pooling`.
         if last_hidden.ndim() != 3 {
             return Err(anyhow!(
                 "expected 3D output (batch, seq, hidden), got ndim={}",
                 last_hidden.ndim()
             ));
         }
-        let cls = last_hidden.slice(s![.., 0, ..]).to_owned();
+        let pooled: ndarray::Array2<f32> = match self.pooling {
+            Pooling::Cls => last_hidden.slice(s![.., 0, ..]).to_owned().into_dimensionality().unwrap(),
+            Pooling::Mean => mean_pool(&last_hidden, &mask_arr)?,
+        };
 
         let mut out = Vec::with_capacity(batch_size);
-        for row in cls.rows() {
+        for row in pooled.rows() {
             let v: Vec<f32> = row.to_vec();
             // Numpy's np.linalg.norm on f32 promotes to f64 internally for
             // the sum-of-squares accumulation; mirror that to maximize
@@ -288,6 +343,64 @@ impl UserDefinedRunner {
         }
         Ok(out)
     }
+}
+
+/// Mean-pool the last_hidden output across non-padding tokens.
+///
+/// `last_hidden` shape: (batch, seq, hidden). `mask` shape: (batch, seq) with
+/// 1 = real token, 0 = padding. Result shape: (batch, hidden). Mirrors what
+/// sentence-transformers / fastembed do for mean-pooled models like e5 /
+/// MiniLM. Without masking, padding tokens contribute zero-ish but real
+/// values to the mean — for short inputs this materially distorts the vector.
+fn mean_pool(
+    last_hidden: &ndarray::ArrayD<f32>,
+    mask: &ndarray::Array2<i64>,
+) -> Result<ndarray::Array2<f32>> {
+    let shape = last_hidden.shape();
+    if shape.len() != 3 {
+        return Err(anyhow!("mean_pool expects 3D last_hidden, got {:?}", shape));
+    }
+    let (batch, seq, hidden) = (shape[0], shape[1], shape[2]);
+    if mask.shape() != [batch, seq] {
+        return Err(anyhow!(
+            "mean_pool: mask shape {:?} does not match last_hidden batch/seq ({}, {})",
+            mask.shape(),
+            batch,
+            seq
+        ));
+    }
+    let last3 = last_hidden
+        .view()
+        .into_dimensionality::<ndarray::Ix3>()
+        .map_err(|e| anyhow!("mean_pool: cannot view as Ix3: {e}"))?;
+    let mut out = ndarray::Array2::<f32>::zeros((batch, hidden));
+    for b in 0..batch {
+        let mut acc = vec![0.0_f32; hidden];
+        let mut count: f32 = 0.0;
+        for t in 0..seq {
+            if mask[[b, t]] != 0 {
+                count += 1.0;
+                let row = last3.slice(s![b, t, ..]);
+                for (i, v) in row.iter().enumerate() {
+                    acc[i] += *v;
+                }
+            }
+        }
+        // If a row has zero unmasked tokens (shouldn't happen — tokenizers
+        // emit at least the [CLS]/<s> token even for empty input), fall back
+        // to the first token to avoid NaN. Otherwise divide.
+        if count == 0.0 {
+            let row = last3.slice(s![b, 0, ..]);
+            for (i, v) in row.iter().enumerate() {
+                out[[b, i]] = *v;
+            }
+        } else {
+            for i in 0..hidden {
+                out[[b, i]] = acc[i] / count;
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Map a Python-style `model_name` to a fastembed-rs `EmbeddingModel`. Only
@@ -338,4 +451,84 @@ fn resolve_model_name(name: &str) -> Result<EmbeddingModel> {
              Xenova/bge-small-en-v1.5-int8."
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `mean_pool` should average the unmasked tokens and ignore padding.
+    /// Crafted so the right answer is hand-checkable.
+    #[test]
+    fn mean_pool_masks_padding() {
+        // batch=1, seq=4, hidden=3. First 2 tokens are real, last 2 are padding.
+        // Real values: [1,2,3], [4,5,6] → mean = [2.5, 3.5, 4.5].
+        // Padding values would be [99,99,99] each — if mask is wrong we'd see
+        // them dragging the mean toward 99.
+        let last_hidden = ndarray::Array3::<f32>::from_shape_vec(
+            (1, 4, 3),
+            vec![
+                1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0,
+                99.0, 99.0, 99.0,
+                99.0, 99.0, 99.0,
+            ],
+        )
+        .unwrap()
+        .into_dyn();
+        let mask = ndarray::Array2::<i64>::from_shape_vec((1, 4), vec![1, 1, 0, 0]).unwrap();
+
+        let pooled = mean_pool(&last_hidden, &mask).unwrap();
+        assert_eq!(pooled.shape(), &[1, 3]);
+        let row: Vec<f32> = pooled.row(0).to_vec();
+        assert!((row[0] - 2.5).abs() < 1e-6, "got {row:?}");
+        assert!((row[1] - 3.5).abs() < 1e-6, "got {row:?}");
+        assert!((row[2] - 4.5).abs() < 1e-6, "got {row:?}");
+    }
+
+    /// All-padding row falls back to first-token (no NaN). Defensive path.
+    #[test]
+    fn mean_pool_all_padding_uses_first_token() {
+        let last_hidden = ndarray::Array3::<f32>::from_shape_vec(
+            (1, 2, 2),
+            vec![7.0, 8.0, 99.0, 99.0],
+        )
+        .unwrap()
+        .into_dyn();
+        let mask = ndarray::Array2::<i64>::from_shape_vec((1, 2), vec![0, 0]).unwrap();
+        let pooled = mean_pool(&last_hidden, &mask).unwrap();
+        let row: Vec<f32> = pooled.row(0).to_vec();
+        assert_eq!(row, vec![7.0, 8.0]);
+    }
+
+    /// Multi-batch: each row pools independently against its own mask.
+    #[test]
+    fn mean_pool_multi_batch_independent_masks() {
+        let last_hidden = ndarray::Array3::<f32>::from_shape_vec(
+            (2, 3, 1),
+            vec![
+                1.0, 2.0, 3.0,    // batch 0
+                10.0, 20.0, 30.0, // batch 1
+            ],
+        )
+        .unwrap()
+        .into_dyn();
+        // batch 0: all real → mean = 2.0
+        // batch 1: only first → mean = 10.0
+        let mask = ndarray::Array2::<i64>::from_shape_vec(
+            (2, 3),
+            vec![1, 1, 1, 1, 0, 0],
+        )
+        .unwrap();
+        let pooled = mean_pool(&last_hidden, &mask).unwrap();
+        assert!((pooled[[0, 0]] - 2.0).abs() < 1e-6);
+        assert!((pooled[[1, 0]] - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parse_pooling_round_trips() {
+        assert_eq!(parse_pooling("cls").unwrap(), Pooling::Cls);
+        assert_eq!(parse_pooling("mean").unwrap(), Pooling::Mean);
+        assert!(parse_pooling("max").is_err());
+    }
 }
