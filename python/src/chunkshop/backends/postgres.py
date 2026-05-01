@@ -64,3 +64,23 @@ class PostgresBackend:
             return f"{col_expr}->>'{segs[0]}'"
         head = "->".join([col_expr] + [f"'{s}'" for s in segs[:-1]])
         return f"{head}->>'{segs[-1]}'"
+
+    # DDL primitives
+    def create_database_sql(self, name: str) -> str:
+        return f"CREATE SCHEMA IF NOT EXISTS {self.quote_ident(name)}"
+
+    def add_column_if_not_exists_sql(self, fq: str, col: str, type_ddl: str) -> str:
+        return f"ALTER TABLE {fq} ADD COLUMN IF NOT EXISTS {self.quote_ident(col)} {type_ddl}"
+
+    def drop_table_sql(self, fq: str) -> str:
+        return f"DROP TABLE {fq}"
+
+    # Upsert / conflict handling
+    def upsert_clause(self, key_cols: list[str], update_cols: list[str]) -> str:
+        keys = ", ".join(self.quote_ident(c) for c in key_cols)
+        if not update_cols:
+            return f"ON CONFLICT ({keys}) DO NOTHING"
+        sets = ", ".join(
+            f"{self.quote_ident(c)} = EXCLUDED.{self.quote_ident(c)}" for c in update_cols
+        )
+        return f"ON CONFLICT ({keys}) DO UPDATE SET {sets}"

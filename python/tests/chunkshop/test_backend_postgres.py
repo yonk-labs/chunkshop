@@ -79,3 +79,36 @@ def test_json_path_sql_simple_key(be):
 
 def test_json_path_sql_nested(be):
     assert be.json_path_sql("metadata", "entities.ORG") == "metadata->'entities'->>'ORG'"
+
+
+def test_create_database_sql_uses_create_schema(be):
+    out = be.create_database_sql("chunkshop_test")
+    assert "CREATE SCHEMA IF NOT EXISTS" in out
+    assert '"chunkshop_test"' in out
+
+
+def test_add_column_if_not_exists_sql(be):
+    out = be.add_column_if_not_exists_sql('"db"."tbl"', "newcol", "text")
+    assert "ALTER TABLE" in out
+    assert "ADD COLUMN IF NOT EXISTS" in out
+    assert '"newcol"' in out
+    assert "text" in out
+
+
+def test_drop_table_sql(be):
+    out = be.drop_table_sql('"db"."tbl"')
+    assert out.startswith("DROP TABLE")
+    assert '"db"."tbl"' in out
+
+
+def test_upsert_clause_pg_form(be):
+    out = be.upsert_clause(["id"], ["content", "metadata"])
+    assert "ON CONFLICT" in out and '("id")' in out
+    assert 'DO UPDATE SET' in out
+    assert '"content" = EXCLUDED."content"' in out
+    assert '"metadata" = EXCLUDED."metadata"' in out
+
+
+def test_upsert_clause_empty_update_cols(be):
+    out = be.upsert_clause(["id"], [])
+    assert "DO NOTHING" in out
