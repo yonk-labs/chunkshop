@@ -1,4 +1,16 @@
 """Sink layer: per-backend writers for chunkshop's chunks table."""
+from chunkshop.backends import load_backend
 from chunkshop.sinks.base import Sink
+from chunkshop.sinks.pg import PgSink
 
-__all__ = ["Sink"]
+
+def load_sink(cfg, embed_dim: int) -> Sink:
+    """Factory: dispatch on cfg.type, attach matching Backend, return Sink."""
+    if cfg.type == "postgres":
+        backend = load_backend(name="postgres", dsn_env=cfg.dsn_env)
+        return PgSink(cfg=cfg, backend=backend, embed_dim=embed_dim)
+    # Future: "sqlite" (Phase 5), "mariadb" (Phase 7); "clickhouse" out of scope this plan
+    raise ValueError(f"unknown target type: {cfg.type!r}")
+
+
+__all__ = ["Sink", "PgSink", "load_sink"]
