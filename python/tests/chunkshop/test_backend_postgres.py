@@ -3,6 +3,7 @@ import json
 import pytest
 import numpy as np
 from chunkshop.backends.postgres import PostgresBackend
+from chunkshop.backends.base import ColSpec
 
 
 @pytest.fixture
@@ -112,3 +113,40 @@ def test_upsert_clause_pg_form(be):
 def test_upsert_clause_empty_update_cols(be):
     out = be.upsert_clause(["id"], [])
     assert "DO NOTHING" in out
+
+
+def _canonical_cols():
+    """The chunkshop-canonical column list — what Sink will pass to Backend."""
+    return [
+        ColSpec("id", "text", nullable=False, is_primary_key=True),
+        ColSpec("doc_id", "text", nullable=False),
+        ColSpec("seq_num", "int", nullable=False),
+        ColSpec("original_content", "text", nullable=False),
+        ColSpec("embedded_content", "text", nullable=False),
+        ColSpec("tags", "text[]", nullable=False, default="'{}'"),
+        ColSpec("metadata", "jsonb", nullable=False, default="'{}'"),
+        ColSpec("embedding", "vector(384)", nullable=False),
+        ColSpec("source", "text"),
+        ColSpec("created_at", "timestamptz", nullable=False, default="now()"),
+    ]
+
+
+def test_emit_chunks_table_ddl_returns_create_table_then_indexes(be):
+    out = be.emit_chunks_table_ddl(
+        fq='"db"."chunks"', cols=_canonical_cols(), hnsw=True, dim=384,
+    )
+    assert isinstance(out, list) and len(out) >= 2
+    create = out[0]
+    assert create.startswith("CREATE TABLE IF NOT EXISTS")
+    assert '"id" text' in create
+    assert "PRIMARY KEY" in create
+    assert "vector(384)" in create
+    assert any("CREATE INDEX" in s and "doc_id" in s and "seq_num" in s for s in out[1:])
+    assert any("USING hnsw" in s and "vector_cosine_ops" in s for s in out[1:])
+
+
+def test_emit_chunks_table_ddl_hnsw_false_omits_hnsw_index(be):
+    out = be.emit_chunks_table_ddl(
+        fq='"db"."chunks"', cols=_canonical_cols(), hnsw=False, dim=384,
+    )
+    assert not any("USING hnsw" in s for s in out)

@@ -84,3 +84,49 @@ class PostgresBackend:
             f"{self.quote_ident(c)} = EXCLUDED.{self.quote_ident(c)}" for c in update_cols
         )
         return f"ON CONFLICT ({keys}) DO UPDATE SET {sets}"
+
+    # Composite DDL
+    def emit_chunks_table_ddl(
+        self,
+        fq: str,
+        cols: list,  # list[ColSpec]
+        hnsw: bool,
+        dim: int,
+        engine: str | None = None,
+    ) -> list[str]:
+        # Engine clause is a no-op on PG (engine is the cluster's, not table-level).
+        del engine
+        del dim  # encoded in the embedding column's type_ddl
+
+        col_lines = []
+        pk_cols = []
+        for c in cols:
+            line = f"  {self.quote_ident(c.name)} {c.type_ddl}"
+            if c.default is not None:
+                line += f" DEFAULT {c.default}"
+            if not c.nullable:
+                line += " NOT NULL"
+            col_lines.append(line)
+            if c.is_primary_key:
+                pk_cols.append(c.name)
+
+        lines = ",\n".join(col_lines)
+        if pk_cols:
+            pk = ", ".join(self.quote_ident(c) for c in pk_cols)
+            lines += f",\n  PRIMARY KEY ({pk})"
+
+        create = f"CREATE TABLE IF NOT EXISTS {fq} (\n{lines}\n)"
+
+        # Strip schema prefix from fq for index naming: "db"."chunks" → chunks
+        bare_table = fq.rsplit('.', 1)[-1].strip('"')
+        statements = [create]
+        statements.append(
+            f'CREATE INDEX IF NOT EXISTS {self.quote_ident(bare_table + "_doc_seq_idx")} '
+            f'ON {fq} ("doc_id", "seq_num")'
+        )
+        if hnsw:
+            statements.append(
+                f'CREATE INDEX IF NOT EXISTS {self.quote_ident(bare_table + "_emb_hnsw_idx")} '
+                f'ON {fq} USING hnsw ("embedding" vector_cosine_ops)'
+            )
+        return statements
