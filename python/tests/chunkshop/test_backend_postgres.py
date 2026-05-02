@@ -1,5 +1,6 @@
 import os
 import json
+import hashlib
 import pytest
 import numpy as np
 from chunkshop.backends.postgres import PostgresBackend
@@ -150,3 +151,11 @@ def test_emit_chunks_table_ddl_hnsw_false_omits_hnsw_index(be):
         fq='"db"."chunks"', cols=_canonical_cols(), hnsw=False, dim=384,
     )
     assert not any("USING hnsw" in s for s in out)
+
+
+def test_advisory_lock_key_is_stable(be):
+    expected = int.from_bytes(
+        hashlib.blake2b(b"chunkshop_test", digest_size=8).digest(),
+        "big", signed=True,
+    )
+    assert be._advisory_lock_key("chunkshop_test") == expected

@@ -1,7 +1,9 @@
 """Postgres backend: psycopg-based connection + dialect helpers."""
 from __future__ import annotations
+import hashlib
 import json
 import os
+import re
 from contextlib import contextmanager
 from typing import Any, Iterator, Literal
 
@@ -130,3 +132,43 @@ class PostgresBackend:
                 f'ON {fq} USING hnsw ("embedding" vector_cosine_ops)'
             )
         return statements
+
+    # Introspection
+    def table_exists(self, cur: Any, db: str, table: str) -> bool:
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname=%s AND tablename=%s)",
+            (db, table),
+        )
+        return cur.fetchone()[0]
+
+    def embedding_dim(self, cur: Any, db: str, table: str) -> int | None:
+        cur.execute(
+            """
+            SELECT format_type(atttypid, atttypmod)
+            FROM pg_attribute
+            WHERE attrelid = (
+                SELECT c.oid FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relname = %s AND n.nspname = %s
+            ) AND attname = 'embedding'
+            """,
+            (table, db),
+        )
+        r = cur.fetchone()
+        if r is None:
+            return None
+        m = re.match(r"^vector\((\d+)\)$", r[0])
+        return int(m.group(1)) if m else None
+
+    @staticmethod
+    def _advisory_lock_key(name: str) -> int:
+        digest = hashlib.blake2b(name.encode("utf-8"), digest_size=8).digest()
+        return int.from_bytes(digest, "big", signed=True)
+
+    @contextmanager
+    def with_create_lock(self, cur: Any, key: str) -> Iterator[None]:
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (self._advisory_lock_key(key),))
+        try:
+            yield
+        finally:
+            pass
