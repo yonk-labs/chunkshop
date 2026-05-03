@@ -1,0 +1,42 @@
+from __future__ import annotations
+from typing import Iterator
+
+from chunkshop.backends.sqlite import SQLiteBackend
+from chunkshop.config import SqliteTableSource as Cfg
+from chunkshop.sources.base import Document
+
+
+class SqliteTableSource:
+    def __init__(self, cfg: Cfg):
+        self.cfg = cfg
+        self.backend = SQLiteBackend(dsn_env=cfg.dsn_env)
+
+    def iter_documents(self) -> Iterator[Document]:
+        cols = [self.cfg.id_column, self.cfg.content_column]
+        title_idx = None
+        if self.cfg.title_column:
+            title_idx = len(cols)
+            cols.append(self.cfg.title_column)
+        meta_start = len(cols)
+        cols.extend(self.cfg.metadata_columns)
+
+        cols_sql = ", ".join(self.backend.quote_ident(c) for c in cols)
+        fq = self.backend.fq_table(self.cfg.database_name, self.cfg.table)
+        query = f"SELECT {cols_sql} FROM {fq}"
+        if self.cfg.where:
+            query += f" WHERE {self.cfg.where}"
+
+        with self.backend.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(query)
+            for row in cur:
+                metadata = {
+                    self.cfg.metadata_columns[i]: row[meta_start + i]
+                    for i in range(len(self.cfg.metadata_columns))
+                }
+                yield Document(
+                    id=str(row[0]),
+                    content=row[1],
+                    title=row[title_idx] if title_idx is not None else None,
+                    metadata=metadata if metadata else None,
+                )

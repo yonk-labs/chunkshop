@@ -4,6 +4,7 @@ from chunkshop.config import (
     InlineSource as InlineCfg,
     JsonCorpusSource as JsonCfg,
     PgTableSource as PgCfg,
+    SqliteTableSource as SqliteCfg,
     HttpSource as HttpCfg,
     S3Source as S3Cfg,
     SourceConfig,
@@ -12,6 +13,7 @@ from chunkshop.sources.base import Document, Source
 from chunkshop.sources.files import FilesSource
 from chunkshop.sources.json_corpus import JsonCorpusSource
 from chunkshop.sources.pg_table import PgTableSource
+from chunkshop.sources.sqlite_table import SqliteTableSource
 from chunkshop.sources.http import HttpSource
 from chunkshop.sources.s3 import S3Source
 
@@ -23,6 +25,8 @@ def load_source(cfg: SourceConfig) -> Source:
         return JsonCorpusSource(cfg)
     if isinstance(cfg, PgCfg):
         return PgTableSource(cfg)
+    if isinstance(cfg, SqliteCfg):
+        return SqliteTableSource(cfg)
     if isinstance(cfg, HttpCfg):
         return HttpSource(cfg)
     if isinstance(cfg, S3Cfg):
