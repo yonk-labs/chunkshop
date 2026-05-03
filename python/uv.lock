@@ -248,6 +248,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all-backends = [
+    { name = "sqlite-vec" },
+]
 dev = [
     { name = "onnx" },
     { name = "pytest" },
@@ -282,6 +285,9 @@ s3 = [
 spacy = [
     { name = "spacy" },
 ]
+sqlite = [
+    { name = "sqlite-vec" },
+]
 sumy = [
     { name = "sumy" },
 ]
@@ -289,6 +295,7 @@ sumy = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.28" },
+    { name = "chunkshop", extras = ["sqlite"], marker = "extra == 'all-backends'" },
     { name = "click", specifier = ">=8.1" },
     { name = "fastembed", specifier = ">=0.3" },
     { name = "keybert", marker = "extra == 'keybert'", specifier = ">=0.8" },
@@ -310,9 +317,10 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'nlp'", specifier = ">=3.0" },
     { name = "spacy", marker = "extra == 'nlp'", specifier = ">=3.7" },
     { name = "spacy", marker = "extra == 'spacy'", specifier = ">=3.7" },
+    { name = "sqlite-vec", marker = "extra == 'sqlite'", specifier = ">=0.1.6" },
     { name = "sumy", marker = "extra == 'sumy'", specifier = ">=0.11" },
 ]
-provides-extras = ["extractors", "keybert", "spacy", "lang", "nlp", "quantize", "lede", "sumy", "summarize", "s3", "dev"]
+provides-extras = ["extractors", "keybert", "spacy", "lang", "nlp", "quantize", "lede", "sumy", "summarize", "s3", "sqlite", "all-backends", "dev"]
 
 [[package]]
 name = "click"
@@ -2174,6 +2182,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/67/3d/926db774c9c98acf66cb4ed7faf6c377746f3e00b84b700d0868b95d0712/spacy-loggers-1.0.5.tar.gz", hash = "sha256:d60b0bdbf915a60e516cc2e653baeff946f0cfc461b452d11a4d5458c6fe5f24", size = 20811, upload-time = "2023-09-11T12:26:52.323Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/78/d1a1a026ef3af911159398c939b1509d5c36fe524c7b644f34a5146c4e16/spacy_loggers-1.0.5-py3-none-any.whl", hash = "sha256:196284c9c446cc0cdb944005384270d775fdeaf4f494d8e269466cfa497ef645", size = 22343, upload-time = "2023-09-11T12:26:50.586Z" },
+]
+
+[[package]]
+name = "sqlite-vec"
+version = "0.1.9"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/85/9fad0045d8e7c8df3e0fa5a56c630e8e15ad6e5ca2e6106fceb666aa6638/sqlite_vec-0.1.9-py3-none-macosx_10_6_x86_64.whl", hash = "sha256:1b62a7f0a060d9475575d4e599bbf94a13d85af896bc1ce86ee80d1b5b48e5fb", size = 131171, upload-time = "2026-03-31T08:02:31.717Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/3d/3677e0cd2f92e5ebc43cd29fbf565b75582bff1ccfa0b8327c7508e1084f/sqlite_vec-0.1.9-py3-none-macosx_11_0_arm64.whl", hash = "sha256:1d52e30513bae4cc9778ddbf6145610434081be4c3afe57cd877893bad9f6b6c", size = 165434, upload-time = "2026-03-31T08:02:32.712Z" },
+    { url = "https://files.pythonhosted.org/packages/00/d4/f2b936d3bdc38eadcbd2a87875815db36430fab0363182ba5d12cd8e0b51/sqlite_vec-0.1.9-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4e921e592f24a5f9a18f590b6ddd530eb637e2d474e3b1972f9bbeb773aa3cb9", size = 160076, upload-time = "2026-03-31T08:02:33.796Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/ad/6afd073b0f817b3e03f9e37ad626ae341805891f23c74b5292818f49ac63/sqlite_vec-0.1.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux1_x86_64.whl", hash = "sha256:1515727990b49e79bcaf75fdee2ffc7d461f8b66905013231251f1c8938e7786", size = 163388, upload-time = "2026-03-31T08:02:34.888Z" },
+    { url = "https://files.pythonhosted.org/packages/42/89/81b2907cda14e566b9bf215e2ad82fc9b349edf07d2010756ffdb902f328/sqlite_vec-0.1.9-py3-none-win_amd64.whl", hash = "sha256:4a28dc12fa4b53d7b1dced22da2488fade444e96b5d16fd2d698cd670675cf32", size = 292804, upload-time = "2026-03-31T08:02:36.035Z" },
 ]
 
 [[package]]
