@@ -12,7 +12,7 @@ cell_name: sales_notes_incremental_demo
 source:
   type: pg_table
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_pg_demo
+  database: chunkshop_pg_demo
   table: sales_notes
   id_column: id
   content_column: body
@@ -37,8 +37,9 @@ extractor:
   type: none
 
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_pg_demo_chunks
+  database: chunkshop_pg_demo_chunks
   table: notes_chunks
   mode: create_if_missing
   source_tag: sales_notes_demo

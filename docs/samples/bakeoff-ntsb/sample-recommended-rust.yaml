@@ -1,4 +1,4 @@
-'# NOTE': Top combo from bakeoff 'ntsb_bakeoff' (MRR=0.958, r@1=0.917). Point `source` at your real corpus before running `chunkshop ingest`.
+# NOTE: Top combo from bakeoff 'ntsb_bakeoff' (MRR=0.958, r@1=0.917). Point `source` at your real corpus before running `chunkshop ingest`.
 cell_name: ntsb_bakeoff_recommended
 chunker:
   doc_type: prose
@@ -18,7 +18,8 @@ source:
   id_from: stem
   type: files
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_DSN
   mode: overwrite
-  schema: chunkshop_bakeoff_ntsb
+  database: chunkshop_bakeoff_ntsb
   table: ntsb_bakeoff_production

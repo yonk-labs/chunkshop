@@ -16,7 +16,7 @@ cell_name: sales_notes_incremental
 source:
   type: pg_table
   dsn_env: SALES_DB_DSN
-  schema: public
+  database: public
   table: sales_notes
   id_column: id
   content_column: body
@@ -50,8 +50,9 @@ extractor:
   type: none
 
 target:
+  type: postgres
   dsn_env: VECTORS_DB_DSN
-  schema: rag
+  database: rag
   table: notes_chunks
   # `create_if_missing` works for both the first run and subsequent runs.
   # Switch to `append` once you want strict pre-flight dim/source checks.

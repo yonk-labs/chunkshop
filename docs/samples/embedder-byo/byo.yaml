@@ -48,8 +48,9 @@ extractor:
   type: none
 
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_byo_demo
+  database: chunkshop_byo_demo
   table: chunks
   mode: overwrite
   source_tag: byo_demo

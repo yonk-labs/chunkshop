@@ -19,8 +19,9 @@ embedder:
   dim: 768
   threads: 4
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_DSN
-  schema: chunkshop_samples
+  database: chunkshop_samples
   table: summary_embed
   mode: create_if_missing
   source_tag: summary_demo
