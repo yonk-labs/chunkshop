@@ -485,7 +485,7 @@ class PromoteColumn(_Base):
 
 
 class TargetConfig(_Base):
-    type: Literal["postgres"]   # discriminator; future: + "sqlite", "mariadb", "clickhouse"
+    type: Literal["postgres", "sqlite"]   # MariaDB added in Task 24
     dsn_env: str
     database_name: str = Field(alias="database")
     table: str

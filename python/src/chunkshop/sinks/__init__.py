@@ -9,7 +9,11 @@ def load_sink(cfg, embed_dim: int) -> Sink:
     if cfg.type == "postgres":
         backend = load_backend(name="postgres", dsn_env=cfg.dsn_env)
         return PgSink(cfg=cfg, backend=backend, embed_dim=embed_dim)
-    # Future: "sqlite" (Phase 5), "mariadb" (Phase 7); "clickhouse" out of scope this plan
+    if cfg.type == "sqlite":
+        from chunkshop.sinks.sqlite import SqliteSink
+        backend = load_backend(name="sqlite", dsn_env=cfg.dsn_env)
+        return SqliteSink(cfg=cfg, backend=backend, embed_dim=embed_dim)
+    # Future: "mariadb" added in Phase 7; "clickhouse" out of scope this plan
     raise ValueError(f"unknown target type: {cfg.type!r}")
 
 
