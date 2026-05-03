@@ -10,3 +10,10 @@ def test_load_backend_postgres():
 def test_load_backend_unknown():
     with pytest.raises(ValueError, match="unknown backend"):
         load_backend(name="oracle", dsn_env="X")
+
+
+def test_load_backend_sqlite(monkeypatch):
+    monkeypatch.setenv("SQLITE_PATH", ":memory:")
+    from chunkshop.backends import load_backend
+    be = load_backend(name="sqlite", dsn_env="SQLITE_PATH")
+    assert be.name == "sqlite"

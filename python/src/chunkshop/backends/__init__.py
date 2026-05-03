@@ -4,10 +4,12 @@ from chunkshop.backends.postgres import PostgresBackend
 
 
 def load_backend(name: str, dsn_env: str) -> Backend:
-    """Factory: return the Backend impl for the given name."""
     if name == "postgres":
         return PostgresBackend(dsn_env=dsn_env)
-    # Future: "sqlite" (Phase 4), "mariadb" (Phase 6); "clickhouse" out of scope
+    if name == "sqlite":
+        from chunkshop.backends.sqlite import SQLiteBackend
+        return SQLiteBackend(dsn_env=dsn_env)
+    # Future: "mariadb" added in Phase 6; "clickhouse" out of scope this plan.
     raise ValueError(f"unknown backend: {name!r}")
 
 

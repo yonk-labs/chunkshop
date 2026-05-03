@@ -117,3 +117,71 @@ def test_upsert_clause_pg_compat(be):
 def test_upsert_clause_empty_update_cols(be):
     out = be.upsert_clause(["id"], [])
     assert "DO NOTHING" in out
+
+
+from chunkshop.backends.base import ColSpec
+
+
+def _canonical_cols_with_embedding():
+    return [
+        ColSpec("id", "TEXT", nullable=False, is_primary_key=True),
+        ColSpec("doc_id", "TEXT", nullable=False),
+        ColSpec("seq_num", "INTEGER", nullable=False),
+        ColSpec("original_content", "TEXT", nullable=False),
+        ColSpec("embedded_content", "TEXT", nullable=False),
+        ColSpec("tags", "TEXT", nullable=False, default="'[]'"),
+        ColSpec("metadata", "TEXT", nullable=False, default="'{}'"),
+        ColSpec("embedding", "FLOAT[384]", nullable=False),
+        ColSpec("source", "TEXT"),
+        ColSpec("created_at", "TEXT", nullable=False, default="CURRENT_TIMESTAMP"),
+    ]
+
+
+def test_emit_chunks_table_ddl_two_tables(be):
+    cols = _canonical_cols_with_embedding()
+    out = be.emit_chunks_table_ddl(fq='"chunks"', cols=cols, hnsw=False, dim=384)
+    assert len(out) == 3
+    create_main = out[0]
+    assert "CREATE TABLE IF NOT EXISTS" in create_main
+    assert '"embedding"' not in create_main
+    assert '"id" TEXT' in create_main
+    assert "PRIMARY KEY" in create_main
+    create_idx = out[1]
+    assert "CREATE INDEX IF NOT EXISTS" in create_idx and "doc_id" in create_idx and "seq_num" in create_idx
+    create_vec = out[2]
+    assert "CREATE VIRTUAL TABLE IF NOT EXISTS" in create_vec
+    assert "USING vec0" in create_vec
+    assert "FLOAT[384]" in create_vec
+
+
+def test_emit_chunks_table_ddl_hnsw_true_logs_no_special_index(be):
+    cols = _canonical_cols_with_embedding()
+    out = be.emit_chunks_table_ddl(fq='"chunks"', cols=cols, hnsw=True, dim=384)
+    assert len(out) == 3
+
+
+def test_with_create_lock_is_noop(be):
+    with be.connect() as conn:
+        cur = conn.cursor()
+        with be.with_create_lock(cur, "anything"):
+            cur.execute("SELECT 1")
+            assert cur.fetchone()[0] == 1
+
+
+def test_table_exists(be):
+    with be.connect() as conn:
+        cur = conn.cursor()
+        assert be.table_exists(cur, "ignored", "no_such_table") is False
+        cur.execute('CREATE TABLE "real_one" (id TEXT)')
+        assert be.table_exists(cur, "ignored", "real_one") is True
+
+
+def test_embedding_dim_introspection(be):
+    with be.connect() as conn:
+        cur = conn.cursor()
+        cols = _canonical_cols_with_embedding()
+        for stmt in be.emit_chunks_table_ddl(fq='"chunks"', cols=cols, hnsw=False, dim=384):
+            if stmt.strip().startswith("CREATE"):
+                cur.execute(stmt)
+        assert be.embedding_dim(cur, "ignored", "chunks") == 384
+        assert be.embedding_dim(cur, "ignored", "no_such") is None
