@@ -12,7 +12,7 @@ from chunkshop.config import CellConfig
 from chunkshop.embedders import load_embedder
 from chunkshop.extractors import load_extractor
 from chunkshop.framers import load_framer
-from chunkshop.sink import PgVectorSink
+from chunkshop.sinks import load_sink
 from chunkshop.sources import load_source
 
 
@@ -70,7 +70,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
             shared_boundary_model=shared_boundary_model,
         )
         extractor = load_extractor(cfg.extractor)
-        sink = PgVectorSink(cfg.target, embed_dim=cfg.embedder.dim)
+        sink = load_sink(cfg.target, embed_dim=cfg.embedder.dim)
 
         _log("creating target table", log_path)
         sink.create_table()

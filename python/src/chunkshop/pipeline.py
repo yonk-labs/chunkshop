@@ -21,15 +21,13 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from psycopg import sql
-import psycopg
 
 from chunkshop.chunkers import load_chunker
 from chunkshop.config import CellConfig, InlineSource
 from chunkshop.embedders import load_embedder
 from chunkshop.extractors import load_extractor
 from chunkshop.framers import load_framer
-from chunkshop.sink import PgVectorSink
+from chunkshop.sinks import load_sink
 from chunkshop.sources.base import Document
 
 
@@ -58,7 +56,7 @@ class Pipeline:
             shared_boundary_model=shared_boundary_model,
         )
         self._extractor = load_extractor(cfg.extractor)
-        self._sink = PgVectorSink(cfg.target, embed_dim=cfg.embedder.dim)
+        self._sink = load_sink(cfg.target, embed_dim=cfg.embedder.dim)
         self._sink.create_table()
 
     @classmethod
@@ -108,20 +106,16 @@ class Pipeline:
         cannot delete rows owned by source_tag Y.
         """
         cfg = self.cfg.target
-        dsn = os.environ[cfg.dsn_env]
-        fq = sql.SQL(".").join(
-            [sql.Identifier(cfg.schema_name), sql.Identifier(cfg.table)]
-        )
-        if cfg.source_tag:
-            stmt = sql.SQL(
-                "DELETE FROM {tbl} WHERE doc_id = %s AND source = %s"
-            ).format(tbl=fq)
-            params = (doc_id, cfg.source_tag)
-        else:
-            stmt = sql.SQL("DELETE FROM {tbl} WHERE doc_id = %s").format(tbl=fq)
-            params = (doc_id,)
-        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-            cur.execute(stmt, params)
+        fq = self._sink._fq()  # PgSink exposes _fq()
+        backend = self._sink.backend
+        with backend.connect() as conn, conn.cursor() as cur:
+            if cfg.source_tag:
+                cur.execute(
+                    f"DELETE FROM {fq} WHERE doc_id = %s AND source = %s",
+                    (doc_id, cfg.source_tag),
+                )
+            else:
+                cur.execute(f"DELETE FROM {fq} WHERE doc_id = %s", (doc_id,))
             deleted = cur.rowcount
             conn.commit()
         return deleted
