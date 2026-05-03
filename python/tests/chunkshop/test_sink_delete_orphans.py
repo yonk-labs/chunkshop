@@ -7,7 +7,7 @@ import numpy as np
 
 from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
-from chunkshop.sink import PgVectorSink
+from chunkshop.sinks import load_sink
 
 
 DSN_ENV = "CHUNKSHOP_TEST_DSN"
@@ -71,7 +71,7 @@ def _seq_nums(dsn: str, doc_id: str) -> list[int]:
 def test_delete_orphans_off_leaves_stale_chunks(ensure_pg):
     """Without the flag, shrinking a doc from 5 -> 2 chunks leaves 3 stale rows.
     This is the documented deletion gap — kept as a regression for the default."""
-    sink = PgVectorSink(_mk_target(delete_orphans=False), embed_dim=4)
+    sink = load_sink(_mk_target(delete_orphans=False), embed_dim=4)
     sink.create_table()
     sink.write_document("d1", *_chunks("d1", 5, "v1"))
     sink.write_document("d1", *_chunks("d1", 2, "v2"))
@@ -80,7 +80,7 @@ def test_delete_orphans_off_leaves_stale_chunks(ensure_pg):
 
 def test_delete_orphans_on_drops_excess_seq_nums(ensure_pg):
     """With the flag, shrinking 5 -> 2 leaves only seq_num 0,1 — and they hold v2 content."""
-    sink = PgVectorSink(_mk_target(delete_orphans=True), embed_dim=4)
+    sink = load_sink(_mk_target(delete_orphans=True), embed_dim=4)
     sink.create_table()
     sink.write_document("d1", *_chunks("d1", 5, "v1"))
     sink.write_document("d1", *_chunks("d1", 2, "v2"))
@@ -97,7 +97,7 @@ def test_delete_orphans_on_drops_excess_seq_nums(ensure_pg):
 def test_delete_orphans_on_growing_doc_is_noop(ensure_pg):
     """Growing 2 -> 4 with the flag on must not drop the new chunks (DELETE is
     `seq_num >= len(chunks)`, so writing 4 means delete `>= 4`, which catches none)."""
-    sink = PgVectorSink(_mk_target(delete_orphans=True), embed_dim=4)
+    sink = load_sink(_mk_target(delete_orphans=True), embed_dim=4)
     sink.create_table()
     sink.write_document("d1", *_chunks("d1", 2, "v1"))
     sink.write_document("d1", *_chunks("d1", 4, "v2"))
@@ -106,7 +106,7 @@ def test_delete_orphans_on_growing_doc_is_noop(ensure_pg):
 
 def test_delete_orphans_only_touches_target_doc(ensure_pg):
     """Shrinking d1 must not touch d2's chunks."""
-    sink = PgVectorSink(_mk_target(delete_orphans=True), embed_dim=4)
+    sink = load_sink(_mk_target(delete_orphans=True), embed_dim=4)
     sink.create_table()
     sink.write_document("d1", *_chunks("d1", 5, "v1"))
     sink.write_document("d2", *_chunks("d2", 3, "v1"))

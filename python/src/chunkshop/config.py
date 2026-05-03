@@ -513,12 +513,6 @@ class TargetConfig(_Base):
             raise ValueError("source_tag is required when mode='append'")
         return self
 
-    @property
-    def schema_name(self) -> str:
-        """Backward-compat alias for transient callers (sink.py, pipeline.py).
-        Removed in T14 once those callers are deleted/rewired."""
-        return self.database_name
-
 
 class RuntimeConfig(_Base):
     omp_num_threads: int = 1

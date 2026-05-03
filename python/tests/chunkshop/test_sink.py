@@ -4,7 +4,7 @@ import psycopg
 import numpy as np
 from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
-from chunkshop.sink import PgVectorSink
+from chunkshop.sinks import load_sink
 
 
 DSN_ENV = "CHUNKSHOP_TEST_DSN"
@@ -33,7 +33,7 @@ def test_create_and_write_roundtrip(ensure_pg):
         mode="overwrite",
         hnsw=False,  # skip index on tiny test (HNSW needs ≥1 row and takes seconds)
     )
-    sink = PgVectorSink(cfg, embed_dim=4)
+    sink = load_sink(cfg, embed_dim=4)
     sink.create_table()
     chunks = [
         Chunk(doc_id="d1", seq_num=0, original_content="hello",
@@ -83,7 +83,7 @@ def test_concurrent_create_table_same_schema(ensure_pg):
             mode="overwrite",
             hnsw=False,
         )
-        sink = PgVectorSink(cfg, embed_dim=4)
+        sink = load_sink(cfg, embed_dim=4)
         sink.create_table()
 
     # 6 concurrent creators into the same schema
@@ -112,7 +112,7 @@ def test_write_rejects_length_mismatch(ensure_pg):
         mode="overwrite",
         hnsw=False,
     )
-    sink = PgVectorSink(cfg, embed_dim=2)
+    sink = load_sink(cfg, embed_dim=2)
     sink.create_table()
     chunks = [Chunk(doc_id="d1", seq_num=0, original_content="x", embedded_content="x", metadata={})]
     embeddings = np.array([[1, 0], [0, 1]], dtype=np.float32)  # 2 rows vs 1 chunk
