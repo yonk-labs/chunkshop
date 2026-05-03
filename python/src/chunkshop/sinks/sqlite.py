@@ -181,13 +181,15 @@ class SqliteSink:
         placeholders = ", ".join(["?"] * len(main_col_names))
         main_stmt = f"INSERT INTO {self._fq_main()} ({cols_sql}) VALUES ({placeholders}) {upsert}"
 
-        # Vec table — id + embedding
-        vec_stmt = (
-            f"INSERT INTO {self._fq_vec()} (id, embedding) VALUES (?, ?) "
-            f"ON CONFLICT(id) DO UPDATE SET embedding = excluded.embedding"
-        )
+        # Vec table — id + embedding. sqlite-vec's vec0 virtual table does NOT
+        # support UPSERT (`UPSERT not implemented for virtual table`) nor
+        # INSERT OR REPLACE (UNIQUE constraint failure). The working
+        # re-write pattern is DELETE-by-id then INSERT.
+        vec_delete_stmt = f"DELETE FROM {self._fq_vec()} WHERE id = ?"
+        vec_insert_stmt = f"INSERT INTO {self._fq_vec()} (id, embedding) VALUES (?, ?)"
 
         main_rows = []
+        vec_ids = []
         vec_rows = []
         for c, emb, tags in zip(chunks, embeddings, tags_per_chunk):
             chunk_id = f"{c.doc_id}::{c.seq_num}"
@@ -199,12 +201,14 @@ class SqliteSink:
             ]
             promoted = [_jsonb_path_get(c.metadata, pc.path) for pc in promote]
             main_rows.append(tuple(base + promoted))
+            vec_ids.append((chunk_id,))
             vec_rows.append((chunk_id, self.backend.vector_literal(emb)))
 
         with self.backend.connect() as conn:
             cur = conn.cursor()
             cur.executemany(main_stmt, main_rows)
-            cur.executemany(vec_stmt, vec_rows)
+            cur.executemany(vec_delete_stmt, vec_ids)
+            cur.executemany(vec_insert_stmt, vec_rows)
             if self.cfg.delete_orphans:
                 cur.execute(
                     f"DELETE FROM {self._fq_main()} WHERE doc_id = ? AND seq_num >= ?",

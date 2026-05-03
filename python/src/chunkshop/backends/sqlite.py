@@ -80,7 +80,9 @@ class SQLiteBackend:
         return "SELECT 1 -- chunkshop: SQLite has no database/schema concept"
 
     def add_column_if_not_exists_sql(self, fq: str, col: str, type_ddl: str) -> str:
-        return f"ALTER TABLE {fq} ADD COLUMN IF NOT EXISTS {self.quote_ident(col)} {type_ddl}"
+        # SQLite's ALTER TABLE has no IF NOT EXISTS clause; the sink relies on
+        # catching sqlite3.OperationalError "duplicate column" for idempotency.
+        return f"ALTER TABLE {fq} ADD COLUMN {self.quote_ident(col)} {type_ddl}"
 
     def drop_table_sql(self, fq: str) -> str:
         return f"DROP TABLE {fq}"
