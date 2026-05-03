@@ -52,7 +52,7 @@ class PgTableSource:
         ident_cols = [sql.Identifier(c) for c in cols]
         query = sql.SQL("SELECT {cols} FROM {schema}.{table}").format(
             cols=sql.SQL(", ").join(ident_cols),
-            schema=sql.Identifier(self.cfg.schema_name),
+            schema=sql.Identifier(self.cfg.database_name),
             table=sql.Identifier(self.cfg.table),
         )
         if self.cfg.where:

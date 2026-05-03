@@ -32,7 +32,7 @@ class JsonCorpusSource(_Base):
 class PgTableSource(_Base):
     type: Literal["pg_table"]
     dsn_env: str
-    schema_name: str = Field(alias="schema")
+    database_name: str = Field(alias="database")
     table: str
     id_column: str
     content_column: str

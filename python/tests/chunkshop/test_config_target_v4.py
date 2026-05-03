@@ -33,3 +33,16 @@ def test_target_rejects_legacy_overwrite_field():
 def test_target_database_passes_ident_validator():
     with pytest.raises(Exception):
         TargetConfig(type="postgres", dsn_env="X", database="My-DB", table="y", mode="overwrite")
+
+
+def test_pg_table_source_database_alias():
+    from chunkshop.config import PgTableSource
+    s = PgTableSource(
+        type="pg_table",
+        dsn_env="PG",
+        database="my_app",
+        table="docs",
+        id_column="id",
+        content_column="body",
+    )
+    assert s.database_name == "my_app"
