@@ -99,8 +99,9 @@ def test_composite_extractor_feeds_promoted_columns(ensure_pg, tmp_path):
             ],
         },
         target={
+            "type": "postgres",
             "dsn_env": DSN_ENV,
-            "schema": "chunkshop_meta_e2e",
+            "database": "chunkshop_meta_e2e",
             "table": "articles",
             "mode": "create_if_missing",
             "source_tag": "news_meta",

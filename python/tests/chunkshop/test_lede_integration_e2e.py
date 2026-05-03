@@ -62,8 +62,9 @@ def test_summary_embed_with_lede_through_sink(ensure_pg):
             "threads": 2,
         },
         target={
+            "type": "postgres",
             "dsn_env": DSN_ENV,
-            "schema": "chunkshop_lede_e2e",
+            "database": "chunkshop_lede_e2e",
             "table": "summarized",
             "mode": "create_if_missing",
             "source_tag": "lede_test",
@@ -126,8 +127,9 @@ def test_summary_embed_external_with_json_corpus(ensure_pg, tmp_path):
             "threads": 2,
         },
         target={
+            "type": "postgres",
             "dsn_env": DSN_ENV,
-            "schema": "chunkshop_lede_e2e",
+            "database": "chunkshop_lede_e2e",
             "table": "external_sum",
             "mode": "create_if_missing",
             "source_tag": "external_test",

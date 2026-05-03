@@ -29,8 +29,9 @@ def ensure_pg():
 
 def _mk_target(**overrides) -> TargetConfig:
     kwargs = {
+        "type": "postgres",
         "dsn_env": DSN_ENV,
-        "schema": "chunkshop_test_append",
+        "database": "chunkshop_test_append",
         "table": "target_a",
         "hnsw": False,
     }

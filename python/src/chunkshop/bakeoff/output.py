@@ -132,9 +132,8 @@ def write_recommended_yaml(
         e for e in cfg.matrix.embedders if embedder_key(e) == top.embedder_key
     )
 
-    # Use pydantic's `by_alias=True` so `schema_name` dumps as `schema`
-    # (matches the YAML/chunkshop convention and round-trips through
-    # TargetConfig.model_validate).
+    # `database_name` dumps via the `database` alias in YAML (matches the v4
+    # TargetConfig shape); `type` discriminator is required.
     recommended = {
         "# NOTE": (
             f"Top combo from bakeoff '{results.run_name}' "
@@ -148,8 +147,9 @@ def write_recommended_yaml(
         "chunker": winner_chunker.model_dump(exclude_none=True, by_alias=True),
         "embedder": winner_embedder.model_dump(exclude_none=True, by_alias=True),
         "target": {
+            "type": "postgres",
             "dsn_env": cfg.target.dsn_env,
-            "schema": cfg.target.schema_name,
+            "database": cfg.target.schema_name,
             "table": f"{results.run_name}_production",
             "mode": "overwrite",
         },

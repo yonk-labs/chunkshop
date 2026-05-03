@@ -26,7 +26,7 @@ def test_promote_column_rejects_bad_type():
 
 
 def test_target_default_mode_is_overwrite():
-    cfg = TargetConfig(dsn_env="X", **{"schema": "s"}, table="t")
+    cfg = TargetConfig(type="postgres", dsn_env="X", database="s", table="t")
     assert cfg.mode == "overwrite"
     assert cfg.source_tag is None
     assert cfg.promote_metadata == []
@@ -35,12 +35,12 @@ def test_target_default_mode_is_overwrite():
 
 def test_target_append_requires_source_tag():
     with pytest.raises(ValidationError, match="source_tag"):
-        TargetConfig(dsn_env="X", **{"schema": "s"}, table="t", mode="append")
+        TargetConfig(type="postgres", dsn_env="X", database="s", table="t", mode="append")
 
 
 def test_target_append_with_source_tag_ok():
     cfg = TargetConfig(
-        dsn_env="X", **{"schema": "s"}, table="t",
+        type="postgres", dsn_env="X", database="s", table="t",
         mode="append", source_tag="pdfs_q2_2026",
     )
     assert cfg.mode == "append"
@@ -50,14 +50,14 @@ def test_target_append_with_source_tag_ok():
 def test_target_source_tag_ident_safe():
     with pytest.raises(ValidationError):
         TargetConfig(
-            dsn_env="X", **{"schema": "s"}, table="t",
+            type="postgres", dsn_env="X", database="s", table="t",
             mode="append", source_tag="bad; drop table",
         )
 
 
 def test_target_promote_metadata_parses():
     cfg = TargetConfig(
-        dsn_env="X", **{"schema": "s"}, table="t",
+        type="postgres", dsn_env="X", database="s", table="t",
         promote_metadata=[
             {"path": "language", "type": "text"},
             {"path": "entities.ORG", "type": "text[]"},

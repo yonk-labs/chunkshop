@@ -17,8 +17,9 @@ def test_loads_minimal_yaml(tmp_path):
           model_name: BAAI/bge-small-en-v1.5
           dim: 384
         target:
+          type: postgres
           dsn_env: AGE_BAKEOFF_PGRG_DSN
-          schema: factorial
+          database: factorial
           table: test_a_bge_small
         """))
     cfg = load_config(yaml)
@@ -45,8 +46,9 @@ def test_rejects_unknown_source_type(tmp_path):
           model_name: x
           dim: 1
         target:
+          type: postgres
           dsn_env: X
-          schema: factorial
+          database: factorial
           table: bad
         """))
     with pytest.raises(ValueError, match="ftp"):
@@ -61,8 +63,9 @@ def test_table_name_validated(tmp_path):
         chunker: {type: sentence_aware}
         embedder: {type: fastembed, model_name: x, dim: 1}
         target:
+          type: postgres
           dsn_env: X
-          schema: factorial
+          database: factorial
           table: "weird name!"
         """))
     with pytest.raises(ValueError, match="table"):

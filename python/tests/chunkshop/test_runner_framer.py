@@ -48,7 +48,7 @@ def test_framer_metadata_reaches_chunks(ensure_pg, tmp_path):
         embedder={"type": "fastembed",
                   "model_name": "Xenova/bge-base-en-v1.5-int8",
                   "dim": 768, "threads": 2},
-        target={"dsn_env": DSN_ENV, "schema": "chunkshop_test_framer",
+        target={"type": "postgres", "dsn_env": DSN_ENV, "database": "chunkshop_test_framer",
                 "table": "framer_meta", "mode": "overwrite", "hnsw": False},
     )
     result = run_cell(cfg)
@@ -88,7 +88,7 @@ def test_identity_framer_default_preserves_existing_behavior(ensure_pg, tmp_path
         embedder={"type": "fastembed",
                   "model_name": "Xenova/bge-base-en-v1.5-int8",
                   "dim": 768, "threads": 2},
-        target={"dsn_env": DSN_ENV, "schema": "chunkshop_test_framer",
+        target={"type": "postgres", "dsn_env": DSN_ENV, "database": "chunkshop_test_framer",
                 "table": "t", "mode": "overwrite", "hnsw": False},
     )
 

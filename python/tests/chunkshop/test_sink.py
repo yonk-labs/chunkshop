@@ -26,10 +26,11 @@ def ensure_pg():
 def test_create_and_write_roundtrip(ensure_pg):
     dsn = ensure_pg
     cfg = TargetConfig(
+        type="postgres",
         dsn_env=DSN_ENV,
-        **{"schema": "chunkshop_test"},
+        database="chunkshop_test",
         table="sink_smoke",
-        overwrite=True,
+        mode="overwrite",
         hnsw=False,  # skip index on tiny test (HNSW needs ≥1 row and takes seconds)
     )
     sink = PgVectorSink(cfg, embed_dim=4)
@@ -75,10 +76,11 @@ def test_concurrent_create_table_same_schema(ensure_pg):
 
     def _create_one(idx: int) -> None:
         cfg = TargetConfig(
+            type="postgres",
             dsn_env=DSN_ENV,
-            **{"schema": schema},
+            database=schema,
             table=f"concur_t{idx}",
-            overwrite=True,
+            mode="overwrite",
             hnsw=False,
         )
         sink = PgVectorSink(cfg, embed_dim=4)
@@ -103,10 +105,11 @@ def test_concurrent_create_table_same_schema(ensure_pg):
 
 def test_write_rejects_length_mismatch(ensure_pg):
     cfg = TargetConfig(
+        type="postgres",
         dsn_env=DSN_ENV,
-        **{"schema": "chunkshop_test"},
+        database="chunkshop_test",
         table="sink_mismatch",
-        overwrite=True,
+        mode="overwrite",
         hnsw=False,
     )
     sink = PgVectorSink(cfg, embed_dim=2)

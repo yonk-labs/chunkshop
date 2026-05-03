@@ -56,8 +56,9 @@ def test_ingest_samples_corpus_end_to_end(ensure_pg):
             "threads": 2,
         },
         target={
+            "type": "postgres",
             "dsn_env": DSN_ENV,
-            "schema": "chunkshop_e2e_samples",
+            "database": "chunkshop_e2e_samples",
             "table": "handbook",
             "mode": "create_if_missing",
             "source_tag": "samples_e2e",

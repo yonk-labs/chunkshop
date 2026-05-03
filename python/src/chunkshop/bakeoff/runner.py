@@ -103,8 +103,9 @@ def _build_cell_cfg(
         embedder=embedder_cfg,
         extractor=NoneExtractor(),
         target=TargetConfig(
+            type="postgres",
             dsn_env=bakeoff.target.dsn_env,
-            schema=bakeoff.target.schema_name,
+            database=bakeoff.target.schema_name,
             table=table,
             mode="overwrite",
             hnsw=False,

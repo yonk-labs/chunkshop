@@ -485,10 +485,10 @@ class PromoteColumn(_Base):
 
 
 class TargetConfig(_Base):
-    dsn_env: str = "AGE_BAKEOFF_PGRG_DSN"
-    schema_name: str = Field(alias="schema")
+    type: Literal["postgres"]   # discriminator; future: + "sqlite", "mariadb", "clickhouse"
+    dsn_env: str
+    database_name: str = Field(alias="database")
     table: str
-    overwrite: bool = False  # legacy; see `mode` for the new path
     hnsw: bool = True
     mode: Literal["overwrite", "append", "create_if_missing"] = "overwrite"
     source_tag: Optional[str] = None
@@ -496,14 +496,14 @@ class TargetConfig(_Base):
     force_overwrite: bool = False
     delete_orphans: bool = False
 
-    @field_validator("table", "schema_name", "source_tag")
+    @field_validator("table", "database_name", "source_tag")
     @classmethod
     def _safe_ident(cls, v):
         if v is None:
             return v
         if not re.match(r"^[a-z_][a-z0-9_]*$", v):
             raise ValueError(
-                f"table/schema/source_tag must match ^[a-z_][a-z0-9_]*$, got {v!r}"
+                f"table/database/source_tag must match ^[a-z_][a-z0-9_]*$, got {v!r}"
             )
         return v
 
@@ -512,6 +512,12 @@ class TargetConfig(_Base):
         if self.mode == "append" and not self.source_tag:
             raise ValueError("source_tag is required when mode='append'")
         return self
+
+    @property
+    def schema_name(self) -> str:
+        """Backward-compat alias for transient callers (sink.py, pipeline.py).
+        Removed in T14 once those callers are deleted/rewired."""
+        return self.database_name
 
 
 class RuntimeConfig(_Base):
