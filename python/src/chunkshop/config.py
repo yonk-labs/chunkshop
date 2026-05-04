@@ -57,6 +57,18 @@ class SqliteTableSource(_Base):
     metadata_columns: list[str] = Field(default_factory=list)
 
 
+class MariaDbTableSource(_Base):
+    type: Literal["mariadb_table"]
+    dsn_env: str
+    database_name: str = Field(alias="database")
+    table: str
+    id_column: str
+    content_column: str
+    title_column: Optional[str] = None
+    where: Optional[str] = None
+    metadata_columns: list[str] = Field(default_factory=list)
+
+
 class HttpSource(_Base):
     type: Literal["http"]
     urls: list[str] = Field(default_factory=list)
@@ -87,7 +99,7 @@ class InlineSource(_Base):
 
 SourceConfig = Annotated[
     Union[FilesSource, JsonCorpusSource, PgTableSource, SqliteTableSource,
-          HttpSource, S3Source, InlineSource],
+          MariaDbTableSource, HttpSource, S3Source, InlineSource],
     Field(discriminator="type"),
 ]
 
