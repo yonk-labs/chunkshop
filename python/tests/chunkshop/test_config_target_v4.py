@@ -46,3 +46,14 @@ def test_pg_table_source_database_alias():
         content_column="body",
     )
     assert s.database_name == "my_app"
+
+
+def test_target_type_mariadb_accepted():
+    cfg = TargetConfig(
+        type="mariadb",
+        dsn_env="MARIADB_DSN",
+        database="chunkshop",
+        table="my_chunks",
+        mode="overwrite",
+    )
+    assert cfg.type == "mariadb"
