@@ -2,13 +2,16 @@
 
 One `BakeoffConfig` = one matrix evaluation: a corpus, a set of gold queries,
 and a cross-product of chunkers x embedders to rank with recall@k + MRR.
-Mirrors the existing `chunkshop.config.CellConfig` conventions (pydantic v2,
-`extra="forbid"`, discriminated unions) so typos in YAML fail at config-load,
-not at runtime.
+
+v4 multi-backend: `targets` is a discriminated-union list (postgres, mariadb,
+sqlite). The same chunks + vectors are written into every target, then queried
+through each backend's native vector syntax. The leaderboard is rendered
+side-by-side so accuracy parity (or divergence) shows up at a glance and
+ingest/query latency differences are directly comparable.
 """
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -40,17 +43,38 @@ class MatrixConfig(_Base):
     chunkers: list[ChunkerConfig] = Field(..., min_length=1)
 
 
-class BakeoffTargetConfig(_Base):
-    """Where bakeoff tables land. One table per combo under `schema`."""
+class _BakeoffTargetBase(_Base):
+    """Common fields for every backend's bakeoff target.
+
+    `database_name` (YAML alias `database`) parallels TargetConfig. SQLite
+    ignores it at runtime (file path comes from `dsn_env`), but it's still
+    required for loose parity.
+    """
 
     dsn_env: str
-    # `schema` is a pydantic reserved name; expose as `schema_name` in Python,
-    # accept `schema` in YAML via alias. Matches `TargetConfig`'s treatment.
-    schema_name: str = Field(alias="schema")
+    database_name: str = Field(alias="database")
+
+
+class PostgresBakeoffTarget(_BakeoffTargetBase):
+    type: Literal["postgres"]
+
+
+class MariadbBakeoffTarget(_BakeoffTargetBase):
+    type: Literal["mariadb"]
+
+
+class SqliteBakeoffTarget(_BakeoffTargetBase):
+    type: Literal["sqlite"]
+
+
+BakeoffTarget = Annotated[
+    Union[PostgresBakeoffTarget, MariadbBakeoffTarget, SqliteBakeoffTarget],
+    Field(discriminator="type"),
+]
 
 
 class ScoringConfig(_Base):
-    """Retrieval-metric config. `k` controls recall cutoffs; `top_k` is pgvector LIMIT."""
+    """Retrieval-metric config. `k` controls recall cutoffs; `top_k` is sink LIMIT."""
 
     k: list[int] = [1, 3, 5]
     include_mrr: bool = True
@@ -72,15 +96,16 @@ class BakeoffConfig(_Base):
     framer: FramerConfig = Field(default_factory=IdentityFramerConfig)
     gold_queries: Union[str, list[GoldQuery]]  # path to YAML/JSON file OR inline list
     matrix: MatrixConfig
-    target: BakeoffTargetConfig
+    targets: list[BakeoffTarget] = Field(..., min_length=1)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     output_dir: Optional[str] = None
     runtime: Optional[RuntimeConfig] = None
 
 
 class ComboResult(_Base):
-    """Scored outcome for one (chunker, embedder) combo."""
+    """Scored outcome for one (backend, chunker, embedder) cell."""
 
+    backend: str  # "postgres" / "mariadb" / "sqlite"
     chunker_key: str
     embedder_key: str
     chunker_label: str
@@ -93,6 +118,9 @@ class ComboResult(_Base):
     # from "this combo is slow because of the chunker / sink". 0.0 if the
     # embedder didn't track timing.
     ingest_embed_seconds: float = 0.0
+    # Total wall time spent issuing top_k queries against this cell during
+    # the scoring phase. Per-backend latency comparison sits on this number.
+    query_wall_seconds: float = 0.0
     aggregate: dict[str, float]
     per_query: list[dict[str, Any]]
 

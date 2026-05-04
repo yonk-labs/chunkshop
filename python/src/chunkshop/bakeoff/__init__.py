@@ -1,25 +1,32 @@
 """chunkshop bakeoff: `chunkshop bakeoff` CLI subcommand + library surface.
 
-Promotes the `scripts/bench_matrix.py` hacking tool into a user-facing,
-config-driven chunker x embedder matrix evaluation that emits a leaderboard +
-a runnable `recommended.yaml` cell.
+v4 multi-backend: a bakeoff config is a corpus + a chunker × embedder matrix
+× a list of database backends. Every (backend, chunker, embedder) cell ingests
+the corpus and is queried via the sink's native vector syntax. The leaderboard
+is rendered side-by-side per backend.
 """
 from chunkshop.bakeoff.config import (
     BakeoffConfig,
     BakeoffResults,
-    BakeoffTargetConfig,
+    BakeoffTarget,
     ComboResult,
     GoldQuery,
+    MariadbBakeoffTarget,
     MatrixConfig,
+    PostgresBakeoffTarget,
     ScoringConfig,
+    SqliteBakeoffTarget,
 )
 
 __all__ = [
     "BakeoffConfig",
     "BakeoffResults",
-    "BakeoffTargetConfig",
+    "BakeoffTarget",
     "ComboResult",
     "GoldQuery",
+    "MariadbBakeoffTarget",
     "MatrixConfig",
+    "PostgresBakeoffTarget",
     "ScoringConfig",
+    "SqliteBakeoffTarget",
 ]

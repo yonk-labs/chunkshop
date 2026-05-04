@@ -6,10 +6,10 @@ import yaml
 from chunkshop.bakeoff.config import (
     BakeoffConfig,
     BakeoffResults,
-    BakeoffTargetConfig,
     ComboResult,
     GoldQuery,
     MatrixConfig,
+    PostgresBakeoffTarget,
 )
 from chunkshop.bakeoff.output import (
     write_recommended_yaml,
@@ -39,7 +39,9 @@ def _fixture_cfg() -> BakeoffConfig:
             )],
             chunkers=[HierarchyChunker(type="hierarchy")],
         ),
-        target=BakeoffTargetConfig(dsn_env="X", **{"schema": "bakeoff_fix"}),
+        targets=[PostgresBakeoffTarget(
+            type="postgres", dsn_env="X", **{"database": "bakeoff_fix"},
+        )],
     )
 
 
@@ -52,6 +54,7 @@ def _fixture_results(run_name: str = "fixture") -> BakeoffResults:
         n_combos=1,
         gold_queries=[{"query": "q", "gold_doc_id": "d1"}],
         combos=[ComboResult(
+            backend="postgres",
             chunker_key="hierarchy",
             embedder_key="bge_base_en_v1_5_int8",
             chunker_label="hierarchy",
@@ -63,7 +66,7 @@ def _fixture_results(run_name: str = "fixture") -> BakeoffResults:
             per_query=[{
                 "query": "q",
                 "gold_doc_id": "d1",
-                "top_k": [{"doc_id": "d1", "seq_num": 0}],
+                "top_k": [{"doc_id": "d1", "seq_num": 0, "distance": 0.0}],
                 "recall_at_1": 1,
                 "recall_at_3": 1,
                 "recall_at_5": 1,
@@ -86,7 +89,9 @@ def test_report_md_has_leaderboard_and_stat_note(tmp_path):
     r = _fixture_results()
     p = write_report_md(cfg, r, tmp_path)
     text = p.read_text()
-    assert "Leaderboard" in text
+    # Multi-backend report header phrasing
+    assert "Cross-backend comparison" in text
+    assert "Postgres leaderboard" in text
     assert "hierarchy" in text
     assert "Statistical power" in text
 

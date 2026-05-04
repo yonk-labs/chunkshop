@@ -21,9 +21,8 @@ matrix:
     - {type: fastembed, model_name: Xenova/bge-small-en-v1.5-int8, dim: 384}
   chunkers:
     - {type: hierarchy}
-target:
-  dsn_env: TEST_DSN
-  schema: bakeoff_test
+targets:
+  - {type: postgres, dsn_env: TEST_DSN, database: bakeoff_test}
 """
 
 
@@ -98,6 +97,7 @@ def test_bakeoff_results_round_trip():
         n_combos=1,
         gold_queries=[{"query": "q", "gold_doc_id": "d1"}],
         combos=[ComboResult(
+            backend="postgres",
             chunker_key="hierarchy",
             embedder_key="bge_base",
             chunker_label="hierarchy",
@@ -113,3 +113,34 @@ def test_bakeoff_results_round_trip():
     parsed = BakeoffResults.model_validate_json(dumped)
     assert parsed.run_name == "test"
     assert parsed.combos[0].ingest_chunks == 10
+    assert parsed.combos[0].backend == "postgres"
+
+
+def test_targets_minlength_one():
+    """`targets:` must be non-empty."""
+    bad = yaml.safe_load(MINIMAL_YAML)
+    bad["targets"] = []
+    with pytest.raises(ValidationError, match="at least 1"):
+        BakeoffConfig.model_validate(bad)
+
+
+def test_targets_discriminated_union_dispatch():
+    """Each target type round-trips to the right pydantic model."""
+    cfg = yaml.safe_load(MINIMAL_YAML)
+    cfg["targets"] = [
+        {"type": "postgres", "dsn_env": "PG_DSN", "database": "db_pg"},
+        {"type": "mariadb", "dsn_env": "MD_DSN", "database": "db_md"},
+        {"type": "sqlite", "dsn_env": "SQ_PATH", "database": "ignored"},
+    ]
+    parsed = BakeoffConfig.model_validate(cfg)
+    assert [t.type for t in parsed.targets] == ["postgres", "mariadb", "sqlite"]
+    assert parsed.targets[0].database_name == "db_pg"
+    assert parsed.targets[2].dsn_env == "SQ_PATH"
+
+
+def test_unknown_target_type_rejected():
+    """Bad target.type triggers discriminator validation error at config load."""
+    bad = yaml.safe_load(MINIMAL_YAML)
+    bad["targets"] = [{"type": "redis", "dsn_env": "X", "database": "y"}]
+    with pytest.raises(ValidationError):
+        BakeoffConfig.model_validate(bad)
