@@ -9,7 +9,9 @@ def load_backend(name: str, dsn_env: str) -> Backend:
     if name == "sqlite":
         from chunkshop.backends.sqlite import SQLiteBackend
         return SQLiteBackend(dsn_env=dsn_env)
-    # Future: "mariadb" added in Phase 6; "clickhouse" out of scope this plan.
+    if name == "mariadb":
+        from chunkshop.backends.mariadb import MariaDBBackend
+        return MariaDBBackend(dsn_env=dsn_env)
     raise ValueError(f"unknown backend: {name!r}")
 
 

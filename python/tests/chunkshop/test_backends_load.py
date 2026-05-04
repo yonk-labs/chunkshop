@@ -17,3 +17,10 @@ def test_load_backend_sqlite(monkeypatch):
     from chunkshop.backends import load_backend
     be = load_backend(name="sqlite", dsn_env="SQLITE_PATH")
     assert be.name == "sqlite"
+
+
+def test_load_backend_mariadb():
+    pytest.importorskip("pymysql")
+    from chunkshop.backends import load_backend
+    be = load_backend(name="mariadb", dsn_env="DUMMY")
+    assert be.name == "mariadb"
