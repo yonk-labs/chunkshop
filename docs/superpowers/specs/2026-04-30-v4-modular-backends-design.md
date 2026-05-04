@@ -30,7 +30,7 @@ The four backends span three storage models: server OLTP (PG, MariaDB), embedded
 | D2 | ClickHouse-as-sink semantics | Append-only. `delete_orphans` is no-op (warns). Provenance via natural append + `argMax(created_at)` reader pattern or `ReplacingMergeTree`. |
 | D3 | Schema parity philosophy | Loose parity — shared logical model, native types per backend. |
 | D4 | Abstraction shape | `backends/` layer for shared infra (connection, dialect helpers, identifier safety). Per-backend `sinks/<name>.py` and `sources/<name>_table.py` own their own SQL. |
-| D5 | First-ship target | PG-refactor + SQLite + MariaDB. SQLite ships before MariaDB in commit order (smaller surface, no docker/version constraint). ClickHouse design-supports-it but built later. v4.0 lives on a long-running experimental branch; no hard release commitment. |
+| D5 | First-ship target | PG-refactor + SQLite + MariaDB + **ClickHouse** (added 2026-05-04 as a v4.0 follow-on after the user requested 4-backend cross-corpus comparison). All four backends are runtime-verified. v4.0 lives on a long-running experimental branch; no hard release commitment. |
 | D6 | Migration policy | Re-ingest. v4.0 deliberately breaks the PG schema (column renames acceptable for cleanliness). No upgrade script. |
 | D7 | YAML field rename | `target.schema` → `target.database`. Discriminator `target.type` is the backend name (`postgres` / `mariadb` / `sqlite` / `clickhouse`). |
 | D8 | SQLite vector storage | Two-table layout: regular `<table>` (chunks) + virtual `<table>_vec` (vec0 virtual table from `sqlite-vec`) joined on `id`. Sink owns the two-table dance — Backend Protocol unchanged. |
@@ -51,19 +51,19 @@ python/src/chunkshop/
 │   ├── postgres.py              #   psycopg-based; absorbs current sink.py's helpers
 │   ├── sqlite.py                #   sqlite3 (stdlib) + sqlite-vec extension; first-ship
 │   ├── mariadb.py               #   PyMySQL-based; first-ship
-│   └── clickhouse.py            #   clickhouse-connect-based; built later
+│   └── clickhouse.py            #   clickhouse-connect-based; first-ship (added 2026-05-04)
 ├── sinks/                       # NEW directory (was: sink.py file)
 │   ├── __init__.py              #   load_sink(cfg)
 │   ├── base.py                  #   Sink Protocol
 │   ├── pg.py                    #   rewritten from current sink.py
 │   ├── sqlite.py                #   first-ship; owns the two-table chunks+chunks_vec dance
 │   ├── mariadb.py               #   first-ship
-│   └── clickhouse.py            #   later
+│   └── clickhouse.py            #   first-ship (added 2026-05-04)
 ├── sources/
 │   ├── pg_table.py              # REWRITTEN — uses backends/postgres.py
 │   ├── sqlite_table.py          # NEW — first-ship
 │   ├── mariadb_table.py         # NEW — first-ship
-│   ├── clickhouse_table.py      # NEW — later
+│   ├── clickhouse_table.py      # DEFERRED — sink-only ClickHouse for v4.0 first-ship (source side is v4.1)
 │   └── ... (files, etc., unchanged)
 ├── config.py                    # MODIFIED — discriminated unions get backend variants
 ├── runner.py                    # MODIFIED — wires load_backend if needed
@@ -309,11 +309,11 @@ all-backends = ["chunkshop[sqlite,mariadb,clickhouse]"]
 - SQL-injection regression tests — already exist for `PromoteColumn._safe_path` etc.; expand to cover the new identifier surfaces (database, table) on each backend.
 - `docker-compose.test.yaml` — PG + MariaDB containers for local dev (SQLite needs no container). CI strategy is a writing-plans decision.
 
-## 9. Out of scope (first-ship: PG-refactor + SQLite + MariaDB)
+## 9. Out of scope (first-ship: PG-refactor + SQLite + MariaDB + ClickHouse)
 
-- ClickHouse impl. Design supports it (Backend Protocol + parity matrices include CH). Files don't exist yet — added when CH gets built.
-- ClickHouse JOIN-via-VIEW source equivalent (research spike).
-- Cross-backend bakeoff. Factorial bakeoff stays PG-only.
+- ClickHouse SOURCE side (`sources/clickhouse_table.py`). Sink + bakeoff target are first-ship; source-side reads with `metadata_columns` JSON-output research spike are deferred to v4.1. The Backend Protocol fully supports CH source-side; only the source class file is missing.
+- ClickHouse JOIN-via-VIEW source equivalent (research spike, deferred with the source-side).
+- Cross-backend bakeoff with shared scoring layer **— RESOLVED 2026-05-04.** `chunkshop bakeoff` runs the full chunker × embedder × backend matrix in one report (all 4 backends supported via `targets:` discriminated union).
 - Rich HNSW tuning per backend. `target.hnsw: bool` is the only knob; backend-specific tuning dicts come later. (On SQLite, `hnsw: true` is silently downgraded to brute-force with a one-time warning.)
 - Connection pooling. Per-document short-lived connections preserved across all backends.
 - Async I/O.

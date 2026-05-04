@@ -16,6 +16,10 @@ def load_sink(cfg, embed_dim: int) -> Sink:
         from chunkshop.sinks.mariadb import MariaDbSink
         backend = load_backend(name="mariadb", dsn_env=cfg.dsn_env)
         return MariaDbSink(cfg=cfg, backend=backend, embed_dim=embed_dim)
+    if cfg.type == "clickhouse":
+        from chunkshop.sinks.clickhouse import ClickHouseSink
+        backend = load_backend(name="clickhouse", dsn_env=cfg.dsn_env)
+        return ClickHouseSink(cfg=cfg, backend=backend, embed_dim=embed_dim)
     raise ValueError(f"unknown target type: {cfg.type!r}")
 
 

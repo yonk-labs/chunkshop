@@ -33,3 +33,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.10
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: chpw
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_DB: chunkshop_test
+    ports:
+      - "8124:8123"   # HTTP (clickhouse-connect default)
+      - "9001:9000"   # Native TCP
+    volumes:
+      # Enable the experimental vector_similarity index (CH 24.10+).
+      # Read-write because the entrypoint writes default-user.xml here.
+      - ./.docker/clickhouse-config:/etc/clickhouse-server/users.d
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client -u default --password chpw -q 'SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20

@@ -510,7 +510,7 @@ class PromoteColumn(_Base):
 
 
 class TargetConfig(_Base):
-    type: Literal["postgres", "sqlite", "mariadb"]   # ClickHouse added in a later release
+    type: Literal["postgres", "sqlite", "mariadb", "clickhouse"]
     dsn_env: str
     database_name: str = Field(alias="database")
     table: str
@@ -520,6 +520,10 @@ class TargetConfig(_Base):
     promote_metadata: list[PromoteColumn] = Field(default_factory=list)
     force_overwrite: bool = False
     delete_orphans: bool = False
+    # ClickHouse-specific: override the default MergeTree() ORDER BY (id) engine
+    # spec. Set to "ReplacingMergeTree(created_at) ORDER BY (id)" to opt into
+    # lazy dedup at merge time. Ignored on non-CH backends.
+    engine: Optional[str] = None
 
     @field_validator("table", "database_name", "source_tag")
     @classmethod

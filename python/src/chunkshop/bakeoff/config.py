@@ -67,8 +67,15 @@ class SqliteBakeoffTarget(_BakeoffTargetBase):
     type: Literal["sqlite"]
 
 
+class ClickhouseBakeoffTarget(_BakeoffTargetBase):
+    type: Literal["clickhouse"]
+    # Optional: override the default MergeTree() engine. For example,
+    # "ReplacingMergeTree(created_at) ORDER BY (id)" enables lazy dedup.
+    engine: Optional[str] = None
+
+
 BakeoffTarget = Annotated[
-    Union[PostgresBakeoffTarget, MariadbBakeoffTarget, SqliteBakeoffTarget],
+    Union[PostgresBakeoffTarget, MariadbBakeoffTarget, SqliteBakeoffTarget, ClickhouseBakeoffTarget],
     Field(discriminator="type"),
 ]
 

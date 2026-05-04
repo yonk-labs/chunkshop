@@ -65,6 +65,9 @@ targets:
   - type: sqlite
     dsn_env: SQLITE_BAKEOFF_PATH
     database: ignored
+  - type: clickhouse
+    dsn_env: CLICKHOUSE_DSN
+    database: chunkshop_bakeoff_ntsb_ch
 
 scoring:
   k: [1, 3, 5]

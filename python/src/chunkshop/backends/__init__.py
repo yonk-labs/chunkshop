@@ -12,6 +12,9 @@ def load_backend(name: str, dsn_env: str) -> Backend:
     if name == "mariadb":
         from chunkshop.backends.mariadb import MariaDBBackend
         return MariaDBBackend(dsn_env=dsn_env)
+    if name == "clickhouse":
+        from chunkshop.backends.clickhouse import ClickHouseBackend
+        return ClickHouseBackend(dsn_env=dsn_env)
     raise ValueError(f"unknown backend: {name!r}")
 
 
