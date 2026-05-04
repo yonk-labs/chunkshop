@@ -221,6 +221,34 @@ class SqliteSink:
                 )
             conn.commit()
 
+    def delete_document(self, doc_id: str) -> int:
+        """Delete all chunks for a doc from BOTH chunks and chunks_vec tables.
+
+        Scoped to source_tag when set. Two-phase: SELECT matching ids first
+        (so vec table can be deleted by id IN (...)), then DELETE both atomically.
+        """
+        with self.backend.connect() as conn:
+            cur = conn.cursor()
+            if self.cfg.source_tag:
+                cur.execute(
+                    f"SELECT id FROM {self._fq_main()} WHERE doc_id = ? AND source = ?",
+                    (doc_id, self.cfg.source_tag),
+                )
+            else:
+                cur.execute(
+                    f"SELECT id FROM {self._fq_main()} WHERE doc_id = ?",
+                    (doc_id,),
+                )
+            ids = [r[0] for r in cur.fetchall()]
+            if not ids:
+                return 0
+            placeholders = ",".join("?" * len(ids))
+            cur.execute(f"DELETE FROM {self._fq_main()} WHERE id IN ({placeholders})", ids)
+            deleted = cur.rowcount
+            cur.execute(f"DELETE FROM {self._fq_vec()} WHERE id IN ({placeholders})", ids)
+            conn.commit()
+        return deleted
+
     def count_docs(self) -> int:
         with self.backend.connect() as conn:
             cur = conn.cursor()

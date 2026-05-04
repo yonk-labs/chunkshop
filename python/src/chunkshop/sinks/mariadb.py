@@ -191,6 +191,21 @@ class MariaDbSink:
                 )
             conn.commit()
 
+    def delete_document(self, doc_id: str) -> int:
+        """Delete all chunks for a doc, scoped to this sink's source_tag if set."""
+        with self.backend.connect() as conn:
+            cur = conn.cursor()
+            if self.cfg.source_tag:
+                cur.execute(
+                    f"DELETE FROM {self._fq()} WHERE doc_id = %s AND source = %s",
+                    (doc_id, self.cfg.source_tag),
+                )
+            else:
+                cur.execute(f"DELETE FROM {self._fq()} WHERE doc_id = %s", (doc_id,))
+            deleted = cur.rowcount
+            conn.commit()
+        return deleted
+
     def count_docs(self) -> int:
         with self.backend.connect() as conn:
             cur = conn.cursor()

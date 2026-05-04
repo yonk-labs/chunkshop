@@ -103,22 +103,11 @@ class Pipeline:
 
         Returns the number of rows deleted. Scoping by source_tag matches the
         write-once provenance contract: a Pipeline configured for source_tag X
-        cannot delete rows owned by source_tag Y.
+        cannot delete rows owned by source_tag Y. Backend-specific behavior
+        (SQLite: deletes from both chunks + chunks_vec; PG/MariaDB: single
+        table DELETE) lives in the Sink implementation.
         """
-        cfg = self.cfg.target
-        fq = self._sink._fq()  # PgSink exposes _fq()
-        backend = self._sink.backend
-        with backend.connect() as conn, conn.cursor() as cur:
-            if cfg.source_tag:
-                cur.execute(
-                    f"DELETE FROM {fq} WHERE doc_id = %s AND source = %s",
-                    (doc_id, cfg.source_tag),
-                )
-            else:
-                cur.execute(f"DELETE FROM {fq} WHERE doc_id = %s", (doc_id,))
-            deleted = cur.rowcount
-            conn.commit()
-        return deleted
+        return self._sink.delete_document(doc_id)
 
     def count_docs(self) -> int:
         return self._sink.count_docs()

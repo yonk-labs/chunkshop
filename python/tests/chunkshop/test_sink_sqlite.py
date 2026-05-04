@@ -95,6 +95,40 @@ def test_sc010_delete_orphans_both_tables(dsn):
         assert cur.fetchone()[0] == 2
 
 
+def test_sc017_delete_document_both_tables(dsn):
+    """SC-017: SqliteSink.delete_document removes from both chunks and chunks_vec."""
+    cfg = _cfg(dsn, source_tag="t1")
+    sink = SqliteSink(cfg, SQLiteBackend(dsn_env=dsn), embed_dim=4)
+    sink.create_table()
+    sink.write_document("d1", _make_chunks("d1", 3), np.random.rand(3, 4).astype(np.float32), [[]] * 3)
+    sink.write_document("d2", _make_chunks("d2", 2), np.random.rand(2, 4).astype(np.float32), [[]] * 2)
+
+    deleted = sink.delete_document("d1")
+    assert deleted == 3
+
+    with sink.backend.connect() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) FROM {sink._fq_main()}")
+        assert cur.fetchone()[0] == 2  # only d2's rows remain
+        cur.execute(f"SELECT COUNT(*) FROM {sink._fq_vec()}")
+        assert cur.fetchone()[0] == 2  # vec table mirrored
+
+
+def test_sc017_delete_document_source_scope(dsn):
+    """delete_document refuses to touch rows owned by a different source_tag."""
+    cfg1 = _cfg(dsn, source_tag="t1")
+    sink1 = SqliteSink(cfg1, SQLiteBackend(dsn_env=dsn), embed_dim=4)
+    sink1.create_table()
+    sink1.write_document("d1", _make_chunks("d1", 2), np.random.rand(2, 4).astype(np.float32), [[]] * 2)
+
+    # New sink with different source_tag — cannot delete t1's rows
+    cfg2 = _cfg(dsn, mode="create_if_missing", source_tag="t2")
+    sink2 = SqliteSink(cfg2, sink1.backend, embed_dim=4)
+    sink2.create_table()
+    deleted = sink2.delete_document("d1")
+    assert deleted == 0  # t2 doesn't own any d1 rows
+
+
 def test_sc011_sc016_hnsw_logs_warning_once(dsn, caplog):
     """SC-011 / SC-016: hnsw=true on SQLite logs a warning once per process."""
     _HNSW_WARNED.clear()
