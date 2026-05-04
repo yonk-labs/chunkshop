@@ -1,9 +1,11 @@
 """MariaDB backend (>=11.7 - VECTOR type required). PyMySQL-based connection."""
 from __future__ import annotations
+import json
 import os
 from contextlib import contextmanager
 from typing import Any, Iterator, Literal
 
+import numpy as np
 import pymysql
 
 
@@ -31,6 +33,34 @@ class MariaDBBackend:
 
     def fq_table(self, db: str, table: str) -> str:
         return f"{self.quote_ident(db)}.{self.quote_ident(table)}"
+
+    def vector_type_ddl(self, dim: int) -> str:
+        return f"VECTOR({dim})"
+
+    def json_type_ddl(self) -> str:
+        return "JSON"
+
+    def tags_array_type_ddl(self) -> str:
+        return "JSON"
+
+    def text_pk_type_ddl(self) -> str:
+        return "VARCHAR(255)"
+
+    def timestamp_now_default_ddl(self) -> str:
+        return "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"
+
+    def vector_literal(self, arr: "np.ndarray") -> str:
+        text = "[" + ",".join(f"{x:.6f}" for x in arr) + "]"
+        return f"VEC_FromText('{text}')"
+
+    def tags_literal(self, tags: list[str]) -> str:
+        return json.dumps(list(tags))
+
+    def json_literal(self, obj: Any) -> str:
+        return json.dumps(obj)
+
+    def json_path_sql(self, col_expr: str, dotted_path: str) -> str:
+        return f"JSON_UNQUOTE(JSON_EXTRACT({col_expr},'$.{dotted_path}'))"
 
 
 def _parse_mysql_dsn(dsn: str) -> dict:
