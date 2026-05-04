@@ -212,6 +212,23 @@ class MariaDbSink:
             cur.execute(f"SELECT COUNT(DISTINCT doc_id) FROM {self._fq()}")
             return cur.fetchone()[0]
 
+    def query_top_k(
+        self, query_vec: np.ndarray, k: int
+    ) -> list[tuple[str, int, float]]:
+        """MariaDB VEC_DISTANCE_COSINE top-K. Vector literal goes inline as
+        VEC_FromText('[...]') because PyMySQL has no VECTOR adapter.
+        """
+        vec_expr = self.backend.vector_literal(query_vec)  # "VEC_FromText('[…]')"
+        with self.backend.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT doc_id, seq_num, "
+                f"VEC_DISTANCE_COSINE(embedding, {vec_expr}) AS distance "
+                f"FROM {self._fq()} ORDER BY distance LIMIT %s",
+                (k,),
+            )
+            return [(r[0], r[1], float(r[2])) for r in cur.fetchall()]
+
 
 _PG_TO_MARIADB_TYPE = {
     "text": "TEXT",

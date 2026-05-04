@@ -254,3 +254,23 @@ class SqliteSink:
             cur = conn.cursor()
             cur.execute(f"SELECT COUNT(DISTINCT doc_id) FROM {self._fq_main()}")
             return cur.fetchone()[0]
+
+    def query_top_k(
+        self, query_vec: np.ndarray, k: int
+    ) -> list[tuple[str, int, float]]:
+        """sqlite-vec MATCH on the vec0 virtual table, joined back to the main
+        table for doc_id / seq_num. The id column on chunks_vec mirrors the
+        main table's id (format `doc_id::seq_num`).
+        """
+        vec_lit = self.backend.vector_literal(query_vec)  # JSON array string
+        with self.backend.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT c.doc_id, c.seq_num, v.distance "
+                f"FROM {self._fq_vec()} v "
+                f"JOIN {self._fq_main()} c ON c.id = v.id "
+                f"WHERE v.embedding MATCH ? AND k = ? "
+                f"ORDER BY v.distance",
+                (vec_lit, k),
+            )
+            return [(r[0], r[1], float(r[2])) for r in cur.fetchall()]

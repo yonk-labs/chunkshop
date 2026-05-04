@@ -216,3 +216,16 @@ class PgSink:
         with self.backend.connect() as conn, conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(DISTINCT doc_id) FROM {self._fq()}")
             return cur.fetchone()[0]
+
+    def query_top_k(
+        self, query_vec: np.ndarray, k: int
+    ) -> list[tuple[str, int, float]]:
+        """pgvector cosine top-K. Returns (doc_id, seq_num, distance) tuples."""
+        vec_lit = self.backend.vector_literal(query_vec)
+        with self.backend.connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT doc_id, seq_num, embedding <=> %s::vector AS distance "
+                f"FROM {self._fq()} ORDER BY embedding <=> %s::vector LIMIT %s",
+                (vec_lit, vec_lit, k),
+            )
+            return [(r[0], r[1], float(r[2])) for r in cur.fetchall()]

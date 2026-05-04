@@ -141,6 +141,43 @@ def test_sc011_sc016_hnsw_logs_warning_once(dsn, caplog):
     assert len(warnings) == 1
 
 
+def test_query_top_k_returns_ordered_distance_tuples(dsn):
+    """query_top_k returns (doc_id, seq_num, distance) tuples ordered by ascending distance."""
+    cfg = _cfg(dsn, source_tag="t1")
+    sink = SqliteSink(cfg, SQLiteBackend(dsn_env=dsn), embed_dim=4)
+    sink.create_table()
+    # Plant five chunks with deterministic embeddings
+    chunks = _make_chunks("d1", 5)
+    embs = np.array(
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.9, 0.1, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    sink.write_document("d1", chunks, embs, [[]] * 5)
+
+    # Query with the first vector — chunk 0 should be closest
+    q = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    results = sink.query_top_k(q, k=3)
+    assert len(results) == 3
+    for row in results:
+        assert isinstance(row, tuple)
+        assert len(row) == 3
+        doc_id, seq_num, distance = row
+        assert isinstance(doc_id, str)
+        assert isinstance(seq_num, int)
+        assert isinstance(distance, float)
+    # Distances must be non-decreasing (sqlite-vec returns ascending)
+    distances = [r[2] for r in results]
+    assert distances == sorted(distances)
+    # Top-1 must be chunk 0 (the exact vector match)
+    assert results[0][1] == 0
+
+
 def test_sc012_promote_metadata(dsn):
     """SC-012: promote_metadata column is populated via _jsonb_path_get during write."""
     cfg = _cfg(dsn, source_tag="t1",
