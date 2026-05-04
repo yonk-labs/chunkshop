@@ -1,33 +1,37 @@
-# Multi-backend bakeoff against the NTSB aviation-accident corpus shipped
-# with pg-raggraph's kg-rag-eval benchmark (20 final-report markdown files).
+# Multi-backend bakeoff against the SCOTUS 772-doc corpus
+# (case overviews + decisions for Supreme Court terms 2018-2022, sourced
+# from pg-raggraph's age-bakeoff extraction data).
 #
-# Each (backend × chunker × embedder) cell ingests all 20 docs into its own
+# Each (backend × chunker × embedder) cell ingests all 772 docs into its own
 # table; every cell is queried via its sink's native vector syntax. Results
-# land in `skill-output/bakeoff/ntsb_bakeoff/` (results.json + report.md +
+# land in `skill-output/bakeoff/scotus_bakeoff/` (results.json + report.md +
 # recommended.yaml). The report shows accuracy + ingest/query latency
 # side-by-side across backends.
 #
 # Usage:
 #   export CHUNKSHOP_DSN=postgresql://postgres:postgres@localhost:5434/age_bakeoff_pgrg
 #   export MARIADB_DSN=mysql://root:rootpw@localhost:3307/mysql
-#   export SQLITE_BAKEOFF_PATH=/tmp/chunkshop-bakeoff-ntsb.db
-#   chunkshop bakeoff --config docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml
+#   export SCOTUS_SQLITE_PATH=/tmp/chunkshop-bakeoff-scotus.db
+#   chunkshop bakeoff --config docs/samples/bakeoff-scotus/bakeoff-scotus.yaml --yes
 #
-# Matrix size: 7 chunkers × 3 embedders × 3 backends = 63 cells. The CLI
-# does NOT clean up databases/schemas/files after the run — drop them
-# yourself before re-running.
+# Matrix size: 7 chunkers × 3 embedders × 3 backends = 63 cells.
+# Expected wall time: 60-90 min on a modern laptop. Drop schemas/files
+# before re-running (the CLI does NOT clean up).
 
-name: ntsb_bakeoff
+name: scotus_bakeoff
 
 source:
-  type: files
-  glob: docs/samples/bakeoff-ntsb/corpus/*.md
-  id_from: stem      # doc_id = file stem (e.g. "20080109X00035")
+  type: json_corpus
+  path: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/src/age_bakeoff/extraction/data/scotus.json
+  documents_key: documents
+  id_field: id
+  content_field: content
+  title_field: title
 
 framer:
   type: identity
 
-gold_queries: docs/samples/bakeoff-ntsb/gold-ntsb.yaml
+gold_queries: docs/samples/bakeoff-scotus/gold-scotus.yaml
 
 matrix:
   embedders:
@@ -39,7 +43,7 @@ matrix:
     - { type: sentence_aware }
     - { type: fixed_overlap }
     - { type: neighbor_expand, base: { type: hierarchy }, window: 1 }
-    - { type: semantic, boundary_model: same }   # reuse main embedder; default int8 model has inhomogeneous-tensor tokenizer bug
+    - { type: semantic, boundary_model: same }
     - type: summary_embed
       base: { type: hierarchy }
       summarizer:
@@ -58,12 +62,12 @@ matrix:
 targets:
   - type: postgres
     dsn_env: CHUNKSHOP_DSN
-    database: chunkshop_bakeoff_ntsb_pg
+    database: chunkshop_bakeoff_scotus_pg
   - type: mariadb
     dsn_env: MARIADB_DSN
-    database: chunkshop_bakeoff_ntsb_md
+    database: chunkshop_bakeoff_scotus_md
   - type: sqlite
-    dsn_env: SQLITE_BAKEOFF_PATH
+    dsn_env: SCOTUS_SQLITE_PATH
     database: ignored
 
 scoring:

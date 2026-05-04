@@ -1,0 +1,79 @@
+# Multi-backend bakeoff against the sales-CRM notes corpus
+# (649 markdown sales-call notes with customer-deal templating).
+#
+# Each (backend × chunker × embedder) cell ingests all 649 notes into its
+# own table; every cell is queried via its sink's native vector syntax.
+# Results land in `skill-output/bakeoff/sales_crm_bakeoff/` (results.json
+# + report.md + recommended.yaml). The report shows accuracy + ingest/query
+# latency side-by-side across backends.
+#
+# IMPORTANT: extract notes.tar.gz first:
+#   cd docs/samples/sales-crm && tar -xzf notes.tar.gz
+# (the extracted notes/ directory is gitignored.)
+#
+# Usage:
+#   export CHUNKSHOP_DSN=postgresql://postgres:postgres@localhost:5434/age_bakeoff_pgrg
+#   export MARIADB_DSN=mysql://root:rootpw@localhost:3307/mysql
+#   export CRM_SQLITE_PATH=/tmp/chunkshop-bakeoff-crm.db
+#   chunkshop bakeoff --config docs/samples/bakeoff-sales-crm/bakeoff-sales-crm.yaml --yes
+#
+# Matrix size: 7 chunkers × 3 embedders × 3 backends = 63 cells.
+# Expected wall time: 45-70 min. Drop schemas/files before re-running.
+#
+# Caveat: the corpus has heavy intra-customer templating (10-26 notes per
+# customer-deal cluster), so MRR will be lower than NTSB or SCOTUS even
+# for strong configurations. The cross-backend comparison still holds.
+
+name: sales_crm_bakeoff
+
+source:
+  type: files
+  glob: docs/samples/sales-crm/notes/note-*.md
+  id_from: stem
+
+framer:
+  type: identity
+
+gold_queries: docs/samples/bakeoff-sales-crm/gold-sales-crm.yaml
+
+matrix:
+  embedders:
+    - { type: fastembed, model_name: "Xenova/bge-small-en-v1.5-int8", dim: 384 }
+    - { type: fastembed, model_name: "Xenova/bge-base-en-v1.5-int8",  dim: 768 }
+    - { type: fastembed, model_name: "nomic-ai/nomic-embed-text-v1.5-Q", dim: 768 }
+  chunkers:
+    - { type: hierarchy }
+    - { type: sentence_aware }
+    - { type: fixed_overlap }
+    - { type: neighbor_expand, base: { type: hierarchy }, window: 1 }
+    - { type: semantic, boundary_model: same }
+    - type: summary_embed
+      base: { type: hierarchy }
+      summarizer:
+        mode: callable
+        module: chunkshop.summarizers.lede
+        function: summarize
+        kwargs: { max_length: 300 }
+    - type: hierarchical_summary
+      base: { type: hierarchy }
+      summarizer:
+        mode: callable
+        module: chunkshop.summarizers.lede
+        function: summarize
+        kwargs: { max_length: 300 }
+
+targets:
+  - type: postgres
+    dsn_env: CHUNKSHOP_DSN
+    database: chunkshop_bakeoff_crm_pg
+  - type: mariadb
+    dsn_env: MARIADB_DSN
+    database: chunkshop_bakeoff_crm_md
+  - type: sqlite
+    dsn_env: CRM_SQLITE_PATH
+    database: ignored
+
+scoring:
+  k: [1, 3, 5]
+  include_mrr: true
+  top_k: 5

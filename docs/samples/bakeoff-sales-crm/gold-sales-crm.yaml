@@ -1,0 +1,40 @@
+# 10 hand-curated gold queries against the sales-CRM notes corpus
+# (649 markdown sales-call notes, customer-deal clusters share boilerplate
+# but each note has one distinctive line or "Win reason" anecdote).
+#
+# Doc IDs are file stems from docs/samples/sales-crm/notes/<id>.md
+#
+# Statistical-power note: this corpus has heavy intra-customer templating
+# (10-26 notes per customer-deal cluster). Many queries will retrieve
+# *sibling* notes from the same cluster with similar embeddings. Treat the
+# leaderboard as a cross-backend consistency check, not an absolute
+# accuracy benchmark. Truly distinctive anchors (PCI-DSS, Slackbot to
+# start staging server) score better than cluster-shared phrases.
+
+# === note-038049 — Miller Technology Co — uniquely tagged with PCI-DSS + SOC 2 + Multi-region ===
+- { query: "Miller Technology Co Neuron Canvas SOC 2 Type II PCI-DSS multi-region deployment requirements", gold_doc_id: "note-038049-Miller-Technology-Co" }
+- { query: "auditor failed AI loan denial because no model lineage explainability", gold_doc_id: "note-038049-Miller-Technology-Co" }
+
+# === note-014818 — Johnson Education LLC — uniquely mentions Slackbot to start staging server + knowledge-base black hole ===
+- { query: "Slackbot to start the staging server but no one knows how to build it", gold_doc_id: "note-014818-Johnson-Education-LLC" }
+
+# === note-029658 — Garcia Healthcare Co — only note with "scrapes the logs for the root cause" ===
+- { query: "SRE team built agent that automates server-down runbook restarts service scrapes logs", gold_doc_id: "note-029658-Garcia-Healthcare-Co" }
+
+# === note-014673 — Smith Healthcare Solutions — VP of Sales built deal-summary agent in 1-hour demo ===
+- { query: "VP of Sales with no technical skills built deal summary agent during one hour demo", gold_doc_id: "note-014673-Smith-Healthcare-Solutions" }
+
+# === note-019171 — Davis Manufacturing Systems — HR AI Onboarding Buddy + 20 years of customer data ===
+- { query: "Davis Manufacturing Systems HR team build AI Onboarding Buddy 20 years customer data", gold_doc_id: "note-019171-Davis-Manufacturing-Systems" }
+
+# === note-031661 — Brown Education Co — CIO sale, all-in-one Factory consolidated solution ===
+- { query: "Brown Education Co CIO sale wanted consolidated all-in-one Factory not 10 fragmented tools", gold_doc_id: "note-031661-Brown-Education-Co" }
+
+# === note-025694 — Davis Retail Group — Converge Lakehouse Spark petabytes federated query ===
+- { query: "Converge Lakehouse Spark integration scale model training petabytes federated query", gold_doc_id: "note-025694-Davis-Retail-Group" }
+
+# === note-024829 — Davis Retail Inc — Synapse AIOps mystery problem 4 hours human / 2 minutes AI ===
+- { query: "trained AI agent on steps for mystery problem that took human four hours now solved in two minutes", gold_doc_id: "note-024829-Davis-Retail-Inc" }
+
+# === note-010761 — Jones Technology Solutions — Guardian index usage report saved bad change ===
+- { query: "added an index but database didn't use it Guardian index usage report saved from bad change", gold_doc_id: "note-010761-Jones-Technology-Solutions" }

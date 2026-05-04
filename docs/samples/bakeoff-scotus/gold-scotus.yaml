@@ -1,0 +1,43 @@
+# 12 hand-curated gold queries against the SCOTUS 772-doc corpus
+# (case overviews + decisions for Supreme Court terms 2018-2022).
+#
+# Adapted from pg-raggraph's questions/scotus.yaml (LLM-judge format)
+# into chunkshop's gold-query format: each query targets a single doc_id
+# verified to exist in scotus.json.
+#
+# Each case has up to 2 docs in the corpus: <case>-overview and <case>-decision.
+# Queries that ask "who wrote the majority opinion" or "the holding" are
+# anchored to -decision; queries that ask "what was the legal issue" or
+# "question presented" are anchored to -overview.
+
+# === Bostock v. Clayton County (2019) — Title VII / sexual orientation ===
+- { query: "Who wrote the majority opinion in Bostock v. Clayton County?", gold_doc_id: "case-2019_bostock-v-clayton-county-decision" }
+- { query: "What did Bostock v. Clayton County hold about firing employees for being gay or transgender under Title VII?", gold_doc_id: "case-2019_bostock-v-clayton-county-decision" }
+
+# === Apple v. Pepper (2018) — antitrust standing ===
+- { query: "What legal issue does Apple v. Pepper concern and what is the question presented?", gold_doc_id: "case-2018_apple-v-pepper-overview" }
+- { query: "What was the holding in Apple v. Pepper about consumer antitrust standing?", gold_doc_id: "case-2018_apple-v-pepper-decision" }
+
+# === Air and Liquid Systems v. DeVries (2018) — maritime tort ===
+- { query: "Question presented in Air and Liquid Systems Corp v. DeVries about asbestos exposure", gold_doc_id: "case-2018_air-and-liquid-systems-corp-v-devries-overview" }
+
+# === Allen v. Milligan (2022) — Voting Rights Act / Alabama redistricting ===
+- { query: "Allen v. Milligan Alabama congressional redistricting Voting Rights Act decision", gold_doc_id: "case-2022_allen-v-milligan-decision" }
+
+# === Babb v. Wilkie (2019) — federal employee age discrimination ===
+- { query: "Babb v. Wilkie federal employee age discrimination ADEA but-for causation", gold_doc_id: "case-2019_babb-v-wilkie-overview" }
+
+# === Greer v. United States (2020) — Rehaif retroactivity ===
+- { query: "Greer v. United States plain-error review of unlawful firearm possession Rehaif", gold_doc_id: "case-2020_greer-v-united-states-decision" }
+
+# === Carson v. Makin (2021) — religious schools tuition program ===
+- { query: "Carson v. Makin Maine tuition assistance religious schools Free Exercise Clause", gold_doc_id: "case-2021_carson-v-makin-decision" }
+
+# === Dobbs v. Jackson Women's Health (2021) — abortion ===
+- { query: "Dobbs v. Jackson Women's Health Organization Mississippi 15-week abortion ban", gold_doc_id: "case-2021_dobbs-v-jackson-womens-health-organization-decision" }
+
+# === Rucho v. Common Cause (2018) — partisan gerrymandering ===
+- { query: "Rucho v. Common Cause partisan gerrymandering nonjusticiable political question", gold_doc_id: "case-2018_rucho-v-common-cause-decision" }
+
+# === Trump v. Vance (2019) — presidential immunity / state subpoena ===
+- { query: "Trump v. Vance state grand jury subpoena for presidential financial records", gold_doc_id: "case-2019_trump-v-vance-decision" }
