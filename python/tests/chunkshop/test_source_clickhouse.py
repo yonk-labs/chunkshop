@@ -6,7 +6,12 @@ subsequent commits (Tasks 4-7 of the plan).
 Each test creates and drops its own database to avoid cross-test pollution.
 All tests skipped if CHUNKSHOP_TEST_DSN_CH is unset.
 """
+import datetime
+import decimal
+import ipaddress
 import os
+import uuid
+
 import pytest
 
 pytest.importorskip("clickhouse_connect")
@@ -64,6 +69,90 @@ def test_p1_t1_iter_documents_happy_path():
         assert by_id["a"].metadata == {"lang": "en"}
         assert by_id["b"].metadata == {"lang": "fr"}
         assert by_id["a"].title is None
+    finally:
+        with be.connect() as client:
+            _drop_db(client, db)
+
+
+def test_p1_t3_json_safe_recursive_coercion():
+    """P1-T3: nested CH types coerce to JSON-serializable forms.
+
+    Covers Array(DateTime), Map(String, UUID), Decimal, Tuple, IPv4,
+    Nullable. Asserts json.dumps(metadata) succeeds.
+    """
+    import json
+
+    db = "chunkshop_src_test_t3"
+    be = ClickHouseBackend(dsn_env=DSN_VAR)
+    try:
+        with be.connect() as client:
+            _create_db(client, db)
+            # CH requires allow_suspicious_low_cardinality_types and similar
+            # flags for some experimental types but Array/Map/Tuple/Nullable
+            # are all stable in 24.10.
+            client.command(
+                f"CREATE TABLE `{db}`.`docs` ("
+                f"id String, body String, "
+                f"  ts_array Array(DateTime), "
+                f"  uuid_map Map(String, UUID), "
+                f"  amount Decimal(10, 2), "
+                f"  tup Tuple(String, Date), "
+                f"  ip Nullable(IPv4), "
+                f"  ip_null Nullable(IPv4)"
+                f") ENGINE = MergeTree() ORDER BY id"
+            )
+            client.insert(
+                f"`{db}`.`docs`",
+                [[
+                    "doc1", "body text",
+                    [datetime.datetime(2025, 1, 1, 12, 0, 0),
+                     datetime.datetime(2025, 6, 15, 9, 30, 0)],
+                    {"a": uuid.UUID("12345678-1234-5678-1234-567812345678")},
+                    decimal.Decimal("123.45"),
+                    ("hello", datetime.date(2025, 3, 1)),
+                    ipaddress.IPv4Address("192.168.1.1"),
+                    None,
+                ]],
+                column_names=["id", "body", "ts_array", "uuid_map", "amount",
+                              "tup", "ip", "ip_null"],
+            )
+
+        cfg = Cfg(
+            type="clickhouse_table",
+            dsn_env=DSN_VAR,
+            database=db,
+            table="docs",
+            id_column="id",
+            content_column="body",
+            metadata_columns=["ts_array", "uuid_map", "amount", "tup", "ip", "ip_null"],
+        )
+        docs = list(Source(cfg).iter_documents())
+        assert len(docs) == 1
+        meta = docs[0].metadata
+
+        # Must be JSON-serializable end-to-end (this is the round-trip
+        # the sink will perform via json.dumps).
+        serialized = json.dumps(meta)
+        assert serialized   # truthy = succeeded
+
+        # Spot checks on the coerced shapes
+        assert isinstance(meta["ts_array"], list)
+        assert all(isinstance(x, str) for x in meta["ts_array"])
+        assert "2025-01-01" in meta["ts_array"][0]
+
+        assert isinstance(meta["uuid_map"], dict)
+        assert meta["uuid_map"]["a"] == "12345678-1234-5678-1234-567812345678"
+
+        assert meta["amount"] == 123.45
+        assert isinstance(meta["amount"], float)
+
+        # Tuple → list
+        assert isinstance(meta["tup"], list)
+        assert meta["tup"][0] == "hello"
+        assert meta["tup"][1] == "2025-03-01"
+
+        assert meta["ip"] == "192.168.1.1"
+        assert meta["ip_null"] is None
     finally:
         with be.connect() as client:
             _drop_db(client, db)
