@@ -61,6 +61,8 @@ Six sub-projects + one drive-by polish item.
 | **RT** | Rust 16-cell matrix test | `rust/chunkshop/tests/cross_backend_matrix.rs` mirroring the Python 16-cell matrix; runs against all four backends, skips per-DSN | 1 |
 | **CLI-FIX** | Version string fix | One-line patch on `python/src/chunkshop/cli.py:15` (use `importlib.metadata.version("chunkshop")`) + analogous fix in Rust binary if it has the same issue | 0 (drive-by) |
 
+> **Session estimates are rough.** Treat them as "about how big" rather than commitments. R4 (Rust ClickHouse) has the highest variance because the Rust ClickHouse driver ecosystem is less mature than sqlx-backed options — could land in 1 session if the chosen driver is ergonomic, or stretch to 3 if driver-level workarounds are needed. CLI-FIX is "drive-by" only if the Rust binary's version-string issue is also a one-line literal swap; if it's deeper, promote it to its own micro-sub-project.
+
 ## 5. Wave structure
 
 Sub-projects are sequenced into three waves to maximize parallelism while respecting real dependencies.

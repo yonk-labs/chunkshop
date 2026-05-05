@@ -320,7 +320,7 @@ all-backends = ["chunkshop[sqlite,mariadb,clickhouse]"]
 - Migration scripts from 0.3.x.
 - Vector distance function selection. Cosine is hardcoded for first ship.
 - Backend hot-swap mid-pipeline (multi-sink fanout, etc.).
-- Rust/Go ports.
+- Rust/Go ports for the **first ship** of v4.0. The Rust port has since been folded back into the v0.4.0 release scope — see [2026-05-05-v4-finishing-roadmap-design.md](2026-05-05-v4-finishing-roadmap-design.md). Go port remains indefinitely deferred.
 - SQLite as a drop-in `pgvector` server replacement at scale. SQLite's value here is portability + zero-infrastructure dev; production multi-writer workloads still want PG/MariaDB.
 
 ## 10. Open questions deferred to writing-plans
