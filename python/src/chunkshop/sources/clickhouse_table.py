@@ -30,6 +30,11 @@ def _json_safe(v: Any) -> Any:
     Recurses into list/tuple/dict because CH's Tuple/Array/Map types
     nest more deeply than PG/MariaDB row scalars in practice. Tuples
     become lists (true JSON has no tuple).
+
+    Recursion is unbounded by design — operator-controlled CH schemas
+    are assumed to be non-adversarially nested (typical real-world
+    depth is 2-5; Python's default recursion limit ~1000 leaves ample
+    headroom). Adversarial schemas would surface as RecursionError.
     """
     if isinstance(v, (datetime.datetime, datetime.date, datetime.time)):
         return v.isoformat()
