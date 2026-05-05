@@ -89,8 +89,31 @@ impl BackendDialect for PostgresBackend {
     fn json_literal(&self, obj: &serde_json::Value) -> String {
         serde_json::to_string(obj).unwrap_or_else(|_| "null".to_string())
     }
-    fn json_path_sql(&self, _col_expr: &str, _dotted_path: &str) -> String { unimplemented!("Task 7") }
-    fn upsert_clause(&self, _key_cols: &[&str], _update_cols: &[&str]) -> String { unimplemented!("Task 7") }
+    fn json_path_sql(&self, col_expr: &str, dotted_path: &str) -> String {
+        let segs: Vec<&str> = dotted_path.split('.').collect();
+        if segs.len() == 1 {
+            return format!("{col_expr}->>'{}'", segs[0]);
+        }
+        let mut s = String::from(col_expr);
+        for seg in &segs[..segs.len() - 1] {
+            s.push_str(&format!("->'{seg}'"));
+        }
+        s.push_str(&format!("->>'{}'", segs[segs.len() - 1]));
+        s
+    }
+
+    fn upsert_clause(&self, key_cols: &[&str], update_cols: &[&str]) -> String {
+        let keys: Vec<String> = key_cols.iter().map(|c| self.quote_ident(c)).collect();
+        let keys_sql = keys.join(", ");
+        if update_cols.is_empty() {
+            return format!("ON CONFLICT ({keys_sql}) DO NOTHING");
+        }
+        let sets: Vec<String> = update_cols
+            .iter()
+            .map(|c| format!("{q} = EXCLUDED.{q}", q = self.quote_ident(c)))
+            .collect();
+        format!("ON CONFLICT ({keys_sql}) DO UPDATE SET {}", sets.join(", "))
+    }
     fn create_database_sql(&self, _name: &str) -> String { unimplemented!("Task 8") }
     fn add_column_if_not_exists_sql(&self, _fq: &str, _col: &str, _type_ddl: &str) -> String { unimplemented!("Task 8") }
     fn drop_table_sql(&self, _fq: &str) -> String { unimplemented!("Task 8") }
@@ -221,5 +244,54 @@ mod tests {
         let reparsed: serde_json::Value = serde_json::from_str(&lit).unwrap();
         assert_eq!(reparsed["k"], "v");
         assert_eq!(reparsed["n"], 1);
+    }
+
+    #[test]
+    fn json_path_sql_single_segment() {
+        let b = backend();
+        assert_eq!(b.json_path_sql("metadata", "a"), "metadata->>'a'");
+    }
+
+    #[test]
+    fn json_path_sql_two_segments() {
+        let b = backend();
+        assert_eq!(b.json_path_sql("metadata", "a.b"), "metadata->'a'->>'b'");
+    }
+
+    #[test]
+    fn json_path_sql_three_segments() {
+        let b = backend();
+        assert_eq!(
+            b.json_path_sql("metadata", "a.b.c"),
+            "metadata->'a'->'b'->>'c'"
+        );
+    }
+
+    #[test]
+    fn upsert_clause_do_nothing_when_no_update_cols() {
+        let b = backend();
+        let sql = b.upsert_clause(&["id"], &[]);
+        assert_eq!(sql, "ON CONFLICT (\"id\") DO NOTHING");
+    }
+
+    #[test]
+    fn upsert_clause_do_update_set() {
+        let b = backend();
+        let sql = b.upsert_clause(&["id"], &["content", "metadata"]);
+        assert_eq!(
+            sql,
+            "ON CONFLICT (\"id\") DO UPDATE SET \"content\" = EXCLUDED.\"content\", \
+             \"metadata\" = EXCLUDED.\"metadata\""
+        );
+    }
+
+    #[test]
+    fn upsert_clause_composite_key() {
+        let b = backend();
+        let sql = b.upsert_clause(&["a", "b"], &["c"]);
+        assert_eq!(
+            sql,
+            "ON CONFLICT (\"a\", \"b\") DO UPDATE SET \"c\" = EXCLUDED.\"c\""
+        );
     }
 }
