@@ -184,6 +184,7 @@ def test_p1_t5_title_column_optional():
             id_column="id", content_column="body",
         )
         docs = list(Source(cfg_no_title).iter_documents())
+        assert len(docs) == 2
         assert all(d.title is None for d in docs)
 
         # With title_column
