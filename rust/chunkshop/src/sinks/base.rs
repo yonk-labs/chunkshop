@@ -15,6 +15,9 @@ use crate::chunker::Chunk;
 pub trait Sink {
     fn create_table(&self) -> impl Future<Output = Result<()>> + Send;
 
+    /// `chunks`, `embeddings`, and `tags_per_chunk` MUST all be the same length.
+    /// Implementations may panic (not return `Err`) on divergence — that's a
+    /// programming error, not a runtime condition.
     fn write_document(
         &self,
         doc_id: &str,
@@ -27,6 +30,8 @@ pub trait Sink {
 
     fn count_docs(&self) -> impl Future<Output = Result<i64>> + Send;
 
+    /// Returns `(doc_id, seq_num, distance)` tuples for the `k` nearest chunks
+    /// to `query_vec`, ordered by ascending cosine distance.
     fn query_top_k(
         &self,
         query_vec: &[f32],
