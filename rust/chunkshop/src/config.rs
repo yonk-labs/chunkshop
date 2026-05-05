@@ -796,9 +796,51 @@ fn validate_ident(name: &str, field: &str) -> Result<()> {
     Ok(())
 }
 
+/// Pre-deserialize legacy-form rejection (V4-SC-006).
+///
+/// Walks the raw YAML for known 0.3.x field/value patterns and emits a
+/// migration-friendly error when found. Without this pass, serde's default
+/// errors are cryptic ("unknown variant `pgvector`") or absent (silently
+/// accepted legacy fields).
+fn reject_legacy_forms(yaml: &serde_yml::Value) -> Result<()> {
+    let target = yaml.get("target").and_then(|v| v.as_mapping());
+    let Some(target) = target else {
+        return Ok(()); // No target block; nothing to validate.
+    };
+
+    if let Some(t) = target.get("type").and_then(|v| v.as_str()) {
+        if t == "pgvector" {
+            return Err(anyhow!(
+                "target.type 'pgvector' was renamed to 'postgres' in v0.4.0. Update your YAML."
+            ));
+        }
+    }
+    if target.get("schema").is_some() {
+        return Err(anyhow!(
+            "target.schema was renamed to target.database in v0.4.0. Update your YAML."
+        ));
+    }
+    if let Some(o) = target.get("overwrite") {
+        if matches!(o.as_bool(), Some(true)) {
+            return Err(anyhow!(
+                "target.overwrite: true was replaced by target.mode: 'overwrite' in v0.4.0. \
+                 Update your YAML."
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn load_config(path: &Path) -> Result<CellConfig> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading config {}", path.display()))?;
+
+    // V4-SC-006: reject 0.3.x legacy YAML shapes with friendly errors before
+    // typed deserialization (which would emit cryptic "unknown variant" errors).
+    let raw_value: serde_yml::Value = serde_yml::from_str(&text)
+        .with_context(|| format!("parsing YAML at {}", path.display()))?;
+    reject_legacy_forms(&raw_value)?;
+
     let cfg: CellConfig = serde_yml::from_str(&text)
         .with_context(|| format!("parsing YAML {}", path.display()))?;
     match &cfg.target {
