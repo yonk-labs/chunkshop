@@ -66,11 +66,21 @@ impl BackendDialect for PostgresBackend {
 
     // --- remaining methods land in Tasks 5–9. Stubs below to keep crate compiling. ---
 
-    fn vector_type_ddl(&self, _dim: usize) -> String { unimplemented!("Task 5") }
-    fn json_type_ddl(&self) -> String { unimplemented!("Task 5") }
-    fn tags_array_type_ddl(&self) -> String { unimplemented!("Task 5") }
-    fn text_pk_type_ddl(&self) -> String { unimplemented!("Task 5") }
-    fn timestamp_now_default_ddl(&self) -> String { unimplemented!("Task 5") }
+    fn vector_type_ddl(&self, dim: usize) -> String {
+        format!("vector({dim})")
+    }
+    fn json_type_ddl(&self) -> String {
+        "jsonb".to_string()
+    }
+    fn tags_array_type_ddl(&self) -> String {
+        "text[]".to_string()
+    }
+    fn text_pk_type_ddl(&self) -> String {
+        "text".to_string()
+    }
+    fn timestamp_now_default_ddl(&self) -> String {
+        "timestamptz NOT NULL DEFAULT now()".to_string()
+    }
     fn vector_literal(&self, _arr: &[f32]) -> String { unimplemented!("Task 6") }
     fn json_literal(&self, _obj: &serde_json::Value) -> String { unimplemented!("Task 6") }
     fn json_path_sql(&self, _col_expr: &str, _dotted_path: &str) -> String { unimplemented!("Task 7") }
@@ -144,5 +154,39 @@ mod tests {
     fn fq_table_quotes_both_segments() {
         let b = backend();
         assert_eq!(b.fq_table("my_db", "my_table"), "\"my_db\".\"my_table\"");
+    }
+
+    #[test]
+    fn vector_type_ddl() {
+        let b = backend();
+        assert_eq!(b.vector_type_ddl(384), "vector(384)");
+        assert_eq!(b.vector_type_ddl(1024), "vector(1024)");
+    }
+
+    #[test]
+    fn json_type_ddl_is_jsonb() {
+        let b = backend();
+        assert_eq!(b.json_type_ddl(), "jsonb");
+    }
+
+    #[test]
+    fn tags_array_type_ddl_is_text_array() {
+        let b = backend();
+        assert_eq!(b.tags_array_type_ddl(), "text[]");
+    }
+
+    #[test]
+    fn text_pk_type_ddl_is_text() {
+        let b = backend();
+        assert_eq!(b.text_pk_type_ddl(), "text");
+    }
+
+    #[test]
+    fn timestamp_now_default_ddl() {
+        let b = backend();
+        assert_eq!(
+            b.timestamp_now_default_ddl(),
+            "timestamptz NOT NULL DEFAULT now()"
+        );
     }
 }
