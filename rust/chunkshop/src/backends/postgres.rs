@@ -191,28 +191,75 @@ impl BackendConn for PostgresBackend {
 
     fn acquire_create_lock(
         &self,
-        _tx: &mut Transaction<'_, Postgres>,
-        _key: &str,
+        tx: &mut Transaction<'_, Postgres>,
+        key: &str,
     ) -> impl Future<Output = Result<()>> + Send {
-        async move { unimplemented!("Task 10") }
+        async move {
+            // Deterministic 64-bit signed int from BLAKE2b-8 of the schema name.
+            // Mirrors Python's PostgresBackend._advisory_lock_key.
+            use blake2::{digest::consts::U8, Blake2b, Digest};
+            let mut hasher = Blake2b::<U8>::new();
+            hasher.update(key.as_bytes());
+            let digest = hasher.finalize();
+            let lock_key = i64::from_be_bytes(digest.into());
+            sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                .bind(lock_key)
+                .execute(&mut **tx)
+                .await
+                .with_context(|| format!("acquire advisory lock for {key}"))?;
+            Ok(())
+        }
     }
 
     fn table_exists(
         &self,
-        _tx: &mut Transaction<'_, Postgres>,
-        _db: &str,
-        _table: &str,
+        tx: &mut Transaction<'_, Postgres>,
+        db: &str,
+        table: &str,
     ) -> impl Future<Output = Result<bool>> + Send {
-        async move { unimplemented!("Task 10") }
+        async move {
+            use sqlx::Row;
+            let row = sqlx::query(
+                "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname=$1 AND tablename=$2)",
+            )
+            .bind(db)
+            .bind(table)
+            .fetch_one(&mut **tx)
+            .await?;
+            Ok(row.get::<bool, _>(0))
+        }
     }
 
     fn embedding_dim(
         &self,
-        _tx: &mut Transaction<'_, Postgres>,
-        _db: &str,
-        _table: &str,
+        tx: &mut Transaction<'_, Postgres>,
+        db: &str,
+        table: &str,
     ) -> impl Future<Output = Result<Option<usize>>> + Send {
-        async move { unimplemented!("Task 10") }
+        async move {
+            use sqlx::Row;
+            let row = sqlx::query(
+                r#"
+                SELECT format_type(atttypid, atttypmod) AS t
+                FROM pg_attribute
+                WHERE attrelid = (
+                    SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE c.relname = $1 AND n.nspname = $2
+                ) AND attname = 'embedding'
+                "#,
+            )
+            .bind(table)
+            .bind(db)
+            .fetch_optional(&mut **tx)
+            .await?;
+            let Some(r) = row else { return Ok(None) };
+            let s: String = r.get("t");
+            let re = regex::Regex::new(r"^vector\((\d+)\)$").unwrap();
+            Ok(re
+                .captures(&s)
+                .and_then(|c| c.get(1))
+                .and_then(|m| m.as_str().parse().ok()))
+        }
     }
 }
 
