@@ -114,9 +114,20 @@ impl BackendDialect for PostgresBackend {
             .collect();
         format!("ON CONFLICT ({keys_sql}) DO UPDATE SET {}", sets.join(", "))
     }
-    fn create_database_sql(&self, _name: &str) -> String { unimplemented!("Task 8") }
-    fn add_column_if_not_exists_sql(&self, _fq: &str, _col: &str, _type_ddl: &str) -> String { unimplemented!("Task 8") }
-    fn drop_table_sql(&self, _fq: &str) -> String { unimplemented!("Task 8") }
+    fn create_database_sql(&self, name: &str) -> String {
+        format!("CREATE SCHEMA IF NOT EXISTS {}", self.quote_ident(name))
+    }
+
+    fn add_column_if_not_exists_sql(&self, fq: &str, col: &str, type_ddl: &str) -> String {
+        format!(
+            "ALTER TABLE {fq} ADD COLUMN IF NOT EXISTS {} {type_ddl}",
+            self.quote_ident(col)
+        )
+    }
+
+    fn drop_table_sql(&self, fq: &str) -> String {
+        format!("DROP TABLE {fq}")
+    }
     fn emit_chunks_table_ddl(
         &self, _fq: &str, _cols: &[ColSpec], _hnsw: bool, _dim: usize, _engine: Option<&str>,
     ) -> Vec<String> { unimplemented!("Task 9") }
@@ -293,5 +304,30 @@ mod tests {
             sql,
             "ON CONFLICT (\"a\", \"b\") DO UPDATE SET \"c\" = EXCLUDED.\"c\""
         );
+    }
+
+    #[test]
+    fn create_database_sql_uses_schema_for_postgres() {
+        let b = backend();
+        assert_eq!(
+            b.create_database_sql("chunkshop"),
+            "CREATE SCHEMA IF NOT EXISTS \"chunkshop\""
+        );
+    }
+
+    #[test]
+    fn add_column_if_not_exists_sql_format() {
+        let b = backend();
+        let sql = b.add_column_if_not_exists_sql("\"db\".\"t\"", "source", "text");
+        assert_eq!(
+            sql,
+            "ALTER TABLE \"db\".\"t\" ADD COLUMN IF NOT EXISTS \"source\" text"
+        );
+    }
+
+    #[test]
+    fn drop_table_sql_format() {
+        let b = backend();
+        assert_eq!(b.drop_table_sql("\"db\".\"t\""), "DROP TABLE \"db\".\"t\"");
     }
 }
