@@ -11,14 +11,10 @@ use crate::config::{
     S3SourceConfig,
 };
 
-/// Analogue of Python's `sources.base.Document`.
-#[derive(Debug, Clone)]
-pub struct Document {
-    pub id: String,
-    pub content: String,
-    pub title: Option<String>,
-    pub metadata: serde_json::Value,
-}
+// `Document` lives in `sources::base::Document` as of v4.0. Re-exported here
+// during the R1 transition; this re-export is removed when source.rs is
+// deleted (Phase G, Task 27).
+pub use crate::sources::base::Document;
 
 pub struct FilesSource {
     cfg: FilesSourceConfig,

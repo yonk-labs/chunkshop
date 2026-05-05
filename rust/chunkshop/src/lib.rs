@@ -19,6 +19,7 @@ pub mod sentence_split;
 pub mod sink;
 pub mod sinks;
 pub mod source;
+pub mod sources;
 pub mod summarizer;
 
 pub use bakeoff::{run_bakeoff, run_bakeoff_with_base, BakeoffConfig, BakeoffResults};
