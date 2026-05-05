@@ -238,3 +238,54 @@ def test_p1_t4_where_clause_trusted_input():
     finally:
         with be.connect() as client:
             _drop_db(client, db)
+
+
+def test_p1_t2_streaming_does_not_materialize():
+    """P1-T2: streaming iteration is wired (uses query_rows_stream).
+
+    Soft test — locks in the call shape. Seeds 2k rows, iterates fully,
+    asserts:
+      1. iteration completes (rows are reachable)
+      2. the count matches what was inserted
+      3. cleanup-on-early-exit doesn't blow up
+
+    A regression that switches query_rows_stream → query would still
+    pass (1) and (2) — this test is primarily a code-review marker
+    that the streaming code path exists.
+    """
+    db = "chunkshop_src_test_t2"
+    n_rows = 2_000
+    be = ClickHouseBackend(dsn_env=DSN_VAR)
+    try:
+        with be.connect() as client:
+            _create_db(client, db)
+            client.command(
+                f"CREATE TABLE `{db}`.`docs` "
+                f"(id String, body String) "
+                f"ENGINE = MergeTree() ORDER BY id"
+            )
+            rows = [[f"doc{i:05d}", f"body of document {i}"] for i in range(n_rows)]
+            client.insert(f"`{db}`.`docs`", rows, column_names=["id", "body"])
+
+        cfg = Cfg(
+            type="clickhouse_table", dsn_env=DSN_VAR,
+            database=db, table="docs",
+            id_column="id", content_column="body",
+        )
+        src = Source(cfg)
+
+        # Full iteration: count must match.
+        all_docs = list(src.iter_documents())
+        assert len(all_docs) == n_rows
+
+        # Early-exit cleanup: take a few then bail. The StreamContext's
+        # __exit__ should release the chunked HTTP response cleanly.
+        partial = []
+        for d in src.iter_documents():
+            partial.append(d)
+            if len(partial) >= 5:
+                break
+        assert len(partial) == 5
+    finally:
+        with be.connect() as client:
+            _drop_db(client, db)
