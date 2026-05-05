@@ -32,6 +32,13 @@ impl PostgresBackend {
                 let dsn = std::env::var(&self.dsn_env).with_context(|| {
                     format!("DSN env var {} not set", self.dsn_env)
                 })?;
+                // max_connections(1) mirrors the Python implementation's
+                // short-lived per-document connection discipline (see
+                // CLAUDE.md). PgSink opens one short transaction per
+                // write_document, so concurrent throughput comes from
+                // running multiple cells as separate processes (orchestrator),
+                // not from pooling within a single process. Revisit if the
+                // sink layer ever wants intra-process write concurrency.
                 PgPoolOptions::new()
                     .max_connections(1)
                     .connect(&dsn)
