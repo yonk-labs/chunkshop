@@ -59,6 +59,7 @@ fn rust_hierarchy_chunks_match_python() {
         min_section_chars: r.config.min_section_chars,
         max_chars: r.config.max_chars,
         if_oversize: None,
+        heading_pattern: None,
     };
     let doc = Document {
         id: r.doc_id.clone(),
@@ -66,7 +67,7 @@ fn rust_hierarchy_chunks_match_python() {
         title: r.doc_title.clone(),
         metadata: json!({}),
     };
-    let chunker = HierarchyChunker::new(cfg);
+    let chunker = HierarchyChunker::new(cfg).expect("build hierarchy chunker");
     let actual = chunker.chunk(&doc);
 
     assert_eq!(

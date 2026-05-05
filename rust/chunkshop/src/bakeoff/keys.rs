@@ -103,6 +103,7 @@ mod tests {
             min_section_chars: 100,
             max_chars: 2000,
             if_oversize: None,
+            heading_pattern: None,
         });
         assert_eq!(chunker_key(&h).unwrap(), "hierarchy");
 
@@ -128,6 +129,7 @@ mod tests {
                 min_section_chars: 100,
                 max_chars: 2000,
                 if_oversize: None,
+                heading_pattern: None,
             })),
             window: 1,
             max_chars: None,
@@ -146,6 +148,7 @@ mod tests {
             min_section_chars: 100,
             max_chars: 2000,
             if_oversize: None,
+            heading_pattern: None,
         });
         assert_eq!(
             combo_table(&h, &emb("Xenova/bge-small-en-v1.5-int8")).unwrap(),
