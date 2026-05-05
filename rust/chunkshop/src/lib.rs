@@ -17,6 +17,7 @@ pub mod pipeline;
 pub mod runner;
 pub mod sentence_split;
 pub mod sink;
+pub mod sinks;
 pub mod source;
 pub mod summarizer;
 
