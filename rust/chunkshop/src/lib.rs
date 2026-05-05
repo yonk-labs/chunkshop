@@ -5,6 +5,7 @@
 //! shape match the Python reference so vectors are interchangeable across
 //! implementations.
 
+pub mod backends;
 pub mod bakeoff;
 pub mod chunker;
 pub mod config;
