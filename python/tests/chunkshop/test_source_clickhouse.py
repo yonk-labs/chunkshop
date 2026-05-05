@@ -201,3 +201,40 @@ def test_p1_t5_title_column_optional():
     finally:
         with be.connect() as client:
             _drop_db(client, db)
+
+
+def test_p1_t4_where_clause_trusted_input():
+    """P1-T4: cfg.where is interpolated raw into SQL with CH dialect.
+    Operator-trusted contract — same as PG/MariaDB siblings."""
+    db = "chunkshop_src_test_t4"
+    be = ClickHouseBackend(dsn_env=DSN_VAR)
+    try:
+        with be.connect() as client:
+            _create_db(client, db)
+            client.command(
+                f"CREATE TABLE `{db}`.`docs` "
+                f"(id String, body String, created_at DateTime) "
+                f"ENGINE = MergeTree() ORDER BY id"
+            )
+            client.insert(
+                f"`{db}`.`docs`",
+                [
+                    ["old", "old body", datetime.datetime(2024, 1, 1, 0, 0, 0)],
+                    ["new1", "new body 1", datetime.datetime(2025, 7, 1, 0, 0, 0)],
+                    ["new2", "new body 2", datetime.datetime(2025, 8, 1, 0, 0, 0)],
+                ],
+                column_names=["id", "body", "created_at"],
+            )
+
+        cfg = Cfg(
+            type="clickhouse_table", dsn_env=DSN_VAR,
+            database=db, table="docs",
+            id_column="id", content_column="body",
+            where="created_at > toDateTime('2025-06-01 00:00:00')",
+        )
+        docs = list(Source(cfg).iter_documents())
+        ids = sorted(d.id for d in docs)
+        assert ids == ["new1", "new2"]
+    finally:
+        with be.connect() as client:
+            _drop_db(client, db)
