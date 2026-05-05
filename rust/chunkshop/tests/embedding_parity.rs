@@ -87,6 +87,15 @@ fn rust_embeddings_match_python_within_envelope() {
         dim,
         batch_size: 1,
         threads: Some(1),
+        hf_repo: None,
+        onnx_path: None,
+        pooling: "cls".to_string(),
+        additional_files: vec![
+            "tokenizer.json".to_string(),
+            "tokenizer_config.json".to_string(),
+            "special_tokens_map.json".to_string(),
+            "config.json".to_string(),
+        ],
     };
 
     // First-call download path; if no network, skip with a printed message
