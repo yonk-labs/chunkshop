@@ -19,7 +19,13 @@ use std::future::Future;
 
 #[derive(Debug, Clone)]
 pub struct ColSpec {
+    /// Compile-time constant — canonical chunkshop columns are always known
+    /// at build time (`"id"`, `"doc_id"`, `"embedding"`, etc.). Promoted-
+    /// metadata columns flow through `add_column_if_not_exists_sql`, not
+    /// through `ColSpec`, so this never needs to be runtime-derived.
     pub name: &'static str,
+    /// Backend-specific. May be runtime-computed (e.g., `format!("vector({dim})")`),
+    /// hence `String` rather than `&'static str`.
     pub type_ddl: String,
     pub nullable: bool,
     pub default: Option<&'static str>,
@@ -62,6 +68,10 @@ pub trait BackendDialect {
 
 /// I/O surface. R1 PG-concrete; R2 introduces the GAT/executor abstraction.
 pub trait BackendConn {
+    /// Force-initialize the connection pool. Idempotent — second call is a no-op.
+    /// The DSN is sourced from the backend struct's configuration (set when the
+    /// backend is constructed via `PostgresBackend::new(dsn_env)`), not from
+    /// arguments to this method.
     fn connect(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
 
     fn acquire_create_lock(
