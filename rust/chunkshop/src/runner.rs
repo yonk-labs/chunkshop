@@ -5,14 +5,7 @@ use std::time::Instant;
 use anyhow::{anyhow, Result};
 use tracing::info;
 
-use crate::chunker::{
-    ChunkerImpl, FixedOverlapChunker, HierarchicalGrouping, HierarchicalSummaryChunker,
-    HierarchyChunker, NeighborExpandChunker, SemanticChunker, SentenceAwareChunker,
-    SummaryEmbedChunker,
-};
-use crate::config::{
-    CellConfig, ChunkerConfig, EmbedderConfig, FramerConfig, GroupingConfig, SourceConfig,
-};
+use crate::config::{CellConfig, EmbedderConfig, FramerConfig, SourceConfig};
 use crate::embedder::FastembedEmbedder;
 use crate::extractor::build_extractor;
 use crate::framer::{
@@ -22,72 +15,11 @@ use crate::sink::PgVectorSink;
 use crate::source::{
     Document, FilesSource, HttpSource, JsonCorpusSource, PgTableSource, S3Source,
 };
-use crate::summarizer::build_summarizer;
 
-/// Recursively materialize a `ChunkerConfig` into a boxed trait object.
-/// `NeighborExpand` calls back into this fn to construct its `base`. Adding a
-/// new chunker = one new arm here + one new variant on `ChunkerConfig`.
-///
-/// Each wrapper chunker resolves its `effective_max_chars` (Brief SC-003) and
-/// passes the optional `if_oversize` config through to the chunker
-/// constructor — `apply_if_oversize` runs at the tail of every `chunk()`
-/// call.
-pub fn build_chunker(cfg: ChunkerConfig) -> Result<Box<dyn ChunkerImpl + Send + Sync>> {
-    Ok(match cfg {
-        ChunkerConfig::SentenceAware(c) => Box::new(SentenceAwareChunker::new(c)),
-        ChunkerConfig::Hierarchy(c) => Box::new(HierarchyChunker::new(c)),
-        ChunkerConfig::FixedOverlap(c) => Box::new(FixedOverlapChunker::new(c)?),
-        ChunkerConfig::NeighborExpand(c) => {
-            let window = c.window;
-            // Resolve effective ceiling: explicit override on wrapper else
-            // base.effective_max_chars().
-            let effective_ceiling = c.max_chars.or_else(|| c.base.effective_max_chars());
-            let if_oversize_cfg = c.if_oversize.as_deref().cloned();
-            let base = build_chunker(*c.base)?;
-            Box::new(NeighborExpandChunker::new(
-                window,
-                base,
-                effective_ceiling,
-                if_oversize_cfg,
-            ))
-        }
-        ChunkerConfig::Semantic(c) => Box::new(SemanticChunker::new(c)?),
-        ChunkerConfig::SummaryEmbed(c) => {
-            let mode = c.summarizer.mode_str();
-            let effective_ceiling = c.max_chars.or_else(|| c.base.effective_max_chars());
-            let if_oversize_cfg = c.if_oversize.as_deref().cloned();
-            let base = build_chunker(*c.base)?;
-            let summarizer = build_summarizer(&c.summarizer)?;
-            Box::new(SummaryEmbedChunker::new(
-                base,
-                summarizer,
-                mode,
-                effective_ceiling,
-                if_oversize_cfg,
-            ))
-        }
-        ChunkerConfig::HierarchicalSummary(c) => {
-            let mode = c.summarizer.mode_str();
-            let effective_ceiling = c.max_chars.or_else(|| c.base.effective_max_chars());
-            let if_oversize_cfg = c.if_oversize.as_deref().cloned();
-            let base = build_chunker(*c.base)?;
-            let summarizer = build_summarizer(&c.summarizer)?;
-            let grouping = match c.grouping {
-                GroupingConfig::FixedN(g) => HierarchicalGrouping::FixedN(g.n),
-                GroupingConfig::WordBudget(g) => HierarchicalGrouping::WordBudget(g.max_words),
-                GroupingConfig::SectionAware(_) => HierarchicalGrouping::SectionAware,
-            };
-            Box::new(HierarchicalSummaryChunker::new(
-                base,
-                summarizer,
-                mode,
-                grouping,
-                effective_ceiling,
-                if_oversize_cfg,
-            ))
-        }
-    })
-}
+// `build_chunker` lives in `crate::chunker` so the `chunkers` feature can use
+// it standalone (the if_oversize fallback chain calls back into it). Re-export
+// here to preserve the previous import path for downstream consumers.
+pub use crate::chunker::build_chunker;
 
 /// Materialize a `FramerConfig` into a boxed trait object. Mirrors
 /// `build_chunker`. New framer = one new arm here + one new variant.

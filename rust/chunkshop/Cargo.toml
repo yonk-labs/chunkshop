@@ -25,35 +25,52 @@ path = "src/lib.rs"
 [[bin]]
 name = "chunkshop-rs"
 path = "src/main.rs"
+# The CLI consumes load_config + run_cell + run_bakeoff_with_base, which
+# transitively need every module. Gating to `full` ensures the binary only
+# builds when the consumer opted into the heavy dep stack.
+required-features = ["full"]
 
 [dependencies]
+# --- Always-on core (small, used by the chunker module) ---
 anyhow = "1"
-blake2 = { version = "0.10", default-features = false }
-clap = { version = "4", features = ["derive"] }
-# Pinned to >= 5.13.1 — earlier 5.x bumps (5.0.x..5.10.x) require an older
-# `ort` (=2.0.0-rc.10 / =2.0.0-rc.11) and conflict with chunkshop's
-# `ort = "=2.0.0-rc.12"` pin below. fastembed 5.13.1+ aligns on rc.12.
-fastembed = "5.13.1"
-glob = "0.3"
-hf-hub = { version = "0.5", default-features = false, features = ["ureq"] }
-ndarray = { version = "0.17.2", default-features = false }
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "std", "api-24"] }
-tokenizers = { version = "0.22.2", default-features = false, features = ["onig"] }
-pgvector = { version = "0.4", features = ["sqlx"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yml = "0.0.12"
-sha1 = "0.10"
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1"
-whatlang = "0.16"
-object_store = { version = "0.11", default-features = false, features = ["aws"] }
-futures = "0.3"
+tracing = "0.1"
+
+# --- Bin-only (kept always-on for diff minimality; clap + tracing-subscriber
+# are tiny relative to the heavy deps below) ---
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# --- `embedder` feature: ML inference stack ---
+fastembed = { version = "5.13.1", optional = true }
+hf-hub = { version = "0.5", default-features = false, features = ["ureq"], optional = true }
+ndarray = { version = "0.17.2", default-features = false, optional = true }
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "std", "api-24"], optional = true }
+tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
+
+# --- `extractor` feature ---
+whatlang = { version = "0.16", optional = true }
+
+# --- `source` feature: HTTP / S3 / glob ---
+futures = { version = "0.3", optional = true }
+glob = { version = "0.3", optional = true }
+object_store = { version = "0.11", default-features = false, features = ["aws"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+sha1 = { version = "0.10", optional = true }
+
+# --- `sink` feature: pgvector / sqlx ---
+blake2 = { version = "0.10", default-features = false, optional = true }
+pgvector = { version = "0.4", features = ["sqlx"], optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono"], optional = true }
+
+# --- Shared runtime (gated by source + sink) ---
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+
+# --- Optional callable summarizer integration ---
 lede = { version = "0.3", optional = true }
 
 [dev-dependencies]
@@ -64,7 +81,39 @@ lede = { version = "0.3", optional = true }
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 
 [features]
-default = []
+# Default = full feature set for backward compatibility. Existing consumers
+# of `chunkshop = "0.3"` (and the `chunkshop-rs` binary) see no change.
+default = ["full"]
+
+# Everything — the historical compile target. Required by the CLI binary.
+full = ["chunkers", "embedder", "extractor", "source", "sink", "pipeline", "bakeoff"]
+
+# Just the chunker module + its config types and supporting modules
+# (sentence_split, summarizer, the `Document` struct). Pulls only the
+# small always-on core deps. The `SemanticChunker` requires `embedder` in
+# addition; without that feature the semantic chunker is excluded.
+chunkers = []
+
+# ML inference stack (fastembed + ORT). Required for `FastembedEmbedder`
+# and the `SemanticChunker`'s boundary embedder.
+embedder = ["dep:fastembed", "dep:hf-hub", "dep:ndarray", "dep:ort", "dep:tokenizers"]
+
+# Language-detection extractor (whatlang).
+extractor = ["dep:whatlang"]
+
+# Source loaders: files (glob), HTTP, S3.
+source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:sha1", "dep:tokio"]
+
+# pgvector sink.
+sink = ["dep:blake2", "dep:pgvector", "dep:sqlx", "dep:tokio"]
+
+# High-level Pipeline + run_cell glue. Composes chunker + embedder +
+# extractor + source + sink.
+pipeline = ["chunkers", "embedder", "extractor", "source", "sink"]
+
+# Matrix evaluator (chunkers x embedders → leaderboard).
+bakeoff = ["pipeline"]
+
 # Enables the `chunkshop.summarizers.lede` callable summarizer module by
 # pulling the `lede` crate from crates.io. Build with: cargo build --features lede
 lede = ["dep:lede"]
