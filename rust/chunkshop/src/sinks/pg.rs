@@ -341,20 +341,61 @@ impl Sink for PgSink {
         }
     }
 
-    fn delete_document(&self, _doc_id: &str) -> impl Future<Output = Result<i64>> + Send {
-        async move { unimplemented!("Task 16") }
+    fn delete_document(&self, doc_id: &str) -> impl Future<Output = Result<i64>> + Send {
+        async move {
+            let pool = self.backend.pool().await?;
+            let result = if let Some(tag) = &self.cfg.source_tag {
+                let stmt = format!(
+                    "DELETE FROM {tbl} WHERE doc_id = $1 AND source = $2",
+                    tbl = self.fq()
+                );
+                sqlx::query(&stmt).bind(doc_id).bind(tag).execute(pool).await?
+            } else {
+                let stmt = format!("DELETE FROM {tbl} WHERE doc_id = $1", tbl = self.fq());
+                sqlx::query(&stmt).bind(doc_id).execute(pool).await?
+            };
+            Ok(result.rows_affected() as i64)
+        }
     }
 
     fn count_docs(&self) -> impl Future<Output = Result<i64>> + Send {
-        async move { unimplemented!("Task 16") }
+        async move {
+            let pool = self.backend.pool().await?;
+            let stmt = format!("SELECT COUNT(DISTINCT doc_id) FROM {}", self.fq());
+            let row = sqlx::query(&stmt).fetch_one(pool).await?;
+            Ok(row.get::<i64, _>(0))
+        }
     }
 
     fn query_top_k(
         &self,
-        _query_vec: &[f32],
-        _k: usize,
+        query_vec: &[f32],
+        k: usize,
     ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
-        async move { unimplemented!("Task 16") }
+        async move {
+            let pool = self.backend.pool().await?;
+            let vec_lit = self.backend.vector_literal(query_vec);
+            let stmt = format!(
+                "SELECT doc_id, seq_num, embedding <=> $1::vector AS distance \
+                 FROM {tbl} ORDER BY embedding <=> $1::vector LIMIT $2",
+                tbl = self.fq()
+            );
+            let rows = sqlx::query(&stmt)
+                .bind(&vec_lit)
+                .bind(k as i64)
+                .fetch_all(pool)
+                .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.get::<String, _>(0),
+                        r.get::<i32, _>(1),
+                        r.get::<f64, _>(2),
+                    )
+                })
+                .collect())
+        }
     }
 }
 
