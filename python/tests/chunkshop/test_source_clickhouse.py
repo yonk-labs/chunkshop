@@ -1,7 +1,8 @@
 """ClickhouseTableSource integration tests.
 
-Initial commit covers P1-T1 (happy path); P1-T2..T5 land in
-subsequent commits (Tasks 4-7 of the plan).
+Covers P1-T1 (happy path), P1-T2 (streaming smoke),
+P1-T3 (recursive _json_safe), P1-T4 (trusted-where contract),
+P1-T5 (title_column optional).
 
 Each test creates and drops its own database to avoid cross-test pollution.
 All tests skipped if CHUNKSHOP_TEST_DSN_CH is unset.
