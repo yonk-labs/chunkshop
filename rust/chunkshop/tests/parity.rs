@@ -36,8 +36,9 @@ embedder:
   batch_size: 8
 
 target:
+  type: postgres
   dsn_env: {env_var}
-  schema: chunkshop_rust_parity
+  database: chunkshop_rust_parity
   table: rust_out
   mode: overwrite
   hnsw: false
