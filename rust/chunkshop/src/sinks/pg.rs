@@ -8,6 +8,7 @@
 use std::future::Future;
 
 use anyhow::{anyhow, Context, Result};
+use pgvector::Vector;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
 use crate::backends::base::{BackendConn, BackendDialect, ColSpec};
@@ -218,12 +219,126 @@ impl Sink for PgSink {
 
     fn write_document(
         &self,
-        _doc_id: &str,
-        _chunks: &[Chunk],
-        _embeddings: &[Vec<f32>],
-        _tags_per_chunk: &[Vec<String>],
+        doc_id: &str,
+        chunks: &[Chunk],
+        embeddings: &[Vec<f32>],
+        tags_per_chunk: &[Vec<String>],
     ) -> impl Future<Output = Result<()>> + Send {
-        async move { unimplemented!("Task 15") }
+        async move {
+            if chunks.len() != embeddings.len() {
+                return Err(anyhow!(
+                    "chunks ({}) and embeddings ({}) length mismatch",
+                    chunks.len(),
+                    embeddings.len()
+                ));
+            }
+            if chunks.len() != tags_per_chunk.len() {
+                return Err(anyhow!(
+                    "chunks ({}) and tags_per_chunk ({}) length mismatch",
+                    chunks.len(),
+                    tags_per_chunk.len()
+                ));
+            }
+            if chunks.is_empty() {
+                return Ok(());
+            }
+
+            let promote = &self.cfg.promote_metadata;
+            let n_base = 9; // id, doc_id, seq_num, original_content, embedded_content, tags, metadata, embedding, source
+
+            let base_col_names: Vec<&str> = vec![
+                "id", "doc_id", "seq_num", "original_content", "embedded_content",
+                "tags", "metadata", "embedding", "source",
+            ];
+            let mut all_cols: Vec<String> = base_col_names.iter().map(|c| c.to_string()).collect();
+            for pc in promote {
+                all_cols.push(pc.column_name());
+            }
+            let cols_sql: String = all_cols
+                .iter()
+                .map(|c| format!("\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let mut placeholders: Vec<String> = (1..=n_base)
+                .map(|i| match i {
+                    7 => format!("${i}::jsonb"),
+                    _ => format!("${i}"),
+                })
+                .collect();
+            for (i, pc) in promote.iter().enumerate() {
+                // pc.type_ is allowlisted; safe to interpolate as ::cast.
+                placeholders.push(format!("${}::{}", n_base + 1 + i, pc.type_));
+            }
+            let vals_sql = placeholders.join(", ");
+
+            // Update cols: skip id, doc_id, seq_num AND source (write-once).
+            let mut update_cols: Vec<&str> = vec![
+                "original_content", "embedded_content", "tags", "metadata", "embedding",
+            ];
+            let mut update_cols_owned: Vec<String> = update_cols.iter().map(|s| s.to_string()).collect();
+            for pc in promote {
+                update_cols_owned.push(pc.column_name());
+            }
+            let update_refs: Vec<&str> = update_cols_owned.iter().map(|s| s.as_str()).collect();
+
+            let upsert = self.backend.upsert_clause(&["id"], &update_refs);
+
+            let insert_sql = format!(
+                "INSERT INTO {tbl} ({cols}) VALUES ({vals}) {upsert}",
+                tbl = self.fq(),
+                cols = cols_sql,
+                vals = vals_sql,
+                upsert = upsert,
+            );
+
+            let pool = self.backend.pool().await?;
+            let mut tx = pool.begin().await?;
+            for ((c, emb), tags) in chunks
+                .iter()
+                .zip(embeddings.iter())
+                .zip(tags_per_chunk.iter())
+            {
+                let id = format!("{}::{}", c.doc_id, c.seq_num);
+                let vec = Vector::from(emb.clone());
+                let meta_str = serde_json::to_string(&c.metadata)?;
+
+                let mut q = sqlx::query(&insert_sql)
+                    .bind(id)
+                    .bind(&c.doc_id)
+                    .bind(c.seq_num as i32)
+                    .bind(&c.original_content)
+                    .bind(&c.embedded_content)
+                    .bind(tags)
+                    .bind(&meta_str)
+                    .bind(&vec)
+                    .bind(self.cfg.source_tag.as_deref());
+
+                for pc in promote {
+                    q = q.bind(promote_value_for(&c.metadata, pc));
+                }
+
+                q.execute(&mut *tx).await.context("INSERT chunk row")?;
+            }
+
+            // delete_orphans: same-tx cleanup of stale chunks at higher seq_nums
+            // when a doc shrinks. doc_id parameter is the canonical key.
+            if self.cfg.delete_orphans {
+                let new_count = chunks.len() as i32;
+                let delete_sql = format!(
+                    "DELETE FROM {tbl} WHERE doc_id = $1 AND seq_num >= $2",
+                    tbl = self.fq(),
+                );
+                sqlx::query(&delete_sql)
+                    .bind(doc_id)
+                    .bind(new_count)
+                    .execute(&mut *tx)
+                    .await
+                    .context("DELETE orphan chunks")?;
+            }
+            tx.commit().await?;
+            Ok(())
+        }
     }
 
     fn delete_document(&self, _doc_id: &str) -> impl Future<Output = Result<i64>> + Send {
@@ -241,4 +356,16 @@ impl Sink for PgSink {
     ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
         async move { unimplemented!("Task 16") }
     }
+}
+
+/// Project a chunk's metadata down to the right text representation for the
+/// promoted column's typed cast. Postgres handles the actual cast via the
+/// `::<type>` placeholder. Mirrors the helper of the same name in the legacy
+/// `sink.rs` (see write_document).
+fn promote_value_for(metadata: &serde_json::Value, pc: &PromoteColumn) -> Option<String> {
+    let v = jsonb_path_get(metadata, &pc.path)?;
+    Some(match v {
+        serde_json::Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    })
 }
