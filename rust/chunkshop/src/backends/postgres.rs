@@ -81,8 +81,14 @@ impl BackendDialect for PostgresBackend {
     fn timestamp_now_default_ddl(&self) -> String {
         "timestamptz NOT NULL DEFAULT now()".to_string()
     }
-    fn vector_literal(&self, _arr: &[f32]) -> String { unimplemented!("Task 6") }
-    fn json_literal(&self, _obj: &serde_json::Value) -> String { unimplemented!("Task 6") }
+    fn vector_literal(&self, arr: &[f32]) -> String {
+        let parts: Vec<String> = arr.iter().map(|x| format!("{x:.6}")).collect();
+        format!("[{}]", parts.join(","))
+    }
+
+    fn json_literal(&self, obj: &serde_json::Value) -> String {
+        serde_json::to_string(obj).unwrap_or_else(|_| "null".to_string())
+    }
     fn json_path_sql(&self, _col_expr: &str, _dotted_path: &str) -> String { unimplemented!("Task 7") }
     fn upsert_clause(&self, _key_cols: &[&str], _update_cols: &[&str]) -> String { unimplemented!("Task 7") }
     fn create_database_sql(&self, _name: &str) -> String { unimplemented!("Task 8") }
@@ -188,5 +194,32 @@ mod tests {
             b.timestamp_now_default_ddl(),
             "timestamptz NOT NULL DEFAULT now()"
         );
+    }
+
+    #[test]
+    fn vector_literal_format_matches_python() {
+        let b = backend();
+        // Mirrors Python's PostgresBackend.vector_literal:
+        //   "[" + ",".join(f"{x:.6f}" for x in arr) + "]"
+        let v = vec![0.1_f32, 0.2_f32, -0.3_f32];
+        let lit = b.vector_literal(&v);
+        assert_eq!(lit, "[0.100000,0.200000,-0.300000]");
+    }
+
+    #[test]
+    fn vector_literal_empty() {
+        let b = backend();
+        assert_eq!(b.vector_literal(&[]), "[]");
+    }
+
+    #[test]
+    fn json_literal_canonical_form() {
+        let b = backend();
+        let v = serde_json::json!({"k": "v", "n": 1});
+        let lit = b.json_literal(&v);
+        // Order is implementation-defined; assert structure via re-parse.
+        let reparsed: serde_json::Value = serde_json::from_str(&lit).unwrap();
+        assert_eq!(reparsed["k"], "v");
+        assert_eq!(reparsed["n"], 1);
     }
 }
