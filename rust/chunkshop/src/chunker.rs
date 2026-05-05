@@ -21,15 +21,42 @@ use crate::config::{
     SentenceAwareChunkerConfig,
 };
 // `FastembedEmbedderConfig` and `SemanticChunkerConfig` are only consumed by
-// `SemanticChunker` below, which itself requires the `embedder` feature.
+// `SemanticChunker` below. The `new()` convenience constructor needs the
+// `embedder` feature (for `FastembedEmbedder`); the trait-based
+// `with_embedder` constructor only needs `chunkers`.
 #[cfg(feature = "embedder")]
-use crate::config::{FastembedEmbedderConfig, SemanticChunkerConfig};
+use crate::config::FastembedEmbedderConfig;
+use crate::config::SemanticChunkerConfig;
 #[cfg(feature = "embedder")]
 use crate::embedder::FastembedEmbedder;
-#[cfg(feature = "embedder")]
 use crate::sentence_split::naive_sentences;
 use crate::source::Document;
 use crate::summarizer::build_summarizer;
+
+/// Boundary-detection embedder hook for [`SemanticChunker`].
+///
+/// External consumers (e.g. embedded library users with their own embedder
+/// registry) implement this trait against whichever embedder they want, then
+/// pass `Box<dyn BoundaryEmbedder>` to [`SemanticChunker::with_embedder`].
+/// This avoids hardwiring `FastembedEmbedder` as the only boundary embedder
+/// and lets the chunker run without `fastembed`/`ort` in the dep tree.
+///
+/// The default in-tree implementation lives on
+/// [`crate::embedder::FastembedEmbedder`] (gated by the `embedder` feature),
+/// so [`SemanticChunker::new`] continues to "just work" for chunkshop CLI
+/// and YAML-config users.
+///
+/// `&mut self` is intentional — embedders typically want to track cumulative
+/// inference time, batching state, or a stateful ORT session. Callers that
+/// need shared access should wrap the impl in a mutex (the same way
+/// `SemanticChunker` does internally).
+pub trait BoundaryEmbedder: Send + Sync {
+    /// Embed a batch of texts. Returns one vector per input, in input order.
+    /// Implementations must produce vectors of consistent dimension across
+    /// the batch — `SemanticChunker` only validates that successive calls
+    /// return the same shape.
+    fn embed_batch(&mut self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>>;
+}
 
 pub mod oversize {
     //! Shared if_oversize fallback machinery (mirrors Python chunkers/_oversize.py).
@@ -93,8 +120,7 @@ pub mod oversize {
     /// the ceiling. Counts in `chars()` to match Python's `len(str)` semantics
     /// for unicode-aware sizing.
     pub fn is_oversize(c: &Chunk, ceiling: usize) -> bool {
-        c.embedded_content.chars().count() > ceiling
-            || c.original_content.chars().count() > ceiling
+        c.embedded_content.chars().count() > ceiling || c.original_content.chars().count() > ceiling
     }
 }
 
@@ -170,11 +196,10 @@ pub fn apply_if_oversize(
             title: document.title.clone(),
             metadata: document.metadata.clone(),
         };
-        let fallback = build_chunker(if_cfg.clone()).map_err(|_| {
-            oversize::OversizeError::Recursion {
+        let fallback =
+            build_chunker(if_cfg.clone()).map_err(|_| oversize::OversizeError::Recursion {
                 chunker: chunker_name.to_string(),
-            }
-        })?;
+            })?;
         let sub_raw = fallback.chunk(&synth_doc);
         let nested_ceiling = if_cfg.effective_max_chars();
         let nested_cfg = if_cfg.if_oversize();
@@ -329,10 +354,7 @@ fn split_plain(text: &str, max_chars: usize) -> Vec<String> {
 /// `_split_prose` from Python.
 fn split_prose(text: &str, max_chars: usize, min_chars: usize) -> Vec<String> {
     let re = md_heading_re();
-    let headings: Vec<(usize, usize)> = re
-        .find_iter(text)
-        .map(|m| (m.start(), m.end()))
-        .collect();
+    let headings: Vec<(usize, usize)> = re.find_iter(text).map(|m| (m.start(), m.end())).collect();
     if headings.is_empty() {
         return split_plain(text, max_chars);
     }
@@ -730,8 +752,7 @@ impl NeighborExpandChunker {
         effective_ceiling: Option<usize>,
         if_oversize_cfg: Option<ChunkerConfig>,
     ) -> Self {
-        let warner = effective_ceiling
-            .map(|m| oversize::DedupedWarner::new("neighbor_expand", m));
+        let warner = effective_ceiling.map(|m| oversize::DedupedWarner::new("neighbor_expand", m));
         Self {
             window,
             base,
@@ -800,39 +821,78 @@ impl ChunkerImpl for NeighborExpandChunker {
 /// chunks are NOT promised: the percentile threshold over embedder distances
 /// can shift breakpoints under MB-1's documented ORT-binary drift.
 ///
-/// Requires the `embedder` Cargo feature (transitively pulls fastembed + ORT).
-#[cfg(feature = "embedder")]
+/// The chunker holds a [`Box<dyn BoundaryEmbedder>`] so external consumers
+/// can plug in their own embedder via [`SemanticChunker::with_embedder`]
+/// without pulling `fastembed`/`ort` into the dep tree. The convenience
+/// constructor [`SemanticChunker::new`] uses [`FastembedEmbedder`] under
+/// the hood and requires the `embedder` Cargo feature.
 pub struct SemanticChunker {
     cfg: SemanticChunkerConfig,
-    boundary: std::sync::Mutex<FastembedEmbedder>,
+    boundary: std::sync::Mutex<Box<dyn BoundaryEmbedder>>,
     warner: Option<oversize::DedupedWarner>,
 }
 
-#[cfg(feature = "embedder")]
+/// Shared config validation for both [`SemanticChunker::new`] and
+/// [`SemanticChunker::with_embedder`]. Pulled out so the bytes-in path
+/// gets the same guarantees as the auto-fetch path.
+fn validate_semantic_cfg(cfg: &SemanticChunkerConfig) -> anyhow::Result<()> {
+    if cfg.sentence_splitter != "naive" {
+        return Err(anyhow::anyhow!(
+            "sentence_splitter {:?} not supported in chunkshop-rs (only 'naive'); \
+             nltk requires Python",
+            cfg.sentence_splitter
+        ));
+    }
+    if cfg.breakpoint_percentile == 0 || cfg.breakpoint_percentile >= 100 {
+        return Err(anyhow::anyhow!(
+            "breakpoint_percentile must be in [1, 99], got {}",
+            cfg.breakpoint_percentile
+        ));
+    }
+    if cfg.min_sentences_per_chunk < 1 {
+        return Err(anyhow::anyhow!("min_sentences_per_chunk must be >= 1"));
+    }
+    if cfg.max_chunk_chars < 100 {
+        return Err(anyhow::anyhow!(
+            "max_chunk_chars must be >= 100, got {}",
+            cfg.max_chunk_chars
+        ));
+    }
+    Ok(())
+}
+
 impl SemanticChunker {
+    /// Construct a `SemanticChunker` with a caller-supplied boundary
+    /// embedder. Always available — does not require the `embedder` Cargo
+    /// feature.
+    ///
+    /// `cfg.boundary_model` is ignored by this constructor: the embedder is
+    /// already supplied. Validation rules from `cfg` (`sentence_splitter`,
+    /// `breakpoint_percentile`, `min_sentences_per_chunk`, `max_chunk_chars`)
+    /// still apply.
+    pub fn with_embedder(
+        cfg: SemanticChunkerConfig,
+        embedder: Box<dyn BoundaryEmbedder>,
+    ) -> anyhow::Result<Self> {
+        validate_semantic_cfg(&cfg)?;
+        let warner = Some(oversize::DedupedWarner::new(
+            "semantic",
+            cfg.max_chunk_chars,
+        ));
+        Ok(Self {
+            cfg,
+            boundary: std::sync::Mutex::new(embedder),
+            warner,
+        })
+    }
+
+    /// Convenience constructor: builds a [`FastembedEmbedder`] from
+    /// `cfg.boundary_model` and wraps it. Requires the `embedder` Cargo
+    /// feature. Existing chunkshop CLI / YAML-config callers continue to use
+    /// this entry point unchanged.
+    #[cfg(feature = "embedder")]
     pub fn new(cfg: SemanticChunkerConfig) -> anyhow::Result<Self> {
-        if cfg.sentence_splitter != "naive" {
-            return Err(anyhow::anyhow!(
-                "sentence_splitter {:?} not supported in chunkshop-rs (only 'naive'); \
-                 nltk requires Python",
-                cfg.sentence_splitter
-            ));
-        }
-        if cfg.breakpoint_percentile == 0 || cfg.breakpoint_percentile >= 100 {
-            return Err(anyhow::anyhow!(
-                "breakpoint_percentile must be in [1, 99], got {}",
-                cfg.breakpoint_percentile
-            ));
-        }
-        if cfg.min_sentences_per_chunk < 1 {
-            return Err(anyhow::anyhow!("min_sentences_per_chunk must be >= 1"));
-        }
-        if cfg.max_chunk_chars < 100 {
-            return Err(anyhow::anyhow!(
-                "max_chunk_chars must be >= 100, got {}",
-                cfg.max_chunk_chars
-            ));
-        }
+        validate_semantic_cfg(&cfg)?;
         let boundary_cfg = FastembedEmbedderConfig {
             model_name: cfg.boundary_model.clone(),
             // dim=384 for MiniLM; the FastembedEmbedder uses this only as a
@@ -848,12 +908,7 @@ impl SemanticChunker {
             additional_files: vec![],
         };
         let boundary = FastembedEmbedder::new(boundary_cfg)?;
-        let warner = Some(oversize::DedupedWarner::new("semantic", cfg.max_chunk_chars));
-        Ok(Self {
-            cfg,
-            boundary: std::sync::Mutex::new(boundary),
-            warner,
-        })
+        Self::with_embedder(cfg, Box::new(boundary))
     }
 
     pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
@@ -889,8 +944,17 @@ impl SemanticChunker {
             return chunks;
         }
 
-        let texts: Vec<String> = sentences.clone();
-        let embeddings = match self.boundary.lock().expect("poisoned mutex").embed(texts) {
+        // Borrow as &str slices into the trait's `embed_batch` API. The
+        // sentence Strings live for the duration of this call so the borrows
+        // are safe. Going through `Box<dyn BoundaryEmbedder>` adds one vtable
+        // dispatch per batch — negligible vs. the ORT inference cost.
+        let refs: Vec<&str> = sentences.iter().map(String::as_str).collect();
+        let embeddings = match self
+            .boundary
+            .lock()
+            .expect("poisoned mutex")
+            .embed_batch(&refs)
+        {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!("semantic chunker boundary embed failed: {e:#}");
@@ -1026,7 +1090,6 @@ impl SemanticChunker {
     }
 }
 
-#[cfg(feature = "embedder")]
 impl ChunkerImpl for SemanticChunker {
     fn chunk(&self, doc: &Document) -> Vec<Chunk> {
         Self::chunk(self, doc)
@@ -1054,8 +1117,7 @@ impl SummaryEmbedChunker {
         effective_ceiling: Option<usize>,
         if_oversize_cfg: Option<ChunkerConfig>,
     ) -> Self {
-        let warner = effective_ceiling
-            .map(|m| oversize::DedupedWarner::new("summary_embed", m));
+        let warner = effective_ceiling.map(|m| oversize::DedupedWarner::new("summary_embed", m));
         Self {
             base,
             summarizer,
@@ -1146,8 +1208,8 @@ impl HierarchicalSummaryChunker {
         effective_ceiling: Option<usize>,
         if_oversize_cfg: Option<ChunkerConfig>,
     ) -> Self {
-        let warner = effective_ceiling
-            .map(|m| oversize::DedupedWarner::new("hierarchical_summary", m));
+        let warner =
+            effective_ceiling.map(|m| oversize::DedupedWarner::new("hierarchical_summary", m));
         Self {
             base,
             summarizer,
@@ -1217,10 +1279,7 @@ impl HierarchicalSummaryChunker {
                 "granularity".to_string(),
                 serde_json::Value::String("coarse".to_string()),
             );
-            coarse_meta.insert(
-                "group_id".to_string(),
-                serde_json::Value::String(group_id),
-            );
+            coarse_meta.insert("group_id".to_string(), serde_json::Value::String(group_id));
             coarse_meta.insert(
                 "summarizer".to_string(),
                 serde_json::Value::String(self.mode.to_string()),
@@ -1241,12 +1300,8 @@ impl HierarchicalSummaryChunker {
         // Brief SC-005: coarse rows are exempt from the oversize check —
         // they preserve 1-per-group structure even when large. Pass a
         // skip_check that returns true for `granularity == "coarse"`.
-        let skip = |c: &Chunk| {
-            c.metadata
-                .get("granularity")
-                .and_then(|v| v.as_str())
-                == Some("coarse")
-        };
+        let skip =
+            |c: &Chunk| c.metadata.get("granularity").and_then(|v| v.as_str()) == Some("coarse");
         apply_if_oversize(
             out,
             self.effective_ceiling,
@@ -1333,7 +1388,6 @@ impl ChunkerImpl for HierarchicalSummaryChunker {
 
 /// numpy.percentile with linear interpolation. Mirrors numpy default.
 /// Returns the percentile **value** (not the index). Used by `SemanticChunker`.
-#[cfg(feature = "embedder")]
 fn percentile_linear(values: &[f32], p: u32) -> f32 {
     if values.is_empty() {
         return 0.0;
@@ -1357,7 +1411,6 @@ fn percentile_linear(values: &[f32], p: u32) -> f32 {
 /// Merge spans smaller than `min` into neighbors. Forward-merge first;
 /// pull the next span into the first if the first is too small; back-merge the
 /// last span if needed. Mirrors Python's `_merge_small`. Used by `SemanticChunker`.
-#[cfg(feature = "embedder")]
 fn merge_small_spans(spans: Vec<(usize, usize)>, min: usize) -> Vec<(usize, usize)> {
     if spans.is_empty() {
         return spans;
@@ -1512,10 +1565,8 @@ mod tests {
         assert!(chunks[2].original_content.starts_with("## Section B"));
     }
 
-    // --- Semantic chunker algorithm helpers (only compile when the
-    //     `embedder` feature is on, since the helpers themselves are gated). ---
+    // --- Semantic chunker algorithm helpers ---
 
-    #[cfg(feature = "embedder")]
     #[test]
     fn percentile_linear_matches_numpy() {
         // numpy.percentile([1,2,3,4,5], 95) -> 4.8 (linear interp default)
@@ -1530,7 +1581,6 @@ mod tests {
         assert_eq!(percentile_linear(&[], 95), 0.0);
     }
 
-    #[cfg(feature = "embedder")]
     #[test]
     fn merge_small_spans_forward() {
         // [0..5)=5, [5..6)=1 (too small), [6..10)=4. The small span forward-merges
@@ -1539,25 +1589,114 @@ mod tests {
         assert_eq!(m, vec![(0, 6), (6, 10)]);
     }
 
-    #[cfg(feature = "embedder")]
     #[test]
     fn merge_small_spans_backward_last() {
         let m = merge_small_spans(vec![(0, 5), (5, 10), (10, 11)], 3);
         assert_eq!(m, vec![(0, 5), (5, 11)]);
     }
 
-    #[cfg(feature = "embedder")]
     #[test]
     fn merge_small_spans_first_too_small_pulls_next() {
         let m = merge_small_spans(vec![(0, 1), (1, 5), (5, 10)], 3);
         assert_eq!(m, vec![(0, 5), (5, 10)]);
     }
 
-    #[cfg(feature = "embedder")]
     #[test]
     fn merge_small_spans_empty_returns_empty() {
         let m: Vec<(usize, usize)> = merge_small_spans(Vec::new(), 3);
         assert!(m.is_empty());
+    }
+
+    // --- BoundaryEmbedder trait + SemanticChunker::with_embedder injection ---
+
+    /// Stub embedder that returns deterministic canned vectors per call.
+    /// Used to verify [`SemanticChunker::with_embedder`] routes through the
+    /// caller's impl (no fastembed/ort involvement).
+    struct StubEmbedder {
+        /// Canned outputs, one Vec<f32> per input text. Cycles if shorter
+        /// than the input batch.
+        canned: Vec<Vec<f32>>,
+        /// Tracks how many calls were made — verifies `embed_batch` actually
+        /// fires from inside `chunk_inner`.
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl BoundaryEmbedder for StubEmbedder {
+        fn embed_batch(&mut self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut out = Vec::with_capacity(texts.len());
+            for i in 0..texts.len() {
+                out.push(self.canned[i % self.canned.len()].clone());
+            }
+            Ok(out)
+        }
+    }
+
+    fn semantic_cfg() -> SemanticChunkerConfig {
+        SemanticChunkerConfig {
+            sentence_splitter: "naive".into(),
+            boundary_model: "ignored-by-with_embedder".into(),
+            breakpoint_percentile: 50,
+            min_sentences_per_chunk: 1,
+            max_chunk_chars: 2000,
+            if_oversize: None,
+        }
+    }
+
+    /// Verifies the chunker uses the supplied stub embedder (not fastembed)
+    /// and that `embed_batch` is called.
+    #[test]
+    fn semantic_chunker_with_embedder_uses_supplied_impl() {
+        let stub = StubEmbedder {
+            // Two distinct vectors → cosine distance >0 → triggers a
+            // breakpoint at the 50th percentile threshold.
+            canned: vec![vec![1.0, 0.0], vec![0.0, 1.0]],
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let chunker = SemanticChunker::with_embedder(semantic_cfg(), Box::new(stub))
+            .expect("with_embedder ok");
+        let doc = Document {
+            id: "d".into(),
+            content: "First sentence here. Second sentence here. Third sentence here.".into(),
+            title: None,
+            metadata: json!({}),
+        };
+        let chunks = chunker.chunk(&doc);
+        assert!(
+            !chunks.is_empty(),
+            "stub embedder should produce at least one chunk"
+        );
+        // Touching the chunker proves the path went through embed_batch
+        // (otherwise chunk_inner returns the whole-doc fallback).
+        assert!(chunks.iter().any(|c| !c.original_content.is_empty()));
+    }
+
+    /// Compile-time / object-safety check: `Box<dyn BoundaryEmbedder>` must
+    /// be constructible. If the trait grows methods that aren't object-safe
+    /// (e.g. generics, `Self` returns), this test stops compiling.
+    #[test]
+    fn boundary_embedder_trait_is_object_safe() {
+        let stub = StubEmbedder {
+            canned: vec![vec![0.0]],
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let _boxed: Box<dyn BoundaryEmbedder> = Box::new(stub);
+    }
+
+    /// Validation rules apply equally to both constructors. This keeps the
+    /// `with_embedder` path from drifting away from `new`'s guarantees.
+    #[test]
+    fn semantic_chunker_with_embedder_validates_cfg() {
+        let bad_cfg = SemanticChunkerConfig {
+            sentence_splitter: "nltk".into(),
+            ..semantic_cfg()
+        };
+        let stub = StubEmbedder {
+            canned: vec![vec![0.0]],
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let r = SemanticChunker::with_embedder(bad_cfg, Box::new(stub));
+        assert!(r.is_err(), "non-naive splitter should error");
     }
 
     // --- HierarchicalSummary grouping strategies ---

@@ -194,6 +194,22 @@ impl FastembedEmbedder {
     }
 }
 
+/// Default in-tree implementation of [`crate::chunker::BoundaryEmbedder`]
+/// for [`FastembedEmbedder`]. Routes through [`FastembedEmbedder::embed`]
+/// (which already takes `Vec<String>` and returns `Vec<Vec<f32>>`) by
+/// allocating owned Strings from the input slice. Owns one allocation per
+/// call; negligible vs. the ORT inference cost.
+///
+/// Only present when both `chunkers` and `embedder` features are enabled —
+/// the trait itself lives in `crate::chunker` and is always available.
+#[cfg(feature = "chunkers")]
+impl crate::chunker::BoundaryEmbedder for FastembedEmbedder {
+    fn embed_batch(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        let owned: Vec<String> = texts.iter().map(|s| (*s).to_string()).collect();
+        self.embed(owned)
+    }
+}
+
 fn build_user_defined_runner(
     repo: &str,
     onnx_path: &str,
