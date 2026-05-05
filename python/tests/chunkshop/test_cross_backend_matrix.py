@@ -4,8 +4,8 @@ Each test seeds a small corpus into the SOURCE backend, runs `run_cell` to
 ingest through the chunkshop pipeline, and verifies rows landed in the SINK
 backend. Skipped unless ALL 4 backend DSN env vars are set.
 
-ClickHouse is sink-only in v4.0 (no clickhouse_table source), so CH-as-source
-combos are absent from the matrix. 3 sources × 4 sinks = 12 cells.
+4 DB-source kinds (pg_table, mariadb_table, sqlite_table, clickhouse_table) ×
+4 DB-sink kinds (postgres, mariadb, sqlite, clickhouse) = 16 cells.
 """
 import os
 from pathlib import Path
@@ -21,7 +21,7 @@ from chunkshop.backends.postgres import PostgresBackend
 from chunkshop.backends.sqlite import SQLiteBackend
 from chunkshop.backends.clickhouse import ClickHouseBackend
 from chunkshop.config import (
-    PgTableSource, MariaDbTableSource, SqliteTableSource,
+    PgTableSource, MariaDbTableSource, SqliteTableSource, ClickhouseTableSource,
     TargetConfig, FastembedEmbedder, NoneExtractor,
     SentenceAwareChunker, IdentityFramerConfig, RuntimeConfig, CellConfig,
 )
@@ -76,6 +76,22 @@ def _seed_sqlite(dsn_env: str) -> None:
         conn.commit()
 
 
+def _seed_ch(dsn_env: str, db: str) -> None:
+    be = ClickHouseBackend(dsn_env=dsn_env)
+    with be.connect() as client:
+        client.command(f"DROP DATABASE IF EXISTS `{db}` SYNC")
+        client.command(f"CREATE DATABASE `{db}`")
+        client.command(
+            f"CREATE TABLE `{db}`.`docs` "
+            f"(id String, body String) ENGINE = MergeTree() ORDER BY id"
+        )
+        client.insert(
+            f"`{db}`.`docs`",
+            [["doc1", "Hello world. This is sentence two. " * 10]],
+            column_names=["id", "body"],
+        )
+
+
 def _count_pg(dsn_env: str, db: str, table: str) -> int:
     with PostgresBackend(dsn_env=dsn_env).connect() as conn, conn.cursor() as cur:
         cur.execute(f'SELECT COUNT(*) FROM "{db}"."{table}"')
@@ -120,7 +136,7 @@ def _drop_ch(dsn_env: str, db: str) -> None:
         client.command(f"DROP DATABASE IF EXISTS `{db}` SYNC")
 
 
-SOURCE_KINDS = ["pg_table", "mariadb_table", "sqlite_table"]
+SOURCE_KINDS = ["pg_table", "mariadb_table", "sqlite_table", "clickhouse_table"]
 SINK_KINDS = ["postgres", "mariadb", "sqlite", "clickhouse"]
 
 
@@ -138,6 +154,11 @@ def _build_source(src_kind, src_dsn_env, src_db_name):
     if src_kind == "sqlite_table":
         return SqliteTableSource(
             type="sqlite_table", dsn_env=src_dsn_env, database="ignored",
+            table="docs", id_column="id", content_column="body",
+        )
+    if src_kind == "clickhouse_table":
+        return ClickhouseTableSource(
+            type="clickhouse_table", dsn_env=src_dsn_env, database=src_db_name,
             table="docs", id_column="id", content_column="body",
         )
 
@@ -165,9 +186,12 @@ def test_cross_backend_matrix(src_kind, sink_kind, tmp_path, monkeypatch):
     elif src_kind == "mariadb_table":
         _seed_mariadb("CHUNKSHOP_TEST_DSN_MARIADB", src_db_name)
         src_dsn = "CHUNKSHOP_TEST_DSN_MARIADB"
-    else:
+    elif src_kind == "sqlite_table":
         _seed_sqlite("XBM_SRC_SQLITE")
         src_dsn = "XBM_SRC_SQLITE"
+    else:  # clickhouse_table
+        _seed_ch("CHUNKSHOP_TEST_DSN_CH", src_db_name)
+        src_dsn = "CHUNKSHOP_TEST_DSN_CH"
 
     if sink_kind == "postgres":
         sink_dsn = "CHUNKSHOP_TEST_DSN"
@@ -209,6 +233,8 @@ def test_cross_backend_matrix(src_kind, sink_kind, tmp_path, monkeypatch):
             _drop_pg("CHUNKSHOP_TEST_DSN", src_db_name)
         elif src_kind == "mariadb_table":
             _drop_mariadb("CHUNKSHOP_TEST_DSN_MARIADB", src_db_name)
+        elif src_kind == "clickhouse_table":
+            _drop_ch("CHUNKSHOP_TEST_DSN_CH", src_db_name)
         if sink_kind == "postgres":
             _drop_pg("CHUNKSHOP_TEST_DSN", sink_db_name)
         elif sink_kind == "mariadb":
