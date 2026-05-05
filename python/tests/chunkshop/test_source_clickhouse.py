@@ -156,3 +156,47 @@ def test_p1_t3_json_safe_recursive_coercion():
     finally:
         with be.connect() as client:
             _drop_db(client, db)
+
+
+def test_p1_t5_title_column_optional():
+    """P1-T5: title_column is None → Document.title is None;
+    title_column='headline' → Document.title == row.headline."""
+    db = "chunkshop_src_test_t5"
+    be = ClickHouseBackend(dsn_env=DSN_VAR)
+    try:
+        with be.connect() as client:
+            _create_db(client, db)
+            client.command(
+                f"CREATE TABLE `{db}`.`docs` "
+                f"(id String, body String, headline String) "
+                f"ENGINE = MergeTree() ORDER BY id"
+            )
+            client.insert(
+                f"`{db}`.`docs`",
+                [["a", "body-a", "Hello A"], ["b", "body-b", "Hello B"]],
+                column_names=["id", "body", "headline"],
+            )
+
+        # Without title_column
+        cfg_no_title = Cfg(
+            type="clickhouse_table", dsn_env=DSN_VAR,
+            database=db, table="docs",
+            id_column="id", content_column="body",
+        )
+        docs = list(Source(cfg_no_title).iter_documents())
+        assert all(d.title is None for d in docs)
+
+        # With title_column
+        cfg_with_title = Cfg(
+            type="clickhouse_table", dsn_env=DSN_VAR,
+            database=db, table="docs",
+            id_column="id", content_column="body",
+            title_column="headline",
+        )
+        docs = list(Source(cfg_with_title).iter_documents())
+        by_id = {d.id: d for d in docs}
+        assert by_id["a"].title == "Hello A"
+        assert by_id["b"].title == "Hello B"
+    finally:
+        with be.connect() as client:
+            _drop_db(client, db)
