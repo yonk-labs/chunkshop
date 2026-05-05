@@ -37,7 +37,8 @@ summarize = []  # umbrella — users pick [lede] and/or [sumy] explicitly
 s3 = ["boto3>=1.28"]
 sqlite = ["sqlite-vec>=0.1.6"]
 mariadb = ["PyMySQL>=1.1"]
-all-backends = ["chunkshop[sqlite,mariadb]"]
+clickhouse = ["clickhouse-connect>=0.7"]
+all-backends = ["chunkshop[sqlite,mariadb,clickhouse]"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 
 [project.scripts]
