@@ -1,4 +1,7 @@
-"""ClickhouseTableSource integration tests (P1-T1..T5).
+"""ClickhouseTableSource integration tests.
+
+Initial commit covers P1-T1 (happy path); P1-T2..T5 land in
+subsequent commits (Tasks 4-7 of the plan).
 
 Each test creates and drops its own database to avoid cross-test pollution.
 All tests skipped if CHUNKSHOP_TEST_DSN_CH is unset.

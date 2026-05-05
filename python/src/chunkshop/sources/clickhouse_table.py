@@ -42,7 +42,7 @@ def _json_safe(v: Any) -> Any:
     if isinstance(v, bytes):
         return base64.b64encode(v).decode("ascii")
     if isinstance(v, dict):
-        return {k: _json_safe(val) for k, val in v.items()}
+        return {(k if isinstance(k, str) else _json_safe(k)): _json_safe(val) for k, val in v.items()}
     if isinstance(v, (list, tuple)):
         return [_json_safe(x) for x in v]
     return v
