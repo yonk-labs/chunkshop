@@ -1,0 +1,52 @@
+# ClickHouse end-to-end example. Requires CH 24.10+ with the experimental
+# vector_similarity index enabled (allow_experimental_vector_similarity_index=1
+# in the default profile). docker-compose.test.yaml at the repo root sets
+# this up; otherwise see your CH server config.
+#
+# From the chunkshop repo root:
+#   export CHUNKSHOP_DSN=clickhouse://default:chpw@localhost:8124/default
+#   chunkshop ingest --config docs/samples/sample-clickhouse.yaml
+#
+# Notes on CH vs other backends:
+#   - CH is APPEND-ONLY. Re-running with mode: overwrite drops + recreates the
+#     table; mode: append produces duplicate rows on re-ingest. Set
+#     `engine: ReplacingMergeTree(created_at) ORDER BY (id)` to dedupe lazily
+#     at merge time.
+#   - delete_orphans is a no-op on CH (mutations are async); chunkshop logs a
+#     one-time warning per process and continues.
+cell_name: samples_clickhouse_demo
+
+source:
+  type: files
+  glob: docs/samples/*-*.md
+  id_from: stem
+  encoding: utf-8
+
+chunker:
+  type: hierarchy
+  prefix_heading: true
+  min_section_chars: 100
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 4
+  batch_size: 64
+
+extractor:
+  type: none
+
+target:
+  type: clickhouse
+  dsn_env: CHUNKSHOP_DSN
+  database: chunkshop_samples
+  table: handbook
+  mode: overwrite
+  source_tag: samples
+  hnsw: true               # vector_similarity('hnsw', 'cosineDistance') inline index
+
+runtime:
+  omp_num_threads: 4
+  heartbeat_every: 5
+  log_path: /tmp/chunkshop-sample-clickhouse.log
