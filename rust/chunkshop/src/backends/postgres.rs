@@ -129,8 +129,56 @@ impl BackendDialect for PostgresBackend {
         format!("DROP TABLE {fq}")
     }
     fn emit_chunks_table_ddl(
-        &self, _fq: &str, _cols: &[ColSpec], _hnsw: bool, _dim: usize, _engine: Option<&str>,
-    ) -> Vec<String> { unimplemented!("Task 9") }
+        &self,
+        fq: &str,
+        cols: &[ColSpec],
+        hnsw: bool,
+        _dim: usize,            // dim is encoded in the embedding column's type_ddl
+        _engine: Option<&str>,  // engine clause is not applicable on PG
+    ) -> Vec<String> {
+        let mut col_lines: Vec<String> = Vec::with_capacity(cols.len());
+        let mut pk_cols: Vec<&str> = Vec::new();
+        for c in cols {
+            let mut line = format!("  {} {}", self.quote_ident(c.name), c.type_ddl);
+            if let Some(default) = c.default {
+                line.push_str(&format!(" DEFAULT {default}"));
+            }
+            if !c.nullable {
+                line.push_str(" NOT NULL");
+            }
+            col_lines.push(line);
+            if c.is_primary_key {
+                pk_cols.push(c.name);
+            }
+        }
+        let mut body = col_lines.join(",\n");
+        if !pk_cols.is_empty() {
+            let pk: Vec<String> = pk_cols.iter().map(|c| self.quote_ident(c)).collect();
+            body.push_str(&format!(",\n  PRIMARY KEY ({})", pk.join(", ")));
+        }
+        let create = format!("CREATE TABLE IF NOT EXISTS {fq} (\n{body}\n)");
+
+        // Strip schema prefix from fq for index naming: "db"."t" → t
+        let bare = fq
+            .rsplit('.')
+            .next()
+            .unwrap_or(fq)
+            .trim_matches('"')
+            .to_string();
+
+        let mut stmts = vec![create];
+        stmts.push(format!(
+            "CREATE INDEX IF NOT EXISTS {} ON {fq} (\"doc_id\", \"seq_num\")",
+            self.quote_ident(&format!("{bare}_doc_seq_idx"))
+        ));
+        if hnsw {
+            stmts.push(format!(
+                "CREATE INDEX IF NOT EXISTS {} ON {fq} USING hnsw (\"embedding\" vector_cosine_ops)",
+                self.quote_ident(&format!("{bare}_emb_hnsw_idx"))
+            ));
+        }
+        stmts
+    }
 }
 
 impl BackendConn for PostgresBackend {
@@ -174,6 +222,38 @@ mod tests {
 
     fn backend() -> PostgresBackend {
         PostgresBackend::new("UNUSED_FOR_DIALECT_TESTS".to_string())
+    }
+
+    fn canonical_cols(dim: usize) -> Vec<ColSpec> {
+        vec![
+            ColSpec { name: "id", type_ddl: "text".into(), nullable: false, default: None, is_primary_key: true },
+            ColSpec { name: "doc_id", type_ddl: "text".into(), nullable: false, default: None, is_primary_key: false },
+            ColSpec { name: "seq_num", type_ddl: "int".into(), nullable: false, default: None, is_primary_key: false },
+            ColSpec { name: "embedding", type_ddl: format!("vector({dim})"), nullable: false, default: None, is_primary_key: false },
+        ]
+    }
+
+    #[test]
+    fn emit_chunks_table_ddl_no_hnsw() {
+        let b = backend();
+        let cols = canonical_cols(384);
+        let stmts = b.emit_chunks_table_ddl("\"db\".\"t\"", &cols, false, 384, None);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].starts_with("CREATE TABLE IF NOT EXISTS \"db\".\"t\""));
+        assert!(stmts[0].contains("\"id\" text NOT NULL"));
+        assert!(stmts[0].contains("PRIMARY KEY (\"id\")"));
+        assert!(stmts[1].contains("CREATE INDEX IF NOT EXISTS \"t_doc_seq_idx\""));
+        assert!(stmts[1].contains("ON \"db\".\"t\" (\"doc_id\", \"seq_num\")"));
+    }
+
+    #[test]
+    fn emit_chunks_table_ddl_with_hnsw() {
+        let b = backend();
+        let cols = canonical_cols(384);
+        let stmts = b.emit_chunks_table_ddl("\"db\".\"t\"", &cols, true, 384, None);
+        assert_eq!(stmts.len(), 3);
+        assert!(stmts[2].contains("USING hnsw (\"embedding\" vector_cosine_ops)"));
+        assert!(stmts[2].contains("\"t_emb_hnsw_idx\""));
     }
 
     #[test]
