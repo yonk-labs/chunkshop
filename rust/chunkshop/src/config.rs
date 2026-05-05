@@ -700,12 +700,32 @@ impl FastembedEmbedderConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct TargetConfig {
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TargetConfig {
+    Postgres(PostgresTargetConfig),
+    // R2/R3/R4 add: Mariadb, Sqlite, Clickhouse
+}
+
+impl TargetConfig {
+    /// Post-deserialize validation that crosses field boundaries. Delegates to
+    /// the active variant's `validate()`.
+    fn validate(&self) -> Result<()> {
+        match self {
+            TargetConfig::Postgres(t) => t.validate(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PostgresTargetConfig {
     #[serde(default = "default_dsn_env")]
     pub dsn_env: String,
-    #[serde(rename = "schema")]
-    pub schema_name: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
     pub table: String,
+    /// Legacy bool field from 0.3.x — accepted but never preferred. New configs
+    /// should use `mode`. Top-level `target.overwrite: true` is still rejected
+    /// at config-load by the legacy-form check (Task 13).
     #[serde(default)]
     pub overwrite: bool,
     #[serde(default = "default_hnsw")]
@@ -729,7 +749,7 @@ pub struct TargetConfig {
     pub delete_orphans: bool,
 }
 
-impl TargetConfig {
+impl PostgresTargetConfig {
     /// Post-deserialize validation that crosses field boundaries (e.g.
     /// mode/source_tag coupling). Identifier safety is enforced separately in
     /// `load_config` via `validate_ident`.
@@ -781,10 +801,14 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
         .with_context(|| format!("reading config {}", path.display()))?;
     let cfg: CellConfig = serde_yml::from_str(&text)
         .with_context(|| format!("parsing YAML {}", path.display()))?;
-    validate_ident(&cfg.target.schema_name, "target.schema")?;
-    validate_ident(&cfg.target.table, "target.table")?;
-    if let Some(tag) = &cfg.target.source_tag {
-        validate_ident(tag, "target.source_tag")?;
+    match &cfg.target {
+        TargetConfig::Postgres(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
     }
     if let SourceConfig::PgTable(p) = &cfg.source {
         validate_ident(&p.schema_name, "source.schema")?;
@@ -869,7 +893,7 @@ cell_name: t
 source: { type: files, glob: "x", id_from: stem }
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: append, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: append, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let err = format!("{:#}", load_config(&path).unwrap_err());
@@ -887,8 +911,9 @@ source: { type: files, glob: "x", id_from: stem }
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target:
+  type: postgres
   dsn_env: D
-  schema: s
+  database: s
   table: t
   mode: overwrite
   hnsw: false
@@ -911,8 +936,9 @@ source: { type: files, glob: "x", id_from: stem }
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target:
+  type: postgres
   dsn_env: D
-  schema: s
+  database: s
   table: t
   mode: overwrite
   hnsw: false
@@ -942,8 +968,9 @@ source: { type: files, glob: "x", id_from: stem }
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target:
+  type: postgres
   dsn_env: D
-  schema: s
+  database: s
   table: t
   mode: overwrite
   hnsw: false
@@ -953,10 +980,11 @@ target:
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("load");
-        assert_eq!(cfg.target.promote_metadata.len(), 2);
-        assert_eq!(cfg.target.promote_metadata[0].path, "heading");
-        assert_eq!(cfg.target.promote_metadata[0].type_, "text");
-        assert_eq!(cfg.target.promote_metadata[1].column_name(), "entities__org");
+        let TargetConfig::Postgres(t) = &cfg.target;
+        assert_eq!(t.promote_metadata.len(), 2);
+        assert_eq!(t.promote_metadata[0].path, "heading");
+        assert_eq!(t.promote_metadata[0].type_, "text");
+        assert_eq!(t.promote_metadata[1].column_name(), "entities__org");
     }
 
     #[test]
@@ -970,7 +998,7 @@ chunker:
   summarizer: { mode: passthrough }
   grouping: { strategy: section_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let err = format!("{:#}", load_config(&path).unwrap_err());
@@ -1019,7 +1047,7 @@ chunker:
     step_words: 100
     max_chars: 500
 embedder: {{ type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }}
-target: {{ dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }}
+target: {{ type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }}
 "#,
                 kind = kind,
                 extra = match kind {
@@ -1063,7 +1091,7 @@ chunker:
     step_words: 50
     max_chars: 500
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let err = format!("{:#}", load_config(&path).unwrap_err());
@@ -1086,7 +1114,7 @@ chunker:
     type: hierarchy
     max_chars: 1234
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("load");
@@ -1102,7 +1130,7 @@ cell_name: t
 source: { type: files, glob: "x", id_from: stem }
 chunker: { type: fixed_overlap, window_words: 200, step_words: 100 }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("load");
@@ -1120,7 +1148,7 @@ chunker:
   summarizer: { mode: passthrough }
   grouping: { strategy: section_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         load_config(&path).expect("should accept section_aware over hierarchy base");

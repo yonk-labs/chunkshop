@@ -27,7 +27,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
 use crate::chunker::Chunk;
-use crate::config::{PromoteColumn, TargetConfig};
+use crate::config::{PostgresTargetConfig, PromoteColumn};
 
 /// Deterministic 64-bit signed int key for `pg_advisory_xact_lock`. Mirrors
 /// Python's `_advisory_lock_key`: BLAKE2b-8-byte digest of the schema name,
@@ -55,13 +55,13 @@ fn jsonb_path_get<'a>(
 }
 
 pub struct PgVectorSink {
-    cfg: TargetConfig,
+    cfg: PostgresTargetConfig,
     embed_dim: usize,
     pool: PgPool,
 }
 
 impl PgVectorSink {
-    pub async fn connect(cfg: TargetConfig, embed_dim: usize) -> Result<Self> {
+    pub async fn connect(cfg: PostgresTargetConfig, embed_dim: usize) -> Result<Self> {
         let dsn = std::env::var(&cfg.dsn_env).with_context(|| {
             format!(
                 "DSN env var {} not set (required by target.dsn_env)",
@@ -82,12 +82,12 @@ impl PgVectorSink {
 
     fn fq_table(&self) -> String {
         // Identifiers are regex-validated in config.rs.
-        format!("\"{}\".\"{}\"", self.cfg.schema_name, self.cfg.table)
+        format!("\"{}\".\"{}\"", self.cfg.database_name, self.cfg.table)
     }
 
     pub async fn create_table(&self) -> Result<()> {
         let mut tx = self.pool.begin().await.context("begin schema-setup tx")?;
-        let key = advisory_lock_key(&self.cfg.schema_name);
+        let key = advisory_lock_key(&self.cfg.database_name);
         sqlx::query("SELECT pg_advisory_xact_lock($1)")
             .bind(key)
             .execute(&mut *tx)
@@ -99,7 +99,7 @@ impl PgVectorSink {
             .await
             .context("CREATE EXTENSION vector")?;
 
-        let schema_stmt = format!(r#"CREATE SCHEMA IF NOT EXISTS "{}""#, self.cfg.schema_name);
+        let schema_stmt = format!(r#"CREATE SCHEMA IF NOT EXISTS "{}""#, self.cfg.database_name);
         sqlx::query(&schema_stmt)
             .execute(&mut *tx)
             .await
@@ -119,7 +119,7 @@ impl PgVectorSink {
         let row = sqlx::query(
             "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname=$1 AND tablename=$2)",
         )
-        .bind(&self.cfg.schema_name)
+        .bind(&self.cfg.database_name)
         .bind(&self.cfg.table)
         .fetch_one(&mut **tx)
         .await?;
@@ -141,7 +141,7 @@ impl PgVectorSink {
             "#,
         )
         .bind(&self.cfg.table)
-        .bind(&self.cfg.schema_name)
+        .bind(&self.cfg.database_name)
         .fetch_optional(&mut **tx)
         .await?;
         let Some(r) = row else { return Ok(None) };
@@ -174,7 +174,7 @@ impl PgVectorSink {
                     "overwrite refuses to drop {schema}.{table}: table holds rows with \
                      source_tag values {foreign:?} that differ from this cell's source_tag \
                      {my_tag:?}. Set target.force_overwrite: true in YAML to bypass.",
-                    schema = self.cfg.schema_name,
+                    schema = self.cfg.database_name,
                     table = self.cfg.table,
                     foreign = foreign,
                     my_tag = my_tag,
@@ -210,7 +210,7 @@ impl PgVectorSink {
         if !self.table_exists_in_tx(tx).await? {
             return Err(anyhow!(
                 "append mode: table {}.{} does not exist. Use mode='create_if_missing' on the first cell.",
-                self.cfg.schema_name,
+                self.cfg.database_name,
                 self.cfg.table
             ));
         }
@@ -219,7 +219,7 @@ impl PgVectorSink {
             return Err(anyhow!(
                 "append mode: table {}.{} has no 'embedding' vector column. Not a chunkshop \
                  table — pick a different target or use mode='overwrite'.",
-                self.cfg.schema_name,
+                self.cfg.database_name,
                 self.cfg.table
             ));
         };

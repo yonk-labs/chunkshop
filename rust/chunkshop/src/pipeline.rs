@@ -19,7 +19,7 @@ use serde_json::Value;
 use sqlx::Row;
 
 use crate::chunker::{Chunk, ChunkerImpl};
-use crate::config::{CellConfig, EmbedderConfig, SourceConfig};
+use crate::config::{CellConfig, EmbedderConfig, SourceConfig, TargetConfig};
 use crate::embedder::FastembedEmbedder;
 use crate::extractor::{build_extractor, ExtractorImpl};
 use crate::framer::FramerImpl;
@@ -56,7 +56,10 @@ impl Pipeline {
         let embedder = match cfg.embedder.clone() {
             EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,
         };
-        let sink = PgVectorSink::connect(cfg.target.clone(), embedder.dim()).await?;
+        let TargetConfig::Postgres(target_cfg) = cfg.target.clone() else {
+            unreachable!("R1 only ships TargetConfig::Postgres; R2/R3/R4 add variants");
+        };
+        let sink = PgVectorSink::connect(target_cfg, embedder.dim()).await?;
         sink.create_table().await?;
         Ok(Self { cfg, framer, chunker, extractor, embedder, sink })
     }
@@ -137,8 +140,10 @@ impl Pipeline {
     /// `Pipeline.delete_document`.
     pub async fn delete_document(&self, doc_id: &str) -> Result<u64> {
         let pool = self.sink.pool();
-        let target = &self.cfg.target;
-        let fq = format!("\"{}\".\"{}\"", target.schema_name, target.table);
+        let TargetConfig::Postgres(target) = &self.cfg.target else {
+            unreachable!("R1 only ships TargetConfig::Postgres");
+        };
+        let fq = format!("\"{}\".\"{}\"", target.database_name, target.table);
         let result = if let Some(tag) = &target.source_tag {
             let stmt = format!(
                 "DELETE FROM {tbl} WHERE doc_id = $1 AND source = $2",
@@ -159,8 +164,10 @@ impl Pipeline {
 
     /// Used by the demo — return one row's text preview for stdout.
     pub async fn sample_row(&self, doc_id: &str) -> Result<Option<(i32, String)>> {
-        let target = &self.cfg.target;
-        let fq = format!("\"{}\".\"{}\"", target.schema_name, target.table);
+        let TargetConfig::Postgres(target) = &self.cfg.target else {
+            unreachable!("R1 only ships TargetConfig::Postgres");
+        };
+        let fq = format!("\"{}\".\"{}\"", target.database_name, target.table);
         let stmt = format!(
             "SELECT seq_num, left(original_content, 80) FROM {tbl} \
              WHERE doc_id = $1 ORDER BY seq_num LIMIT 1",

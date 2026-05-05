@@ -29,7 +29,8 @@ use super::keys::{chunker_key, combo_table, embedder_key};
 use super::score::{aggregate_scores, score_query};
 use crate::config::{
     CellConfig, ChunkerConfig, EmbedderConfig, ExtractorConfig, FastembedEmbedderConfig,
-    FramerConfig, IdentityFramerConfig, NoneExtractorConfig, SourceConfig, TargetConfig,
+    FramerConfig, IdentityFramerConfig, NoneExtractorConfig, PostgresTargetConfig, SourceConfig,
+    TargetConfig,
 };
 use crate::embedder::FastembedEmbedder;
 
@@ -126,9 +127,9 @@ fn build_cell_cfg(
         source: bakeoff.source.clone(),
         chunker: chunker_cfg.clone(),
         embedder: EmbedderConfig::Fastembed(embedder_cfg.clone()),
-        target: TargetConfig {
+        target: TargetConfig::Postgres(PostgresTargetConfig {
             dsn_env: bakeoff.target.dsn_env.clone(),
-            schema_name: bakeoff.target.schema_name.clone(),
+            database_name: bakeoff.target.schema_name.clone(),
             table: table.to_string(),
             overwrite: false,
             hnsw: false,
@@ -137,7 +138,7 @@ fn build_cell_cfg(
             promote_metadata: vec![],
             force_overwrite: false,
             delete_orphans: false,
-        },
+        }),
         runtime,
         framer,
         extractor: ExtractorConfig::None(NoneExtractorConfig {}),

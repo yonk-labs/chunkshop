@@ -12,6 +12,7 @@ use crate::chunker::{
 };
 use crate::config::{
     CellConfig, ChunkerConfig, EmbedderConfig, FramerConfig, GroupingConfig, SourceConfig,
+    TargetConfig,
 };
 use crate::embedder::FastembedEmbedder;
 use crate::extractor::build_extractor;
@@ -162,7 +163,10 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     let mut embedder = match cfg.embedder {
         EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,
     };
-    let sink = PgVectorSink::connect(cfg.target, embedder.dim()).await?;
+    let TargetConfig::Postgres(target_cfg) = cfg.target else {
+        unreachable!("R1 only ships TargetConfig::Postgres; R2/R3/R4 add variants");
+    };
+    let sink = PgVectorSink::connect(target_cfg, embedder.dim()).await?;
 
     info!("creating target table");
     sink.create_table().await?;
