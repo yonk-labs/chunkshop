@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use tracing::info;
 
 use crate::chunker::{
@@ -12,17 +12,13 @@ use crate::chunker::{
 };
 use crate::config::{
     CellConfig, ChunkerConfig, EmbedderConfig, FramerConfig, GroupingConfig, SourceConfig,
-    TargetConfig,
 };
 use crate::embedder::FastembedEmbedder;
 use crate::extractor::build_extractor;
 use crate::framer::{
     FramerImpl, HeadingBoundaryFramer, IdentityFramer, JsonPathFramer, RegexBoundaryFramer,
 };
-use crate::sink::PgVectorSink;
-use crate::source::{
-    Document, FilesSource, HttpSource, JsonCorpusSource, PgTableSource, S3Source,
-};
+use crate::sources::AnySource;
 use crate::summarizer::build_summarizer;
 
 /// Recursively materialize a `ChunkerConfig` into a boxed trait object.
@@ -101,32 +97,6 @@ pub fn build_framer(cfg: FramerConfig) -> Result<Box<dyn FramerImpl + Send + Syn
     })
 }
 
-/// Same dispatch pattern for sources. `iter_documents` returns owned `Document`s
-/// because the file/json/pg backends all materialize their corpus eagerly today;
-/// if a streaming source ever lands, change this to a boxed async iterator.
-enum AnySource {
-    Files(FilesSource),
-    JsonCorpus(JsonCorpusSource),
-    PgTable(PgTableSource),
-    Http(HttpSource),
-    S3(S3Source),
-}
-
-impl AnySource {
-    /// Async because PgTable + Http + S3 do network I/O; the file/JSON
-    /// variants run sync work inside the async fn (no actual await). Caller
-    /// is already in an async context (`run_cell` is async).
-    async fn iter_documents(&self) -> Result<Vec<Document>> {
-        match self {
-            AnySource::Files(s) => s.iter_documents(),
-            AnySource::JsonCorpus(s) => s.iter_documents(),
-            AnySource::PgTable(s) => s.iter_documents().await,
-            AnySource::Http(s) => s.iter_documents().await,
-            AnySource::S3(s) => s.iter_documents().await,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct CellResult {
     pub cell_name: String,
@@ -143,32 +113,26 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     let start = Instant::now();
     info!(cell = %cfg.cell_name, "cell starting");
 
-    let source: AnySource = match cfg.source {
-        SourceConfig::Files(fc) => AnySource::Files(FilesSource::new(fc)),
-        SourceConfig::JsonCorpus(jc) => AnySource::JsonCorpus(JsonCorpusSource::new(jc)),
-        SourceConfig::PgTable(pc) => AnySource::PgTable(PgTableSource::new(pc)),
-        SourceConfig::Http(hc) => AnySource::Http(HttpSource::new(hc)),
-        SourceConfig::S3(sc) => AnySource::S3(S3Source::new(sc)),
-        SourceConfig::Inline(_) => {
-            return Err(anyhow!(
-                "inline source has no auto-iterator: drive ingest from your app \
-                 with chunkshop::Pipeline::from_yaml(...).ingest_text(doc_id, text, metadata). \
-                 See docs/incremental.md (Pattern F) and docs/samples/inline-mode/."
-            ));
-        }
-    };
+    if matches!(cfg.source, SourceConfig::Inline(_)) {
+        return Err(anyhow!(
+            "inline source has no auto-iterator: drive ingest from your app \
+             with chunkshop::Pipeline::from_yaml(...).ingest_text(doc_id, text, metadata). \
+             See docs/incremental.md (Pattern F) and docs/samples/inline-mode/."
+        ));
+    }
+    let source: AnySource = crate::sources::load_source(&cfg.source).context("load source")?;
     let framer = build_framer(cfg.framer)?;
     let chunker = build_chunker(cfg.chunker)?;
     let extractor = build_extractor(cfg.extractor)?;
     let mut embedder = match cfg.embedder {
         EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,
     };
-    let TargetConfig::Postgres(target_cfg) = cfg.target else {
-        unreachable!("R1 only ships TargetConfig::Postgres; R2/R3/R4 add variants");
-    };
-    let sink = PgVectorSink::connect(target_cfg, embedder.dim()).await?;
+    let backend = crate::backends::load_backend(&cfg.target).context("load backend")?;
+    let sink = crate::sinks::load_sink(&cfg.target, backend, embedder.dim())
+        .context("load sink")?;
 
     info!("creating target table");
+    use crate::sinks::Sink;
     sink.create_table().await?;
 
     let docs = source.iter_documents().await?;
@@ -224,8 +188,9 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
                 });
             }
 
-            sink.write_document(&chunks_with_meta, &embeddings, &tags_per_chunk)
-                .await?;
+            sink.write_document(&raw.id, &chunks_with_meta, &embeddings, &tags_per_chunk)
+                .await
+                .context("write_document")?;
             chunks_written += chunks_with_meta.len();
             docs_processed += 1;
             if docs_processed % heartbeat == 0 {
