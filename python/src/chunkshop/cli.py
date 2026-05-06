@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
 import click
@@ -12,7 +13,7 @@ from chunkshop.runner import run_cell
 
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="chunkshop")
+@click.version_option(version=_pkg_version("chunkshop"), prog_name="chunkshop")
 def cli():
     """Reusable ingestion tool: source -> chunker -> embedder -> extractor -> pgvector table.
 

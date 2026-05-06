@@ -69,6 +69,22 @@ class MariaDbTableSource(_Base):
     metadata_columns: list[str] = Field(default_factory=list)
 
 
+class ClickhouseTableSource(_Base):
+    type: Literal["clickhouse_table"]
+    dsn_env: str
+    database_name: str = Field(alias="database")
+    table: str
+    id_column: str
+    content_column: str
+    title_column: Optional[str] = None
+    # `where` is documented as TRUSTED OPERATOR INPUT — raw passthrough into
+    # SQL, no parameterization. Same contract as PgTableSource /
+    # MariaDbTableSource / SqliteTableSource. CH SQL dialect example:
+    #   where: "created_at > toDateTime('2025-01-01 00:00:00')"
+    where: Optional[str] = None
+    metadata_columns: list[str] = Field(default_factory=list)
+
+
 class HttpSource(_Base):
     type: Literal["http"]
     urls: list[str] = Field(default_factory=list)
@@ -99,7 +115,7 @@ class InlineSource(_Base):
 
 SourceConfig = Annotated[
     Union[FilesSource, JsonCorpusSource, PgTableSource, SqliteTableSource,
-          MariaDbTableSource, HttpSource, S3Source, InlineSource],
+          MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource],
     Field(discriminator="type"),
 ]
 
