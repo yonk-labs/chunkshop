@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use chunkshop::chunker::FixedOverlapChunker;
 use chunkshop::config::FixedOverlapChunkerConfig;
-use chunkshop::source::Document;
+use chunkshop::sources::Document;
 use serde::Deserialize;
 use serde_json::json;
 

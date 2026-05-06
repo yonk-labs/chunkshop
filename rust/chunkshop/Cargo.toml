@@ -59,6 +59,7 @@ lede = { version = "0.3", optional = true }
 # by `chunkshop::semantic` and `chunkshop::oversize` from inside integration
 # tests.
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
+tempfile = "3"
 
 [features]
 default = []

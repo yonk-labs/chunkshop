@@ -11,7 +11,7 @@ use crate::config::{
     HeadingBoundaryFramerConfig, IdentityFramerConfig, JsonPathFramerConfig,
     RegexBoundaryFramerConfig,
 };
-use crate::source::Document;
+use crate::sources::Document;
 
 pub trait FramerImpl {
     fn frame(&self, raw: &Document) -> Result<Vec<Document>>;

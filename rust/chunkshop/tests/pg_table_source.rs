@@ -5,7 +5,7 @@
 use std::env;
 
 use chunkshop::config::PgTableSourceConfig;
-use chunkshop::source::PgTableSource;
+use chunkshop::sources::PgTableSource;
 
 #[tokio::test]
 async fn pg_table_source_emits_three_rows() {
@@ -76,6 +76,7 @@ async fn pg_table_source_emits_three_rows() {
         content_column: "body".to_string(),
         title_column: Some("heading".to_string()),
         where_clause: None,
+        metadata_columns: vec![],
     };
     let src = PgTableSource::new(cfg);
     let docs = src.iter_documents().await.expect("iter");
@@ -149,6 +150,7 @@ async fn pg_table_source_respects_where_clause() {
         content_column: "body".to_string(),
         title_column: None,
         where_clause: Some("kind = 'keep'".to_string()),
+        metadata_columns: vec![],
     };
     let docs = PgTableSource::new(cfg).iter_documents().await.expect("iter");
     assert_eq!(docs.len(), 2, "WHERE kind='keep' should match 2 rows");

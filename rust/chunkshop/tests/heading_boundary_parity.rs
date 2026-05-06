@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use chunkshop::config::HeadingBoundaryFramerConfig;
 use chunkshop::framer::{FramerImpl, HeadingBoundaryFramer};
-use chunkshop::source::Document;
+use chunkshop::sources::Document;
 use serde::Deserialize;
 use serde_json::json;
 

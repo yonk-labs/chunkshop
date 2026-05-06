@@ -3,7 +3,7 @@
 //! crate. Skips gracefully if port binding fails.
 
 use chunkshop::config::HttpSourceConfig;
-use chunkshop::source::HttpSource;
+use chunkshop::sources::HttpSource;
 
 const HTML_PAGE: &str = "<!DOCTYPE html><html><head><title>Hello Page</title></head>\
                         <body>Hello world.</body></html>";
