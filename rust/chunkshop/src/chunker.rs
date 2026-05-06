@@ -20,14 +20,17 @@ use crate::config::{
     ChunkerConfig, FixedOverlapChunkerConfig, GroupingConfig, HierarchyChunkerConfig,
     SentenceAwareChunkerConfig,
 };
-// `FastembedEmbedderConfig` and `SemanticChunkerConfig` are only consumed by
-// `SemanticChunker` below. The `new()` convenience constructor needs the
-// `embedder` feature (for `FastembedEmbedder`); the trait-based
-// `with_embedder` constructor only needs `chunkers`.
-#[cfg(feature = "embedder")]
+// `FastembedEmbedderConfig` and `FastembedEmbedder` are only consumed by
+// `SemanticChunker::new()` — the convenience constructor that builds a
+// fastembed-backed embedder. They need the `embedder-hub` feature (since
+// `FastembedEmbedder::new` requires hf-hub for runtime model fetch).
+//
+// `SemanticChunkerConfig` is always available — `with_embedder` accepts it
+// without needing fastembed at all.
+#[cfg(feature = "embedder-hub")]
 use crate::config::FastembedEmbedderConfig;
 use crate::config::SemanticChunkerConfig;
-#[cfg(feature = "embedder")]
+#[cfg(feature = "embedder-hub")]
 use crate::embedder::FastembedEmbedder;
 use crate::sentence_split::naive_sentences;
 use crate::source::Document;
@@ -527,26 +530,60 @@ fn split_sentences(text: &str, max_chars: usize) -> Vec<String> {
 /// embedder.
 pub struct HierarchyChunker {
     cfg: HierarchyChunkerConfig,
+    /// Compiled heading boundary regex. Either the default markdown pattern
+    /// (capture group 2 = heading text) or a user-supplied custom pattern
+    /// (first capture group, if present, = heading text; otherwise the full
+    /// match is used as heading text).
+    heading_re: Regex,
+    /// True when `heading_re` was compiled from a user-supplied
+    /// `cfg.heading_pattern`. Controls the heading-text extraction path:
+    /// the default path uses capture group 2 (mirrors Python parity); the
+    /// custom path uses capture group 1 if present, else the full match.
+    custom_heading_pattern: bool,
     warner: Option<oversize::DedupedWarner>,
 }
 
 impl HierarchyChunker {
-    pub fn new(cfg: HierarchyChunkerConfig) -> Self {
+    pub fn new(cfg: HierarchyChunkerConfig) -> anyhow::Result<Self> {
+        let (heading_re, custom_heading_pattern) = match &cfg.heading_pattern {
+            Some(pat) => {
+                let re = Regex::new(pat).map_err(|e| {
+                    anyhow::anyhow!("invalid hierarchy heading_pattern {pat:?}: {e}")
+                })?;
+                (re, true)
+            }
+            None => (heading_with_text_re(), false),
+        };
         let warner = Some(oversize::DedupedWarner::new("hierarchy", cfg.max_chars));
-        Self { cfg, warner }
+        Ok(Self {
+            cfg,
+            heading_re,
+            custom_heading_pattern,
+            warner,
+        })
     }
 
     pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
         let text = &doc.content;
-        let re = heading_with_text_re();
-        let headings: Vec<(usize, usize, String)> = re
+        let headings: Vec<(usize, usize, String)> = self
+            .heading_re
             .captures_iter(text)
             .map(|c| {
                 let m0 = c.get(0).unwrap();
-                let h_text = c
-                    .get(2)
-                    .map(|m| m.as_str().trim().to_string())
-                    .unwrap_or_default();
+                let h_text = if self.custom_heading_pattern {
+                    // Custom pattern: prefer capture group 1 if the user
+                    // supplied one; otherwise fall back to the full match.
+                    c.get(1)
+                        .or_else(|| c.get(0))
+                        .map(|m| m.as_str().trim().to_string())
+                        .unwrap_or_default()
+                } else {
+                    // Default markdown pattern: capture group 2 is the
+                    // heading text (Python parity).
+                    c.get(2)
+                        .map(|m| m.as_str().trim().to_string())
+                        .unwrap_or_default()
+                };
                 (m0.start(), m0.end(), h_text)
             })
             .collect();
@@ -825,7 +862,7 @@ impl ChunkerImpl for NeighborExpandChunker {
 /// can plug in their own embedder via [`SemanticChunker::with_embedder`]
 /// without pulling `fastembed`/`ort` into the dep tree. The convenience
 /// constructor [`SemanticChunker::new`] uses [`FastembedEmbedder`] under
-/// the hood and requires the `embedder` Cargo feature.
+/// the hood and requires the `embedder-hub` Cargo feature.
 pub struct SemanticChunker {
     cfg: SemanticChunkerConfig,
     boundary: std::sync::Mutex<Box<dyn BoundaryEmbedder>>,
@@ -887,10 +924,11 @@ impl SemanticChunker {
     }
 
     /// Convenience constructor: builds a [`FastembedEmbedder`] from
-    /// `cfg.boundary_model` and wraps it. Requires the `embedder` Cargo
-    /// feature. Existing chunkshop CLI / YAML-config callers continue to use
-    /// this entry point unchanged.
-    #[cfg(feature = "embedder")]
+    /// `cfg.boundary_model` and wraps it. Requires the `embedder-hub` Cargo
+    /// feature (fastembed + ORT + hf-hub for runtime model fetch). Existing
+    /// chunkshop CLI / YAML-config callers continue to use this entry point
+    /// unchanged.
+    #[cfg(feature = "embedder-hub")]
     pub fn new(cfg: SemanticChunkerConfig) -> anyhow::Result<Self> {
         validate_semantic_cfg(&cfg)?;
         let boundary_cfg = FastembedEmbedderConfig {
@@ -1456,7 +1494,7 @@ fn merge_small_spans(spans: Vec<(usize, usize)>, min: usize) -> Vec<(usize, usiz
 pub fn build_chunker(cfg: ChunkerConfig) -> anyhow::Result<Box<dyn ChunkerImpl + Send + Sync>> {
     Ok(match cfg {
         ChunkerConfig::SentenceAware(c) => Box::new(SentenceAwareChunker::new(c)),
-        ChunkerConfig::Hierarchy(c) => Box::new(HierarchyChunker::new(c)),
+        ChunkerConfig::Hierarchy(c) => Box::new(HierarchyChunker::new(c)?),
         ChunkerConfig::FixedOverlap(c) => Box::new(FixedOverlapChunker::new(c)?),
         ChunkerConfig::NeighborExpand(c) => {
             let window = c.window;
@@ -1472,13 +1510,13 @@ pub fn build_chunker(cfg: ChunkerConfig) -> anyhow::Result<Box<dyn ChunkerImpl +
                 if_oversize_cfg,
             ))
         }
-        #[cfg(feature = "embedder")]
+        #[cfg(feature = "embedder-hub")]
         ChunkerConfig::Semantic(c) => Box::new(SemanticChunker::new(c)?),
-        #[cfg(not(feature = "embedder"))]
+        #[cfg(not(feature = "embedder-hub"))]
         ChunkerConfig::Semantic(_) => {
             return Err(anyhow::anyhow!(
-                "semantic chunker requires the `embedder` Cargo feature \
-                 (rebuild with --features embedder or --features full)"
+                "semantic chunker requires the `embedder-hub` Cargo feature \
+                 (rebuild with --features embedder-hub, --features embedder, or --features full)"
             ));
         }
         ChunkerConfig::SummaryEmbed(c) => {
@@ -1565,7 +1603,110 @@ mod tests {
         assert!(chunks[2].original_content.starts_with("## Section B"));
     }
 
+    /// Sanity-check the default markdown behavior of `HierarchyChunker` when
+    /// `heading_pattern: None`. Backward-compat anchor: any change to the
+    /// default extraction path that breaks `metadata.heading == "Section A"`
+    /// or the chunk count flips this red.
+    #[test]
+    fn hierarchy_default_uses_markdown_pattern() {
+        let content = "# Top\n\n\
+                        Intro paragraph that is long enough to clear the minimum section threshold so the first section is not skipped by the chunker. We add more words here for safety.\n\n\
+                        ## Section A\n\n\
+                        Body A. Body A continued so the section is long enough to clear min_section_chars without effort. Padding padding padding padding padding padding padding padding.\n\n\
+                        ## Section B\n\n\
+                        Body B. Body B continued so the section is long enough to clear min_section_chars without effort. Padding padding padding padding padding padding padding padding.";
+        let doc = Document {
+            id: "doc-default".into(),
+            content: content.into(),
+            title: Some("Doc".into()),
+            metadata: json!({}),
+        };
+        let chunker = HierarchyChunker::new(HierarchyChunkerConfig {
+            prefix_heading: true,
+            min_section_chars: 50,
+            max_chars: 2000,
+            if_oversize: None,
+            heading_pattern: None,
+        })
+        .expect("default config must compile");
+        let chunks = chunker.chunk(&doc);
+        // 3 sections (Top + A + B), all clear min_section_chars. There is no
+        // preamble before `# Top` (headings[0].0 == 0), so doc.title is not
+        // consulted; each chunk's heading comes from capture group 2 of the
+        // markdown regex.
+        assert_eq!(chunks.len(), 3, "expected 3 chunks, got {}", chunks.len());
+        assert_eq!(chunks[0].metadata["heading"], "Top");
+        assert_eq!(chunks[1].metadata["heading"], "Section A");
+        assert_eq!(chunks[2].metadata["heading"], "Section B");
+    }
+
+    /// A user-supplied custom regex (here, `>>>`-style markers) honors the
+    /// custom boundary instead of falling back to markdown. This is the core
+    /// guarantee the field exists for: external consumers that don't write
+    /// markdown can still drive hierarchy chunking.
+    #[test]
+    fn hierarchy_custom_pattern_honored() {
+        // `>>>` marker followed by heading text. The first capture group
+        // pulls out the text after the marker.
+        let content = ">>> Alpha\n\n\
+                        Body alpha — long enough body so the section easily clears the minimum-section threshold and the chunker emits it as a real chunk. Padding padding padding padding padding padding.\n\n\
+                        >>> Beta\n\n\
+                        Body beta — long enough body so the section easily clears the minimum-section threshold and the chunker emits it as a real chunk. Padding padding padding padding padding padding.";
+        let doc = Document {
+            id: "doc-custom".into(),
+            content: content.into(),
+            title: None,
+            metadata: json!({}),
+        };
+        let chunker = HierarchyChunker::new(HierarchyChunkerConfig {
+            prefix_heading: false,
+            min_section_chars: 50,
+            max_chars: 2000,
+            if_oversize: None,
+            heading_pattern: Some(r"(?m)^>>>\s+(.+)$".to_string()),
+        })
+        .expect("valid custom pattern must compile");
+        let chunks = chunker.chunk(&doc);
+        assert_eq!(
+            chunks.len(),
+            2,
+            "expected 2 chunks for two `>>>`-delimited sections, got {}",
+            chunks.len()
+        );
+        // Custom-pattern path: capture group 1 is the heading text.
+        assert_eq!(chunks[0].metadata["heading"], "Alpha");
+        assert_eq!(chunks[1].metadata["heading"], "Beta");
+        // Default markdown headings inside the corpus must NOT split with a
+        // custom pattern that doesn't match `#`. Sanity: markdown `#` lines
+        // present elsewhere wouldn't break the custom path. (No `#` in this
+        // input, so we just confirm bodies survived.)
+        assert!(chunks[0].original_content.contains("Body alpha"));
+        assert!(chunks[1].original_content.contains("Body beta"));
+    }
+
+    /// An invalid regex must fail at construction time, not at chunk time.
+    /// The brief calls this out explicitly: external consumers should see the
+    /// error when they build the chunker, not silently mid-pipeline.
+    #[test]
+    fn hierarchy_invalid_pattern_returns_err() {
+        let result = HierarchyChunker::new(HierarchyChunkerConfig {
+            prefix_heading: true,
+            min_section_chars: 100,
+            max_chars: 2000,
+            if_oversize: None,
+            // Unbalanced character class: regex crate rejects this.
+            heading_pattern: Some("[invalid".to_string()),
+        });
+        assert!(
+            result.is_err(),
+            "expected Err for invalid regex, got Ok"
+        );
+    }
+
     // --- Semantic chunker algorithm helpers ---
+    // (always compile under `chunkers`; the helpers were ungated when the
+    // BoundaryEmbedder trait moved SemanticChunker out of the embedder
+    // feature gate.)
 
     #[test]
     fn percentile_linear_matches_numpy() {

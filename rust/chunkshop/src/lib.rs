@@ -18,7 +18,14 @@
 //!
 //! Available features:
 //! - `chunkers` — chunker structs + their config types (no fastembed/ort/sqlx).
-//! - `embedder` — fastembed + ORT embedder (also unlocks `SemanticChunker`).
+//! - `embedder-core` — fastembed (BYO `try_new_from_user_defined`) + ORT.
+//!   No `hf-hub`, no auto-download. Caller supplies model bytes directly via
+//!   [`embedder::FastembedEmbedder::from_user_defined_files`].
+//! - `embedder-hub` — adds `hf-hub` for runtime auto-download. Enables
+//!   [`embedder::FastembedEmbedder::new`] (stock variants + Xenova int8 BGE
+//!   bit-near-exact) and the [`chunker::SemanticChunker::new`] convenience.
+//! - `embedder` — historical alias = `embedder-core` + `embedder-hub`.
+//!   Existing consumers see no change.
 //! - `extractor` — language detection + entity extractor.
 //! - `source` — files / HTTP / S3 source loaders.
 //! - `sink` — pgvector sink.
@@ -31,13 +38,15 @@ pub mod bakeoff;
 #[cfg(feature = "chunkers")]
 pub mod chunker;
 pub mod config;
-#[cfg(feature = "embedder")]
+#[cfg(feature = "embedder-core")]
 pub mod embedder;
 #[cfg(feature = "extractor")]
 pub mod extractor;
 #[cfg(feature = "pipeline")]
 pub mod framer;
-#[cfg(feature = "embedder")]
+// `hf_cache` is the network-fetch path (HuggingFace download via hf-hub).
+// Slim consumers on `embedder-core` alone never compile this module.
+#[cfg(feature = "embedder-hub")]
 pub(crate) mod hf_cache;
 #[cfg(feature = "pipeline")]
 pub mod pipeline;
@@ -59,7 +68,7 @@ pub use bakeoff::{run_bakeoff, run_bakeoff_with_base, BakeoffConfig, BakeoffResu
 #[cfg(feature = "chunkers")]
 pub use chunker::{Chunk, SentenceAwareChunker};
 pub use config::{load_config, CellConfig};
-#[cfg(feature = "embedder")]
+#[cfg(feature = "embedder-core")]
 pub use embedder::FastembedEmbedder;
 #[cfg(feature = "pipeline")]
 pub use pipeline::Pipeline;
