@@ -47,13 +47,21 @@ chunkshop has one canonical loop. Every adoption goes through these five steps:
 The bakeoff is **step 1 of every adoption**, not a sample. It's the experiment that picks the recipe you'll ship with.
 
 ```bash
-# 1. Install
-cd chunkshop/python && uv sync --extra dev && cd ..
+# 1a. Install (pip — ships the CLI):
+pip install chunkshop                            # base install
+pip install 'chunkshop[extractors,lang]'         # with optional extractors
+
+# 1b. Or install from source if you want the sample corpora and the dev tooling
+#     (sample YAMLs, the NTSB demo data, and the test suite live in the repo,
+#      not the wheel):
+git clone https://github.com/yonk-labs/chunkshop && cd chunkshop
+cd python && uv sync --extra dev && cd ..
 
 # 2. Point an env var at your Postgres (pgvector extension required)
 export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
 
 # 3. Run the canonical demo: bakeoff against the NTSB aviation-accident corpus
+#    (requires the source clone — sample corpus is at docs/samples/bakeoff-ntsb/)
 chunkshop bakeoff --config docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml \
                   --dsn "$CHUNKSHOP_DSN" --yes
 

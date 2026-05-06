@@ -12,10 +12,22 @@ For the high-level shape and mermaid diagram, see the [top-level README](../READ
 
 ## Install
 
-From source (recommended while alpha):
+From PyPI (runtime + library):
 
 ```bash
-cd chunkshop/python
+pip install chunkshop                            # base
+pip install 'chunkshop[extractors,lang]'         # with optional NLP extras
+pip install 'chunkshop[nlp]'                     # umbrella: keybert + spacy + lang
+```
+
+The wheel ships the CLI and the library. Sample YAMLs and demo corpora
+(`docs/samples/`) and the test suite live in the source tree — clone the repo
+if you want them.
+
+From source (recommended for development or to get the sample corpora):
+
+```bash
+git clone https://github.com/yonk-labs/chunkshop && cd chunkshop/python
 uv sync --extra dev
 ```
 
