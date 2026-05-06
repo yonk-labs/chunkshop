@@ -261,6 +261,25 @@ impl FastembedEmbedder {
     }
 }
 
+/// Default in-tree implementation of [`crate::chunker::BoundaryEmbedder`]
+/// for [`FastembedEmbedder`]. Routes through [`FastembedEmbedder::embed`]
+/// (which already takes `Vec<String>` and returns `Vec<Vec<f32>>`) by
+/// allocating owned Strings from the input slice. Owns one allocation per
+/// call; negligible vs. the ORT inference cost.
+///
+/// Available when both the `chunkers` feature (the trait lives there) and
+/// the `embedder-core` feature (this file's `FastembedEmbedder`) are
+/// enabled. The trait itself in `crate::chunker` is always available with
+/// `chunkers`; this `impl` is what makes fastembed pluggable into
+/// `SemanticChunker::with_embedder`.
+#[cfg(feature = "chunkers")]
+impl crate::chunker::BoundaryEmbedder for FastembedEmbedder {
+    fn embed_batch(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        let owned: Vec<String> = texts.iter().map(|s| (*s).to_string()).collect();
+        self.embed(owned)
+    }
+}
+
 /// HF-fetch path: download files via `hf-hub` then delegate to the bytes-only
 /// builder. Only available under `embedder-hub`.
 #[cfg(feature = "embedder-hub")]
