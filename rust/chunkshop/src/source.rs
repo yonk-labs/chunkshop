@@ -4,10 +4,7 @@
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use crate::config::{
-    PgTableSourceConfig,
-    S3SourceConfig,
-};
+use crate::config::PgTableSourceConfig;
 
 // `Document` lives in `sources::base::Document` as of v4.0. Re-exported here
 // during the R1 transition; this re-export is removed when source.rs is
@@ -16,6 +13,7 @@ pub use crate::sources::base::Document;
 pub use crate::sources::files::FilesSource;
 pub use crate::sources::http::HttpSource;
 pub use crate::sources::json_corpus::JsonCorpusSource;
+pub use crate::sources::s3::S3Source;
 
 /// Postgres source. Mirrors `python/src/chunkshop/sources/pg_table.py`.
 /// Reads documents from a Postgres table by id_column / content_column /
@@ -136,83 +134,3 @@ fn read_meta_value(row: &sqlx::postgres::PgRow, idx: usize) -> serde_json::Value
     serde_json::Value::Null
 }
 
-/// S3 source. Mirrors `python/src/chunkshop/sources/s3.py`. Uses the
-/// `object_store` crate's `AmazonS3` builder. Auth + region resolution are
-/// `from_env()` (standard AWS credential chain). The optional `endpoint_url`
-/// lets users point at minio / R2 / other S3-compatible servers.
-///
-/// Document shape per fetched object:
-///   id        = `s3://<bucket>/<key>`
-///   content   = response body decoded as utf-8 (lossy on non-UTF8)
-///   title     = None
-///   metadata  = `{"bucket": str, "key": str, "size": int, "etag": str}`
-pub struct S3Source {
-    cfg: S3SourceConfig,
-}
-
-impl S3Source {
-    pub fn new(cfg: S3SourceConfig) -> Self {
-        Self { cfg }
-    }
-
-    pub async fn iter_documents(&self) -> Result<Vec<Document>> {
-        use futures::StreamExt;
-        use object_store::aws::AmazonS3Builder;
-        use object_store::{path::Path as ObjPath, ObjectStore};
-
-        // Build the S3 client. `from_env()` reads AWS_* env vars; explicit
-        // bucket overrides any AWS_BUCKET in env. `with_endpoint` is opt-in
-        // for minio / R2.
-        let mut builder = AmazonS3Builder::from_env().with_bucket_name(&self.cfg.bucket);
-        if let Some(endpoint) = &self.cfg.endpoint_url {
-            builder = builder.with_endpoint(endpoint);
-            // Path-style addressing is what minio uses by default; harmless for
-            // real AWS too. object_store auto-detects in most cases but being
-            // explicit avoids ambiguity for custom endpoints.
-            builder = builder.with_allow_http(endpoint.starts_with("http://"));
-        }
-        let store = builder
-            .build()
-            .with_context(|| format!("building S3 client for bucket {}", self.cfg.bucket))?;
-
-        // List under the prefix. object_store::list returns a stream of
-        // ObjectMeta — collect everything before fetching.
-        let prefix = if self.cfg.prefix.is_empty() {
-            None
-        } else {
-            Some(ObjPath::from(self.cfg.prefix.clone()))
-        };
-        let mut listing = store.list(prefix.as_ref());
-        let mut metas: Vec<object_store::ObjectMeta> = Vec::new();
-        while let Some(item) = listing.next().await {
-            metas.push(item.with_context(|| format!("list under {}", self.cfg.prefix))?);
-        }
-
-        let mut out: Vec<Document> = Vec::with_capacity(metas.len());
-        for meta in metas {
-            let key = meta.location.to_string();
-            let result = store
-                .get(&meta.location)
-                .await
-                .with_context(|| format!("GET s3://{}/{key}", self.cfg.bucket))?;
-            let bytes = result
-                .bytes()
-                .await
-                .with_context(|| format!("read body of s3://{}/{key}", self.cfg.bucket))?;
-            let content = String::from_utf8_lossy(&bytes).to_string();
-            let etag = meta.e_tag.clone().unwrap_or_default();
-            out.push(Document {
-                id: format!("s3://{}/{}", self.cfg.bucket, key),
-                content,
-                title: None,
-                metadata: serde_json::json!({
-                    "bucket": self.cfg.bucket,
-                    "key": key,
-                    "size": meta.size,
-                    "etag": etag,
-                }),
-            });
-        }
-        Ok(out)
-    }
-}
