@@ -273,10 +273,10 @@ impl Sink for PgSink {
             let vals_sql = placeholders.join(", ");
 
             // Update cols: skip id, doc_id, seq_num AND source (write-once).
-            let mut update_cols: Vec<&str> = vec![
-                "original_content", "embedded_content", "tags", "metadata", "embedding",
+            let mut update_cols_owned: Vec<String> = vec![
+                "original_content".into(), "embedded_content".into(),
+                "tags".into(), "metadata".into(), "embedding".into(),
             ];
-            let mut update_cols_owned: Vec<String> = update_cols.iter().map(|s| s.to_string()).collect();
             for pc in promote {
                 update_cols_owned.push(pc.column_name());
             }

@@ -9,7 +9,7 @@ use chunkshop::config::{
     ExternalSummarizerConfig, HierarchyChunkerConfig, PassthroughSummarizerConfig,
     SummarizerConfig,
 };
-use chunkshop::source::Document;
+use chunkshop::sources::Document;
 use chunkshop::summarizer::build_summarizer;
 use serde::Deserialize;
 use serde_json::json;

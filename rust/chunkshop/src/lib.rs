@@ -1,9 +1,4 @@
-//! chunkshop-rs — minimal Rust port of chunkshop.
-//!
-//! Implements one source (files), one chunker (sentence_aware), one embedder
-//! (fastembed), and one pgvector sink. The YAML config schema and target table
-//! shape match the Python reference so vectors are interchangeable across
-//! implementations.
+//! chunkshop-rs — Rust port of chunkshop.
 
 pub mod backends;
 pub mod bakeoff;
@@ -16,17 +11,16 @@ pub(crate) mod hf_cache;
 pub mod pipeline;
 pub mod runner;
 pub mod sentence_split;
-pub mod sink;
 pub mod sinks;
-pub mod source;
 pub mod sources;
 pub mod summarizer;
 
+pub use backends::{AnyBackend, Backend, BackendConn, BackendDialect, ColSpec, PostgresBackend};
 pub use bakeoff::{run_bakeoff, run_bakeoff_with_base, BakeoffConfig, BakeoffResults};
 pub use chunker::{Chunk, SentenceAwareChunker};
 pub use config::{load_config, CellConfig};
 pub use embedder::FastembedEmbedder;
 pub use pipeline::Pipeline;
 pub use runner::{run_cell, CellResult};
-pub use sink::PgVectorSink;
-pub use source::{Document, FilesSource};
+pub use sinks::{AnySink, PgSink, Sink};
+pub use sources::{AnySource, Document, FilesSource, HttpSource, JsonCorpusSource, PgTableSource, S3Source};

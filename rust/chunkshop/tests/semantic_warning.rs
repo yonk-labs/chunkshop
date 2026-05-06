@@ -7,7 +7,7 @@
 
 use chunkshop::chunker::SemanticChunker;
 use chunkshop::config::SemanticChunkerConfig;
-use chunkshop::source::Document;
+use chunkshop::sources::Document;
 use serde_json::json;
 use tracing_test::traced_test;
 

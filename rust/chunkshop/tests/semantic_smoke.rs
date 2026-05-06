@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use chunkshop::chunker::SemanticChunker;
 use chunkshop::config::SemanticChunkerConfig;
-use chunkshop::source::Document;
+use chunkshop::sources::Document;
 use serde_json::json;
 
 fn fixtures_dir() -> PathBuf {

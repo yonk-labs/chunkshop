@@ -22,7 +22,7 @@ use crate::config::{
 };
 use crate::embedder::FastembedEmbedder;
 use crate::sentence_split::naive_sentences;
-use crate::source::Document;
+use crate::sources::Document;
 
 pub mod oversize {
     //! Shared if_oversize fallback machinery (mirrors Python chunkers/_oversize.py).

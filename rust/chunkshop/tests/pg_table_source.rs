@@ -5,7 +5,7 @@
 use std::env;
 
 use chunkshop::config::PgTableSourceConfig;
-use chunkshop::source::PgTableSource;
+use chunkshop::sources::PgTableSource;
 
 #[tokio::test]
 async fn pg_table_source_emits_three_rows() {
