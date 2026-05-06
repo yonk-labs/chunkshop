@@ -420,6 +420,16 @@ pub struct HierarchyChunkerConfig {
     pub max_chars: usize,
     #[serde(default)]
     pub if_oversize: Option<Box<ChunkerConfig>>,
+    /// Optional custom heading regex. When `None` (the default), the chunker
+    /// uses the built-in markdown heading pattern (`^#{1,6}\s+.+$`). When
+    /// `Some(s)`, `s` is compiled as a `regex::Regex` (eagerly, in
+    /// `HierarchyChunker::new`) and used as the section-boundary matcher in
+    /// place of the markdown pattern. If the custom regex contains a first
+    /// capture group, that group's match is used as the heading text;
+    /// otherwise the full match is used. Lets external consumers tune
+    /// hierarchy chunking for AsciiDoc, reST, or any custom delimiter shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_pattern: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
