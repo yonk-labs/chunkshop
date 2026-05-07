@@ -24,6 +24,18 @@ const ALLOWED_PROMOTE_TYPES: &[&str] = &[
     "date",
 ];
 
+/// Allowlist regex for `ClickhouseTargetConfig::engine`. Hardening relative to
+/// Python (which interpolates the engine string raw — see
+/// python/src/chunkshop/config.py:542). Accepts:
+///   - `MergeTree` / `MergeTree()`
+///   - `ReplacingMergeTree(<single_ident>)` (the `created_at` dedup column)
+///   - Any of the above optionally followed by ` ORDER BY <expr>`
+///
+/// Rejects engines outside this whitelist (Replicated*, Distributed, Memory,
+/// engines with embedded SQL, etc.) — those need explicit user request and a
+/// separate brief.
+const CLICKHOUSE_ENGINE_RE: &str = r"^(MergeTree(\(\))?|ReplacingMergeTree\(\w+\))( ORDER BY .+)?$";
+
 /// One promoted jsonb path → typed Postgres column. Mirrors Python's
 /// `chunkshop.config.PromoteColumn`. The `path` is dot-separated; each segment
 /// must match `^[A-Za-z_][A-Za-z0-9_]*$`. The `type_` must be in
@@ -703,7 +715,8 @@ impl FastembedEmbedderConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TargetConfig {
     Postgres(PostgresTargetConfig),
-    // R2/R3/R4 add: Mariadb, Sqlite, Clickhouse
+    Clickhouse(ClickhouseTargetConfig),
+    // R2/R3 add: Mariadb, Sqlite
 }
 
 impl TargetConfig {
@@ -712,6 +725,7 @@ impl TargetConfig {
     fn validate(&self) -> Result<()> {
         match self {
             TargetConfig::Postgres(t) => t.validate(),
+            TargetConfig::Clickhouse(t) => t.validate(),
         }
     }
 }
@@ -758,6 +772,59 @@ impl PostgresTargetConfig {
             return Err(anyhow!(
                 "target.mode='append' requires target.source_tag to identify this cell"
             ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickhouseTargetConfig {
+    #[serde(default = "default_dsn_env")]
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    #[serde(default = "default_hnsw")]
+    pub hnsw: bool,
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub source_tag: Option<String>,
+    #[serde(default)]
+    pub promote_metadata: Vec<PromoteColumn>,
+    #[serde(default)]
+    pub force_overwrite: bool,
+    /// On ClickHouse, `delete_orphans: true` is a NO-OP that emits a single
+    /// `tracing::warn!` per process. CH's `ALTER TABLE ... DELETE` is async
+    /// and breaks chunkshop's per-document atomic write contract.
+    #[serde(default)]
+    pub delete_orphans: bool,
+    /// Optional engine override. When `None`, the sink emits
+    /// `MergeTree() ORDER BY (id)`. To opt into lazy dedup, set
+    /// `"ReplacingMergeTree(created_at) ORDER BY (id)"`. Validated against
+    /// `CLICKHOUSE_ENGINE_RE` at config-load — a Rust-only hardening relative
+    /// to Python which interpolates the field raw.
+    #[serde(default)]
+    pub engine: Option<String>,
+}
+
+impl ClickhouseTargetConfig {
+    fn validate(&self) -> Result<()> {
+        if self.mode == "append" && self.source_tag.is_none() {
+            return Err(anyhow!(
+                "target.mode='append' requires target.source_tag to identify this cell"
+            ));
+        }
+        if let Some(e) = &self.engine {
+            let re = Regex::new(CLICKHOUSE_ENGINE_RE).unwrap();
+            if !re.is_match(e) {
+                return Err(anyhow!(
+                    "target.engine {e:?} not in allowlist. Accepted shapes: \
+                     'MergeTree', 'MergeTree()', 'ReplacingMergeTree(<col>)', \
+                     each optionally followed by ' ORDER BY <expr>'. Custom engines \
+                     are not supported in v0.4 — file an issue if you need one."
+                ));
+            }
         }
         Ok(())
     }
@@ -845,6 +912,13 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
         .with_context(|| format!("parsing YAML {}", path.display()))?;
     match &cfg.target {
         TargetConfig::Postgres(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
+        TargetConfig::Clickhouse(t) => {
             validate_ident(&t.database_name, "target.database")?;
             validate_ident(&t.table, "target.table")?;
             if let Some(tag) = &t.source_tag {
@@ -1022,7 +1096,9 @@ target:
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("load");
-        let TargetConfig::Postgres(t) = &cfg.target;
+        let TargetConfig::Postgres(t) = &cfg.target else {
+            panic!("expected Postgres variant");
+        };
         assert_eq!(t.promote_metadata.len(), 2);
         assert_eq!(t.promote_metadata[0].path, "heading");
         assert_eq!(t.promote_metadata[0].type_, "text");
@@ -1194,5 +1270,96 @@ target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hn
 "#;
         let path = write_yaml(yaml);
         load_config(&path).expect("should accept section_aware over hierarchy base");
+    }
+
+    #[test]
+    fn parses_clickhouse_target() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: CHUNKSHOP_DSN_CH
+  database: my_db
+  table: chunks
+  mode: overwrite
+  hnsw: true
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        let TargetConfig::Clickhouse(t) = &cfg.target else {
+            panic!("expected Clickhouse variant");
+        };
+        assert_eq!(t.database_name, "my_db");
+        assert_eq!(t.table, "chunks");
+        assert!(t.engine.is_none());
+    }
+
+    #[test]
+    fn accepts_replacing_merge_tree_engine() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: D
+  database: db
+  table: t
+  mode: overwrite
+  hnsw: false
+  engine: "ReplacingMergeTree(created_at) ORDER BY (id)"
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("ReplacingMergeTree should be accepted");
+        let TargetConfig::Clickhouse(t) = &cfg.target else { unreachable!() };
+        assert_eq!(t.engine.as_deref(), Some("ReplacingMergeTree(created_at) ORDER BY (id)"));
+    }
+
+    #[test]
+    fn rejects_arbitrary_engine_string() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: D
+  database: db
+  table: t
+  mode: overwrite
+  hnsw: false
+  engine: "Memory"
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(err.contains("allowlist") && err.contains("Memory"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_engine_with_drop_table_injection() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: D
+  database: db
+  table: t
+  mode: overwrite
+  hnsw: false
+  engine: "MergeTree(); DROP TABLE other"
+"#;
+        let path = write_yaml(yaml);
+        assert!(
+            load_config(&path).is_err(),
+            "engine with embedded DROP must be rejected"
+        );
     }
 }
