@@ -98,6 +98,110 @@ fn build_client_from_dsn(dsn: &str) -> Result<Client> {
         .with_database(database))
 }
 
+use crate::backends::base::{BackendDialect, ColSpec};
+
+impl BackendDialect for ClickhouseBackend {
+    const NAME: &'static str = "clickhouse";
+    const SUPPORTS_UPSERT: bool = false;
+
+    fn quote_ident(&self, name: &str) -> String {
+        // CH uses backticks. Defense-in-depth: double any embedded backticks even
+        // though the config-load identifier regex disallows them. Mirrors
+        // python/src/chunkshop/backends/clickhouse.py::quote_ident.
+        format!("`{}`", name.replace('`', "``"))
+    }
+
+    fn fq_table(&self, db: &str, table: &str) -> String {
+        format!("{}.{}", self.quote_ident(db), self.quote_ident(table))
+    }
+
+    fn vector_type_ddl(&self, _dim: usize) -> String {
+        // CH stores vectors as Array(Float32). The dim is enforced at index time
+        // by vector_similarity, not at the column-type level.
+        "Array(Float32)".to_string()
+    }
+
+    fn json_type_ddl(&self) -> String {
+        // String + JSONExtractString. CH has an experimental JSON type but the
+        // path ergonomics are equivalent for chunkshop's flat metadata shape.
+        "String".to_string()
+    }
+
+    fn tags_array_type_ddl(&self) -> String {
+        "Array(String)".to_string()
+    }
+
+    fn text_pk_type_ddl(&self) -> String {
+        "String".to_string()
+    }
+
+    fn timestamp_now_default_ddl(&self) -> String {
+        // Used as the type_ddl for created_at; default is encoded separately
+        // when canonical_cols sets `default = Some("now64()")`.
+        "DateTime64(6)".to_string()
+    }
+
+    fn vector_literal(&self, arr: &[f32]) -> String {
+        // CH array literal text form: [v1,v2,v3]. Used only for SELECT-side
+        // injection (e.g. cosineDistance(embedding, [...])); INSERT path uses
+        // the typed Vec<f32> binding via the official driver.
+        let parts: Vec<String> = arr.iter().map(|x| format!("{x:.6}")).collect();
+        format!("[{}]", parts.join(","))
+    }
+
+    fn json_literal(&self, obj: &serde_json::Value) -> String {
+        // metadata column is String; store as JSON-serialized text. Mirrors
+        // python/src/chunkshop/backends/clickhouse.py::json_literal.
+        serde_json::to_string(obj).unwrap_or_else(|_| "null".to_string())
+    }
+
+    fn json_path_sql(&self, col_expr: &str, dotted_path: &str) -> String {
+        // CH's JSONExtractString takes positional path segments rather than
+        // jsonpath syntax. Returns '' for missing paths — chunkshop callers
+        // accept null-ish on missing.
+        let segs: Vec<String> = dotted_path
+            .split('.')
+            .map(|s| format!("'{s}'"))
+            .collect();
+        format!("JSONExtractString({col_expr}, {})", segs.join(", "))
+    }
+
+    fn upsert_clause(&self, _key_cols: &[&str], _update_cols: &[&str]) -> String {
+        // CH has no upsert. Sinks must INSERT-only.
+        String::new()
+    }
+
+    fn create_database_sql(&self, name: &str) -> String {
+        format!("CREATE DATABASE IF NOT EXISTS {}", self.quote_ident(name))
+    }
+
+    fn add_column_if_not_exists_sql(&self, fq: &str, col: &str, type_ddl: &str) -> String {
+        format!(
+            "ALTER TABLE {fq} ADD COLUMN IF NOT EXISTS {} {type_ddl}",
+            self.quote_ident(col)
+        )
+    }
+
+    fn drop_table_sql(&self, fq: &str) -> String {
+        // SYNC blocks until the table is fully dropped. Important for
+        // overwrite mode so the subsequent CREATE doesn't race.
+        format!("DROP TABLE IF EXISTS {fq} SYNC")
+    }
+
+    fn emit_chunks_table_ddl(
+        &self,
+        _fq: &str,
+        _cols: &[ColSpec],
+        _hnsw: bool,
+        _dim: usize,
+        _engine: Option<&str>,
+    ) -> Vec<String> {
+        // Task 5 implements this. Stub returns empty so the parity test for
+        // the non-DDL methods can run.
+        vec![]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

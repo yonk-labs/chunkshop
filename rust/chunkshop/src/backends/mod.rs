@@ -10,6 +10,7 @@ pub mod clickhouse;
 
 pub use base::{Backend, BackendConn, BackendDialect, ColSpec};
 pub use postgres::PostgresBackend;
+pub use clickhouse::ClickhouseBackend;
 
 /// Transport sum type — used by the loader to hand a backend to load_sink,
 /// where it's pattern-matched back to a concrete type. Sinks store concrete
