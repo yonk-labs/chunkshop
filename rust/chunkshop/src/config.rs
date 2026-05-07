@@ -293,6 +293,24 @@ pub struct PgTableSourceConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct MariadbTableSourceConfig {
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    pub id_column: String,
+    pub content_column: String,
+    #[serde(default)]
+    pub title_column: Option<String>,
+    /// Trusted operator-supplied SQL fragment appended after `WHERE`. Same
+    /// contract as PgTableSourceConfig.where_clause — NOT validated.
+    #[serde(default, rename = "where")]
+    pub where_clause: Option<String>,
+    #[serde(default)]
+    pub metadata_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct HttpSourceConfig {
     #[serde(default)]
     pub urls: Vec<String>,
