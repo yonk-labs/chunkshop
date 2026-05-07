@@ -30,6 +30,7 @@ path = "src/main.rs"
 anyhow = "1"
 blake2 = { version = "0.10", default-features = false }
 clap = { version = "4", features = ["derive"] }
+clickhouse = "0.15"
 fastembed = "5"
 glob = "0.3"
 hf-hub = { version = "0.5", default-features = false, features = ["ureq"] }
@@ -60,6 +61,7 @@ lede = { version = "0.3", optional = true }
 # tests.
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 tempfile = "3"
+url = "2"
 
 [features]
 default = []
