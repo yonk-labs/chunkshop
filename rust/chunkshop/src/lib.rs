@@ -15,7 +15,7 @@ pub mod sinks;
 pub mod sources;
 pub mod summarizer;
 
-pub use backends::{AnyBackend, Backend, BackendConn, BackendDialect, ColSpec, PostgresBackend};
+pub use backends::{AnyBackend, Backend, BackendConn, BackendDialect, ClickhouseBackend, ColSpec, PostgresBackend};
 pub use bakeoff::{run_bakeoff, run_bakeoff_with_base, BakeoffConfig, BakeoffResults};
 pub use chunker::{Chunk, SentenceAwareChunker};
 pub use config::{load_config, CellConfig};

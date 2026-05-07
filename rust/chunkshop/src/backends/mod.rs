@@ -1,6 +1,6 @@
 //! Backend module — connection management + dialect helpers per DB engine.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 use crate::config::TargetConfig;
 
@@ -19,16 +19,14 @@ pub use clickhouse::ClickhouseBackend;
 /// boilerplate. R2/R3 add new variants. R4 Task 8 adds Clickhouse.
 pub enum AnyBackend {
     Postgres(PostgresBackend),
+    Clickhouse(ClickhouseBackend),
 }
 
 pub fn load_backend(cfg: &TargetConfig) -> Result<AnyBackend> {
     match cfg {
         TargetConfig::Postgres(t) => Ok(AnyBackend::Postgres(PostgresBackend::new(t.dsn_env.clone()))),
-        // R4 Task 8 will replace this arm with `AnyBackend::Clickhouse(...)`
-        // construction once the variant lands in this enum + ClickhouseSink
-        // is ready in `sinks/mod.rs`.
-        TargetConfig::Clickhouse(_) => Err(anyhow!(
-            "ClickHouse backend wiring not yet complete (R4 Task 8)"
-        )),
+        TargetConfig::Clickhouse(t) => {
+            Ok(AnyBackend::Clickhouse(ClickhouseBackend::new(t.dsn_env.clone())))
+        }
     }
 }
