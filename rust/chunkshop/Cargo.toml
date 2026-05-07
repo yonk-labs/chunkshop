@@ -49,6 +49,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1"
+url = "2"
+urlencoding = "2"
 whatlang = "0.16"
 object_store = { version = "0.11", default-features = false, features = ["aws"] }
 futures = "0.3"
@@ -61,7 +63,6 @@ lede = { version = "0.3", optional = true }
 # tests.
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 tempfile = "3"
-url = "2"
 
 [features]
 default = []

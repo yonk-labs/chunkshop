@@ -6,6 +6,7 @@ use crate::config::TargetConfig;
 
 pub mod base;
 pub mod postgres;
+pub mod clickhouse;
 
 pub use base::{Backend, BackendConn, BackendDialect, ColSpec};
 pub use postgres::PostgresBackend;
