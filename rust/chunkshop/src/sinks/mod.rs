@@ -9,9 +9,11 @@ use crate::chunker::Chunk;
 use crate::config::TargetConfig;
 
 pub mod base;
+pub mod mariadb;
 pub mod pg;
 
 pub use base::Sink;
+pub use mariadb::MariadbSink;
 pub use pg::PgSink;
 
 /// Sum type for runtime polymorphism. Pipeline holds `AnySink` and calls

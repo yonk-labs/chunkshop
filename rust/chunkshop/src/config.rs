@@ -763,6 +763,42 @@ impl PostgresTargetConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct MariadbTargetConfig {
+    #[serde(default = "default_dsn_env")]
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    /// Legacy bool field from 0.3.x — accepted but never preferred. Same shape
+    /// as PostgresTargetConfig.
+    #[serde(default)]
+    pub overwrite: bool,
+    #[serde(default = "default_hnsw")]
+    pub hnsw: bool,
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub source_tag: Option<String>,
+    #[serde(default)]
+    pub promote_metadata: Vec<PromoteColumn>,
+    #[serde(default)]
+    pub force_overwrite: bool,
+    #[serde(default)]
+    pub delete_orphans: bool,
+}
+
+impl MariadbTargetConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.mode == "append" && self.source_tag.is_none() {
+            return Err(anyhow!(
+                "target.mode='append' requires target.source_tag to identify this cell"
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn default_dsn_env() -> String {
     "CHUNKSHOP_DSN".to_string()
 }
