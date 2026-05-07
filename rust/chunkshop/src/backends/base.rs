@@ -10,10 +10,12 @@
 //! - `BackendConn` — I/O surface. AFIT (Rust ≥1.75 stable). No `async-trait` macro,
 //!   no `dyn`. Generic dispatch via `<B: Backend>`.
 //!
-//! R1 caveat (deliberate seam): `BackendConn` methods take a PG-concrete
-//! `&mut sqlx::Transaction<'_, sqlx::Postgres>`. R2 (MariaDB) introduces the GAT
-//! or executor abstraction that makes this truly cross-backend, because the
-//! right shape can only be designed with a second concrete impl in hand.
+//! R1 caveat (now discharged in R2): `BackendConn` originally took a PG-concrete
+//! `&mut sqlx::Transaction<'_, sqlx::Postgres>`. R2 lifts this to a GAT
+//! (`type Db: sqlx::Database`) so each backend names its own sqlx Database.
+//! Sinks hold concrete backends (PgSink → PostgresBackend, MariadbSink →
+//! MariadbBackend), so `<PostgresBackend as BackendConn>::Db = sqlx::Postgres`
+//! resolves at the call site without sinks needing to be generic over `<B>`.
 
 use std::future::Future;
 
@@ -66,30 +68,34 @@ pub trait BackendDialect {
     ) -> Vec<String>;
 }
 
-/// I/O surface. R1 PG-concrete; R2 introduces the GAT/executor abstraction.
+/// I/O surface. R2 lifts this to a GAT (`type Db: sqlx::Database`) so each
+/// backend names its own sqlx Database. PgSink/MariadbSink hold concrete
+/// backends, so `<PostgresBackend as BackendConn>::Db = sqlx::Postgres`
+/// resolves at the call site without sinks needing to be generic over `<B>`.
 pub trait BackendConn {
+    type Db: sqlx::Database;
+
     /// Force-initialize the connection pool. Idempotent — second call is a no-op.
     /// The DSN is sourced from the backend struct's configuration (set when the
-    /// backend is constructed via `PostgresBackend::new(dsn_env)`), not from
-    /// arguments to this method.
+    /// backend is constructed), not from arguments to this method.
     fn connect(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
 
     fn acquire_create_lock(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        tx: &mut sqlx::Transaction<'_, Self::Db>,
         key: &str,
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 
     fn table_exists(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        tx: &mut sqlx::Transaction<'_, Self::Db>,
         db: &str,
         table: &str,
     ) -> impl Future<Output = anyhow::Result<bool>> + Send;
 
     fn embedding_dim(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        tx: &mut sqlx::Transaction<'_, Self::Db>,
         db: &str,
         table: &str,
     ) -> impl Future<Output = anyhow::Result<Option<usize>>> + Send;

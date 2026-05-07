@@ -182,6 +182,8 @@ impl BackendDialect for PostgresBackend {
 }
 
 impl BackendConn for PostgresBackend {
+    type Db = sqlx::Postgres;
+
     fn connect(&self) -> impl Future<Output = Result<()>> + Send {
         async move {
             let _ = self.pool().await?;
