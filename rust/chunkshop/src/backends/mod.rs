@@ -6,9 +6,11 @@ use crate::config::TargetConfig;
 
 pub mod base;
 pub mod postgres;
+pub mod mariadb;
 
 pub use base::{Backend, BackendConn, BackendDialect, ColSpec};
 pub use postgres::PostgresBackend;
+pub use mariadb::MariadbBackend;
 
 /// Transport sum type — used by the loader to hand a backend to load_sink,
 /// where it's pattern-matched back to a concrete type. Sinks store concrete
