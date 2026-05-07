@@ -55,6 +55,60 @@ impl ClickhouseBackend {
         let _ = self.client().await?;
         Ok(())
     }
+
+    /// Check whether a table exists in the given database. Mirrors Python's
+    /// ClickHouseBackend.table_exists. Inherent (not on BackendConn) because
+    /// R1's BackendConn trait is sqlx-Postgres-concrete by deliberate seam.
+    pub async fn table_exists(&self, client: &Client, db: &str, table: &str) -> Result<bool> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct Count {
+            c: u64,
+        }
+        let mut cur = client
+            .query("SELECT count() AS c FROM system.tables WHERE database = ? AND name = ?")
+            .bind(db)
+            .bind(table)
+            .fetch::<Count>()?;
+        let row = cur
+            .next()
+            .await?
+            .ok_or_else(|| anyhow!("system.tables count() returned no rows"))?;
+        Ok(row.c > 0)
+    }
+
+    /// Best-effort embedding-dim introspection. Reads `length(embedding)` from
+    /// the first row. Returns None on empty table or missing column.
+    /// Mirrors Python's `ClickHouseBackend.embedding_dim`.
+    pub async fn embedding_dim(
+        &self,
+        client: &Client,
+        db: &str,
+        table: &str,
+    ) -> Result<Option<usize>> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct DimRow {
+            d: u64,
+        }
+        let fq = self.fq_table(db, table);
+        let q = format!("SELECT length(embedding) AS d FROM {fq} LIMIT 1");
+        let mut cur = match client.query(&q).fetch::<DimRow>() {
+            Ok(c) => c,
+            // Missing-column / type-error path: behave like Python's bare except.
+            Err(_) => return Ok(None),
+        };
+        match cur.next().await {
+            Ok(Some(r)) => Ok(Some(r.d as usize)),
+            Ok(None) => Ok(None),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Acquire a CH-side DDL serialization lock. CH serializes DDL natively
+    /// (single-server) or via Keeper/ZK (replicated) — no app-level lock needed.
+    /// Inherent + no-op for symmetry with Python's `with_create_lock`.
+    pub async fn with_create_lock(&self, _client: &Client, _key: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Parse `clickhouse://user:pass@host:port/database` (also `http://`/`https://`
