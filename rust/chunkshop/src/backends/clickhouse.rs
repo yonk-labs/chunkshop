@@ -190,15 +190,59 @@ impl BackendDialect for ClickhouseBackend {
 
     fn emit_chunks_table_ddl(
         &self,
-        _fq: &str,
-        _cols: &[ColSpec],
-        _hnsw: bool,
+        fq: &str,
+        cols: &[ColSpec],
+        hnsw: bool,
         _dim: usize,
-        _engine: Option<&str>,
+        engine: Option<&str>,
     ) -> Vec<String> {
-        // Task 5 implements this. Stub returns empty so the parity test for
-        // the non-DDL methods can run.
-        vec![]
+        let mut col_lines: Vec<String> = Vec::with_capacity(cols.len());
+        let mut order_by_cols: Vec<&str> = Vec::new();
+        for c in cols {
+            let mut line = format!("  {} {}", self.quote_ident(c.name), c.type_ddl);
+            if let Some(default) = c.default {
+                line.push_str(&format!(" DEFAULT {default}"));
+            }
+            // CH columns are nullable only via Nullable(T); we don't use that
+            // here — non-default columns are required-by-convention. Skip the
+            // NOT NULL emission that the PG impl does.
+            col_lines.push(line);
+            if c.is_primary_key {
+                order_by_cols.push(c.name);
+            }
+        }
+
+        if hnsw {
+            // CH 24.10+ inline vector_similarity index. The 2-arg form was
+            // accepted in 24.10.4 ('hnsw', 'cosineDistance') with GRANULARITY 1.
+            // Mirrors python/src/chunkshop/backends/clickhouse.py — see the
+            // comment there about the 3-arg form being rejected.
+            col_lines.push(
+                "  INDEX vec_idx embedding TYPE vector_similarity('hnsw', 'cosineDistance') GRANULARITY 1"
+                    .to_string(),
+            );
+        }
+
+        let body = col_lines.join(",\n");
+        let engine_clause = match engine {
+            Some(e) => e.to_string(),
+            None => {
+                let order_by = if order_by_cols.is_empty() {
+                    "tuple()".to_string()
+                } else {
+                    order_by_cols
+                        .iter()
+                        .map(|c| self.quote_ident(c))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                format!("MergeTree() ORDER BY ({order_by})")
+            }
+        };
+
+        vec![format!(
+            "CREATE TABLE IF NOT EXISTS {fq} (\n{body}\n) ENGINE = {engine_clause}"
+        )]
     }
 }
 

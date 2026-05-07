@@ -2,7 +2,7 @@
 //! assert their BackendDialect impls produce the byte-for-byte outputs in the
 //! fixture.
 
-use chunkshop::backends::{BackendDialect, ClickhouseBackend};
+use chunkshop::backends::{BackendDialect, ClickhouseBackend, ColSpec};
 use serde_json::Value;
 
 const FIXTURE_PATH: &str = "tests/parity-fixtures/dialect-clickhouse.json";
@@ -122,5 +122,44 @@ fn add_column_if_not_exists_sql_parity() {
             expected,
             "add_column_if_not_exists_sql({fq:?}, {col:?}, {ty:?})"
         );
+    }
+}
+
+#[test]
+fn emit_chunks_table_ddl_parity() {
+    let b = backend();
+    let f = load_fixture();
+    for case in f["emit_chunks_table_ddl"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let inp = &case["in"];
+        let fq = inp["fq"].as_str().unwrap();
+        let cols: Vec<ColSpec> = inp["cols"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| ColSpec {
+                name: Box::leak(c["name"].as_str().unwrap().to_string().into_boxed_str()),
+                type_ddl: c["type_ddl"].as_str().unwrap().to_string(),
+                nullable: false,
+                default: None,
+                is_primary_key: c["is_primary_key"].as_bool().unwrap(),
+            })
+            .collect();
+        let hnsw = inp["hnsw"].as_bool().unwrap();
+        let dim = inp["dim"].as_u64().unwrap() as usize;
+        let engine = inp["engine"].as_str();
+
+        let stmts = b.emit_chunks_table_ddl(fq, &cols, hnsw, dim, engine);
+        assert_eq!(stmts.len(), 1, "{name}: expected single CREATE TABLE stmt");
+        let stmt = &stmts[0];
+
+        for needle in case["out_contains"].as_array().unwrap_or(&vec![]) {
+            let n = needle.as_str().unwrap();
+            assert!(stmt.contains(n), "{name}: expected fragment {n:?} in:\n{stmt}");
+        }
+        for excl in case["out_excludes"].as_array().unwrap_or(&vec![]) {
+            let e = excl.as_str().unwrap();
+            assert!(!stmt.contains(e), "{name}: should NOT contain {e:?}, got:\n{stmt}");
+        }
     }
 }
