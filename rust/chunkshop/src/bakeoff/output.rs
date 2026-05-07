@@ -323,6 +323,22 @@ fn source_to_yaml_value(s: &crate::config::SourceConfig) -> Value {
             }
             Value::Object(m)
         }
+        S::MariadbTable(p) => {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), json!("mariadb_table"));
+            m.insert("dsn_env".into(), json!(p.dsn_env));
+            m.insert("database".into(), json!(p.database_name));
+            m.insert("table".into(), json!(p.table));
+            m.insert("id_column".into(), json!(p.id_column));
+            m.insert("content_column".into(), json!(p.content_column));
+            if let Some(t) = &p.title_column {
+                m.insert("title_column".into(), json!(t));
+            }
+            if let Some(w) = &p.where_clause {
+                m.insert("where".into(), json!(w));
+            }
+            Value::Object(m)
+        }
         S::Http(h) => {
             let mut m = serde_json::Map::new();
             m.insert("type".into(), json!("http"));

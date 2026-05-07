@@ -236,6 +236,7 @@ pub enum SourceConfig {
     Files(FilesSourceConfig),
     JsonCorpus(JsonCorpusSourceConfig),
     PgTable(PgTableSourceConfig),
+    MariadbTable(MariadbTableSourceConfig),
     Http(HttpSourceConfig),
     S3(S3SourceConfig),
     /// Library/embedded mode — no automatic iteration. The host application
@@ -721,7 +722,8 @@ impl FastembedEmbedderConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TargetConfig {
     Postgres(PostgresTargetConfig),
-    // R2/R3/R4 add: Mariadb, Sqlite, Clickhouse
+    Mariadb(MariadbTargetConfig),
+    // R3/R4 add: Sqlite, Clickhouse
 }
 
 impl TargetConfig {
@@ -730,6 +732,7 @@ impl TargetConfig {
     fn validate(&self) -> Result<()> {
         match self {
             TargetConfig::Postgres(t) => t.validate(),
+            TargetConfig::Mariadb(t) => t.validate(),
         }
     }
 }
@@ -905,6 +908,13 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
                 validate_ident(tag, "target.source_tag")?;
             }
         }
+        TargetConfig::Mariadb(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
     }
     if let SourceConfig::PgTable(p) = &cfg.source {
         validate_ident(&p.schema_name, "source.schema")?;
@@ -915,6 +925,16 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
             validate_ident(tc, "source.title_column")?;
         }
         // `where_clause` is intentionally NOT validated — see PgTableSourceConfig docstring.
+    }
+    if let SourceConfig::MariadbTable(p) = &cfg.source {
+        validate_ident(&p.database_name, "source.database")?;
+        validate_ident(&p.table, "source.table")?;
+        validate_ident(&p.id_column, "source.id_column")?;
+        validate_ident(&p.content_column, "source.content_column")?;
+        if let Some(tc) = &p.title_column {
+            validate_ident(tc, "source.title_column")?;
+        }
+        // `where_clause` intentionally NOT validated — same contract as PgTableSourceConfig.
     }
     cfg.target.validate()?;
     validate_chunker_config(&cfg.chunker)?;
@@ -1076,7 +1096,9 @@ target:
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("load");
-        let TargetConfig::Postgres(t) = &cfg.target;
+        let TargetConfig::Postgres(t) = &cfg.target else {
+            panic!("expected Postgres target");
+        };
         assert_eq!(t.promote_metadata.len(), 2);
         assert_eq!(t.promote_metadata[0].path, "heading");
         assert_eq!(t.promote_metadata[0].type_, "text");

@@ -20,13 +20,13 @@ pub use mariadb_table::MariadbTableSource;
 pub use pg_table::PgTableSource;
 pub use s3::S3Source;
 
-/// Sum type for runtime polymorphism. R1 covers the 5 sources currently in the
-/// crate. R2/R3/R4 add MariadbTable, SqliteTable. ClickhouseTable is deferred
-/// to v4.1 (not first-ship; matches the predecessor spec).
+/// Sum type for runtime polymorphism. R2 adds MariadbTable. R3/R4 add
+/// SqliteTable. ClickhouseTable is deferred to v4.1.
 pub enum AnySource {
     Files(FilesSource),
     JsonCorpus(JsonCorpusSource),
     PgTable(PgTableSource),
+    MariadbTable(MariadbTableSource),
     Http(HttpSource),
     S3(S3Source),
 }
@@ -37,6 +37,7 @@ impl AnySource {
             AnySource::Files(s) => s.iter_documents(),
             AnySource::JsonCorpus(s) => s.iter_documents(),
             AnySource::PgTable(s) => s.iter_documents().await,
+            AnySource::MariadbTable(s) => s.iter_documents().await,
             AnySource::Http(s) => s.iter_documents().await,
             AnySource::S3(s) => s.iter_documents().await,
         }
@@ -48,6 +49,7 @@ pub fn load_source(cfg: &SourceConfig) -> Result<AnySource> {
         SourceConfig::Files(c) => Ok(AnySource::Files(FilesSource::new(c.clone()))),
         SourceConfig::JsonCorpus(c) => Ok(AnySource::JsonCorpus(JsonCorpusSource::new(c.clone()))),
         SourceConfig::PgTable(c) => Ok(AnySource::PgTable(PgTableSource::new(c.clone()))),
+        SourceConfig::MariadbTable(c) => Ok(AnySource::MariadbTable(MariadbTableSource::new(c.clone()))),
         SourceConfig::Http(c) => Ok(AnySource::Http(HttpSource::new(c.clone()))),
         SourceConfig::S3(c) => Ok(AnySource::S3(S3Source::new(c.clone()))),
         SourceConfig::Inline(_) => Err(anyhow!(

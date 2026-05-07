@@ -147,15 +147,15 @@ impl Pipeline {
     }
 
     /// Used by the demo — return one row's text preview for stdout. PG-only
-    /// (uses raw SQL via the underlying pool); other backends will need their
-    /// own paths once R2/R3/R4 add variants.
+    /// (uses raw SQL via the underlying pool). MariaDB / SQLite / etc. return
+    /// `Ok(None)` until they add their own sample paths; the demo is a
+    /// PG-flavored convenience, not a Sink trait method.
     pub async fn sample_row(&self, doc_id: &str) -> Result<Option<(i32, String)>> {
-        // Both let-bindings are irrefutable in R1 (single-variant enums). R2
-        // introduces additional AnySink + TargetConfig variants — these
-        // become refutable then and the compiler tells us where to add
-        // match arms. Compile-fail is the right signal vs runtime panic.
-        let AnySink::Pg(pg_sink) = &self.sink;
-        let TargetConfig::Postgres(target) = &self.cfg.target;
+        let (AnySink::Pg(pg_sink), TargetConfig::Postgres(target)) =
+            (&self.sink, &self.cfg.target)
+        else {
+            return Ok(None);
+        };
         let fq = format!("\"{}\".\"{}\"", target.database_name, target.table);
         let stmt = format!(
             "SELECT seq_num, left(original_content, 80) FROM {tbl} \

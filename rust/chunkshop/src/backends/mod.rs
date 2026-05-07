@@ -19,10 +19,12 @@ pub use mariadb::MariadbBackend;
 /// boilerplate. R2/R3/R4 add new variants.
 pub enum AnyBackend {
     Postgres(PostgresBackend),
+    Mariadb(MariadbBackend),
 }
 
 pub fn load_backend(cfg: &TargetConfig) -> Result<AnyBackend> {
     match cfg {
         TargetConfig::Postgres(t) => Ok(AnyBackend::Postgres(PostgresBackend::new(t.dsn_env.clone()))),
+        TargetConfig::Mariadb(t) => Ok(AnyBackend::Mariadb(MariadbBackend::new(t.dsn_env.clone()))),
     }
 }

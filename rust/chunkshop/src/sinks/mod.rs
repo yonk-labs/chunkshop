@@ -20,6 +20,7 @@ pub use pg::PgSink;
 /// trait methods through the match-delegate impl below.
 pub enum AnySink {
     Pg(PgSink),
+    Mariadb(MariadbSink),
 }
 
 impl Sink for AnySink {
@@ -27,6 +28,7 @@ impl Sink for AnySink {
         async move {
             match self {
                 AnySink::Pg(s) => s.create_table().await,
+                AnySink::Mariadb(s) => s.create_table().await,
             }
         }
     }
@@ -41,6 +43,7 @@ impl Sink for AnySink {
         async move {
             match self {
                 AnySink::Pg(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
+                AnySink::Mariadb(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
             }
         }
     }
@@ -49,6 +52,7 @@ impl Sink for AnySink {
         async move {
             match self {
                 AnySink::Pg(s) => s.delete_document(doc_id).await,
+                AnySink::Mariadb(s) => s.delete_document(doc_id).await,
             }
         }
     }
@@ -57,6 +61,7 @@ impl Sink for AnySink {
         async move {
             match self {
                 AnySink::Pg(s) => s.count_docs().await,
+                AnySink::Mariadb(s) => s.count_docs().await,
             }
         }
     }
@@ -69,6 +74,7 @@ impl Sink for AnySink {
         async move {
             match self {
                 AnySink::Pg(s) => s.query_top_k(query_vec, k).await,
+                AnySink::Mariadb(s) => s.query_top_k(query_vec, k).await,
             }
         }
     }
@@ -79,9 +85,11 @@ pub fn load_sink(cfg: &TargetConfig, backend: AnyBackend, dim: usize) -> Result<
         (TargetConfig::Postgres(t), AnyBackend::Postgres(b)) => {
             Ok(AnySink::Pg(PgSink::new(t.clone(), b, dim)))
         }
-        // R2/R3/R4 add matched (Variant, Variant) arms. Cross-variant mismatches
-        // are programming errors (load_backend + load_sink are always called
-        // paired with the same TargetConfig).
+        (TargetConfig::Mariadb(t), AnyBackend::Mariadb(b)) => {
+            Ok(AnySink::Mariadb(MariadbSink::new(t.clone(), b, dim)))
+        }
+        // Cross-variant mismatches are programming errors (load_backend +
+        // load_sink are always called paired with the same TargetConfig).
         #[allow(unreachable_patterns)]
         _ => Err(anyhow!("backend / target type mismatch — programming error in load_sink dispatch")),
     }
