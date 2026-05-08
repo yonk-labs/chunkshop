@@ -4,8 +4,7 @@
 //! INSERT-only (no `ON CONFLICT`); `delete_orphans: true` warns once per process
 //! and no-ops. Bulk INSERT via the official `clickhouse` crate's `Insert<T>`.
 
-#![allow(dead_code, unused_imports)]
-
+use std::future::Future;
 use std::sync::OnceLock;
 
 use anyhow::{anyhow, Context, Result};
@@ -16,7 +15,8 @@ use tracing::warn;
 use crate::backends::base::{BackendDialect, ColSpec};
 use crate::backends::clickhouse::ClickhouseBackend;
 use crate::chunker::Chunk;
-use crate::config::{ClickhouseTargetConfig, PromoteColumn};
+use crate::config::ClickhouseTargetConfig;
+use crate::sinks::base::Sink;
 
 /// One-time-per-process warn flag for `delete_orphans: true`. CH mutations are
 /// async and don't fit chunkshop's per-document atomic write contract, so the
@@ -459,4 +459,36 @@ pub(crate) struct ChunkRow {
     pub metadata: String,
     pub embedding: Vec<f32>,
     pub source: String,
+}
+
+impl Sink for ClickhouseSink {
+    fn create_table(&self) -> impl Future<Output = Result<()>> + Send {
+        async move { self.create_table_impl().await }
+    }
+
+    fn write_document(
+        &self,
+        doc_id: &str,
+        chunks: &[Chunk],
+        embeddings: &[Vec<f32>],
+        tags_per_chunk: &[Vec<String>],
+    ) -> impl Future<Output = Result<()>> + Send {
+        async move { self.write_document_impl(doc_id, chunks, embeddings, tags_per_chunk).await }
+    }
+
+    fn delete_document(&self, doc_id: &str) -> impl Future<Output = Result<i64>> + Send {
+        async move { self.delete_document_impl(doc_id).await }
+    }
+
+    fn count_docs(&self) -> impl Future<Output = Result<i64>> + Send {
+        async move { self.count_docs_impl().await }
+    }
+
+    fn query_top_k(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+    ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
+        async move { self.query_top_k_impl(query_vec, k).await }
+    }
 }

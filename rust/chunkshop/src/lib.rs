@@ -22,5 +22,5 @@ pub use config::{load_config, CellConfig};
 pub use embedder::FastembedEmbedder;
 pub use pipeline::Pipeline;
 pub use runner::{run_cell, CellResult};
-pub use sinks::{AnySink, PgSink, Sink};
+pub use sinks::{AnySink, ClickhouseSink, PgSink, Sink};
 pub use sources::{AnySource, Document, FilesSource, HttpSource, JsonCorpusSource, PgTableSource, S3Source};

@@ -150,12 +150,15 @@ impl Pipeline {
     /// (uses raw SQL via the underlying pool); other backends will need their
     /// own paths once R2/R3/R4 add variants.
     pub async fn sample_row(&self, doc_id: &str) -> Result<Option<(i32, String)>> {
-        // R1 left both let-bindings irrefutable (single-variant enums); R4
-        // adds `TargetConfig::Clickhouse`, so the target binding is now
-        // refutable. `AnySink` is still single-variant in this task, so its
-        // binding stays irrefutable until R4 Task 9 adds `AnySink::Ch`.
-        // Compile-fail at that point is the right signal vs runtime panic.
-        let AnySink::Pg(pg_sink) = &self.sink;
+        // R4 Task 13 added `AnySink::Clickhouse`, making this binding refutable.
+        // Mirror the TargetConfig pattern below: PG-only path, error out for
+        // anything else. The compile-fail when adding new variants is the right
+        // signal vs runtime panic.
+        let AnySink::Pg(pg_sink) = &self.sink else {
+            return Err(anyhow!(
+                "sample_row is PG-only; called against a non-Postgres sink"
+            ));
+        };
         let TargetConfig::Postgres(target) = &self.cfg.target else {
             return Err(anyhow!(
                 "sample_row is PG-only; called against a non-Postgres target"
