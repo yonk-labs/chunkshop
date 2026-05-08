@@ -51,6 +51,138 @@ impl ClickhouseSink {
     }
 }
 
+impl ClickhouseSink {
+    async fn ensure_promote_columns(&self, client: &Client) -> Result<()> {
+        for pc in &self.cfg.promote_metadata {
+            let ch_type = pg_type_to_ch(&pc.type_);
+            let stmt = self.backend.add_column_if_not_exists_sql(
+                &self.fq(),
+                &pc.column_name(),
+                &ch_type,
+            );
+            client.query(&stmt).execute().await.context("ADD COLUMN promote_metadata")?;
+        }
+        Ok(())
+    }
+
+    async fn create_base_ddl(&self, client: &Client) -> Result<()> {
+        let cols = canonical_cols(self.embed_dim);
+        let engine = self.cfg.engine.as_deref();
+        for stmt in self.backend.emit_chunks_table_ddl(
+            &self.fq(),
+            &cols,
+            self.cfg.hnsw,
+            self.embed_dim,
+            engine,
+        ) {
+            client.query(&stmt).execute().await.context("emit_chunks_table_ddl statement")?;
+        }
+        self.ensure_promote_columns(client).await
+    }
+
+    async fn overwrite_create(&self, client: &Client) -> Result<()> {
+        let exists = self.backend.table_exists(client, &self.cfg.database_name, &self.cfg.table).await?;
+        if exists && !self.cfg.force_overwrite {
+            // Foreign-tag safety: refuse to drop a table holding rows from a
+            // different source_tag.
+            #[derive(Row, serde::Deserialize)]
+            struct SourceRow {
+                source: String,
+            }
+            let q = format!(
+                "SELECT DISTINCT source FROM {} WHERE source != '' LIMIT 10",
+                self.fq()
+            );
+            let mut cur = client.query(&q).fetch::<SourceRow>()?;
+            let mut existing = std::collections::BTreeSet::new();
+            while let Some(r) = cur.next().await? {
+                existing.insert(r.source);
+            }
+            let my_tag = self.cfg.source_tag.clone();
+            let foreign: Vec<&String> = existing
+                .iter()
+                .filter(|t| my_tag.as_deref() != Some(t.as_str()))
+                .collect();
+            if !foreign.is_empty() {
+                return Err(anyhow!(
+                    "overwrite refuses to drop {db}.{tbl}: foreign source_tag values {foreign:?}. \
+                     Set target.force_overwrite: true to bypass.",
+                    db = self.cfg.database_name,
+                    tbl = self.cfg.table,
+                    foreign = foreign
+                ));
+            }
+        }
+        if exists {
+            client
+                .query(&self.backend.drop_table_sql(&self.fq()))
+                .execute()
+                .await
+                .context("DROP TABLE")?;
+        }
+        self.create_base_ddl(client).await
+    }
+
+    async fn create_if_missing(&self, client: &Client) -> Result<()> {
+        if !self.backend.table_exists(client, &self.cfg.database_name, &self.cfg.table).await? {
+            return self.create_base_ddl(client).await;
+        }
+        let stmt = self.backend.add_column_if_not_exists_sql(&self.fq(), "source", "String");
+        client.query(&stmt).execute().await.context("ADD COLUMN source")?;
+        self.ensure_promote_columns(client).await
+    }
+
+    async fn append_preflight(&self, client: &Client) -> Result<()> {
+        if !self.backend.table_exists(client, &self.cfg.database_name, &self.cfg.table).await? {
+            return Err(anyhow!(
+                "append mode: table {}.{} does not exist. Use mode='create_if_missing' on the first cell.",
+                self.cfg.database_name,
+                self.cfg.table
+            ));
+        }
+        let current_dim = self
+            .backend
+            .embedding_dim(client, &self.cfg.database_name, &self.cfg.table)
+            .await?;
+        match current_dim {
+            None => {
+                warn!(
+                    "append mode on empty CH table — cannot verify embedding dim matches. \
+                     Continuing on faith; subsequent reads with mismatched dim will produce \
+                     garbage cosine distances."
+                );
+            }
+            Some(d) if d != self.embed_dim => {
+                return Err(anyhow!(
+                    "append mode: target embedding dim is {d}, cell's embedder dim is {own}. \
+                     Vectors are not comparable.",
+                    own = self.embed_dim
+                ));
+            }
+            _ => {}
+        }
+        let stmt = self.backend.add_column_if_not_exists_sql(&self.fq(), "source", "String");
+        client.query(&stmt).execute().await.context("ADD COLUMN source")?;
+        self.ensure_promote_columns(client).await
+    }
+
+    pub async fn create_table_impl(&self) -> Result<()> {
+        let client = self.backend.client().await?;
+        self.backend.with_create_lock(&client, &self.cfg.database_name).await?;
+        client
+            .query(&self.backend.create_database_sql(&self.cfg.database_name))
+            .execute()
+            .await
+            .context("CREATE DATABASE")?;
+        match self.cfg.mode.as_str() {
+            "overwrite" => self.overwrite_create(&client).await,
+            "create_if_missing" => self.create_if_missing(&client).await,
+            "append" => self.append_preflight(&client).await,
+            other => Err(anyhow!("unknown target.mode: {other:?}")),
+        }
+    }
+}
+
 /// Canonical chunkshop columns, CH-typed. Mirrors
 /// python/src/chunkshop/sinks/clickhouse.py::_canonical_cols.
 fn canonical_cols(_dim: usize) -> Vec<ColSpec> {

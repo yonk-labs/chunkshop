@@ -14,6 +14,7 @@ pub mod clickhouse;
 
 pub use base::Sink;
 pub use pg::PgSink;
+pub use clickhouse::ClickhouseSink;
 
 /// Sum type for runtime polymorphism. Pipeline holds `AnySink` and calls
 /// trait methods through the match-delegate impl below.
