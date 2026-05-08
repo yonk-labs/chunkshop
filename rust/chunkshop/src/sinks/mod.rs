@@ -10,6 +10,7 @@ use crate::config::TargetConfig;
 
 pub mod base;
 pub mod pg;
+pub mod clickhouse;
 
 pub use base::Sink;
 pub use pg::PgSink;
