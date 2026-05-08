@@ -342,6 +342,25 @@ fn source_to_yaml_value(s: &crate::config::SourceConfig) -> Value {
             }
             Value::Object(m)
         }
+        S::ClickhouseTable(c) => {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), json!("clickhouse_table"));
+            m.insert("dsn_env".into(), json!(c.dsn_env));
+            m.insert("database".into(), json!(c.database_name));
+            m.insert("table".into(), json!(c.table));
+            m.insert("id_column".into(), json!(c.id_column));
+            m.insert("content_column".into(), json!(c.content_column));
+            if let Some(t) = &c.title_column {
+                m.insert("title_column".into(), json!(t));
+            }
+            if let Some(w) = &c.where_clause {
+                m.insert("where".into(), json!(w));
+            }
+            if !c.metadata_columns.is_empty() {
+                m.insert("metadata_columns".into(), json!(c.metadata_columns));
+            }
+            Value::Object(m)
+        }
         S::Inline(_) => json!({ "type": "inline" }),
     }
 }

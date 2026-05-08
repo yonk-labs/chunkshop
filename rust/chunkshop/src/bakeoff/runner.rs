@@ -101,6 +101,7 @@ fn corpus_label(cfg: &BakeoffConfig) -> String {
         SourceConfig::PgTable(p) => format!("pg:{}.{}", p.schema_name, p.table),
         SourceConfig::Http(_) => "http".to_string(),
         SourceConfig::S3(s) => format!("s3://{}/{}", s.bucket, s.prefix),
+        SourceConfig::ClickhouseTable(c) => format!("ch:{}.{}", c.database_name, c.table),
         SourceConfig::Inline(_) => "inline".to_string(),
     }
 }

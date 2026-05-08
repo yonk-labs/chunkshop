@@ -250,6 +250,7 @@ pub enum SourceConfig {
     PgTable(PgTableSourceConfig),
     Http(HttpSourceConfig),
     S3(S3SourceConfig),
+    ClickhouseTable(ClickhouseTableSourceConfig),
     /// Library/embedded mode — no automatic iteration. The host application
     /// drives ingestion via `chunkshop::Pipeline::from_yaml(...)` and calls
     /// `pipeline.ingest_text(doc_id, text, metadata)` per document.
@@ -300,6 +301,25 @@ pub struct PgTableSourceConfig {
     /// Extra columns to pull alongside id/content/title and put into each
     /// Document's metadata. Pair with `target.promote_metadata` to surface
     /// specific keys as typed columns in the target table.
+    #[serde(default)]
+    pub metadata_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickhouseTableSourceConfig {
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    pub id_column: String,
+    pub content_column: String,
+    #[serde(default)]
+    pub title_column: Option<String>,
+    /// Trusted operator-supplied SQL fragment appended after `WHERE`. Mirrors
+    /// Python's `clickhouse_table.py` which interpolates this verbatim. NOT
+    /// validated; don't expose this field to untrusted YAML authors.
+    #[serde(default, rename = "where")]
+    pub where_clause: Option<String>,
     #[serde(default)]
     pub metadata_columns: Vec<String>,
 }
@@ -935,6 +955,19 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
             validate_ident(tc, "source.title_column")?;
         }
         // `where_clause` is intentionally NOT validated — see PgTableSourceConfig docstring.
+    }
+    if let SourceConfig::ClickhouseTable(p) = &cfg.source {
+        validate_ident(&p.database_name, "source.database")?;
+        validate_ident(&p.table, "source.table")?;
+        validate_ident(&p.id_column, "source.id_column")?;
+        validate_ident(&p.content_column, "source.content_column")?;
+        if let Some(tc) = &p.title_column {
+            validate_ident(tc, "source.title_column")?;
+        }
+        for mc in &p.metadata_columns {
+            validate_ident(mc, "source.metadata_columns")?;
+        }
+        // `where_clause` is intentionally NOT validated — see ClickhouseTableSourceConfig docstring.
     }
     cfg.target.validate()?;
     validate_chunker_config(&cfg.chunker)?;
