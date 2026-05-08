@@ -237,6 +237,7 @@ pub enum SourceConfig {
     JsonCorpus(JsonCorpusSourceConfig),
     PgTable(PgTableSourceConfig),
     MariadbTable(MariadbTableSourceConfig),
+    SqliteTable(SqliteTableSourceConfig),
     Http(HttpSourceConfig),
     S3(S3SourceConfig),
     /// Library/embedded mode — no automatic iteration. The host application
@@ -295,6 +296,27 @@ pub struct PgTableSourceConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MariadbTableSourceConfig {
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    pub id_column: String,
+    pub content_column: String,
+    #[serde(default)]
+    pub title_column: Option<String>,
+    /// Trusted operator-supplied SQL fragment appended after `WHERE`. Same
+    /// contract as PgTableSourceConfig.where_clause — NOT validated.
+    #[serde(default, rename = "where")]
+    pub where_clause: Option<String>,
+    #[serde(default)]
+    pub metadata_columns: Vec<String>,
+}
+
+/// SQLite source. Mirrors `python/src/chunkshop/sources/sqlite_table.py`.
+/// `database` is validated as a non-empty ident at config-load (loose parity
+/// with Postgres) but ignored at runtime — SQLite has no schema namespace.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SqliteTableSourceConfig {
     pub dsn_env: String,
     #[serde(rename = "database")]
     pub database_name: String,
@@ -723,7 +745,8 @@ impl FastembedEmbedderConfig {
 pub enum TargetConfig {
     Postgres(PostgresTargetConfig),
     Mariadb(MariadbTargetConfig),
-    // R3/R4 add: Sqlite, Clickhouse
+    Sqlite(SqliteTargetConfig),
+    // R4 adds: Clickhouse
 }
 
 impl TargetConfig {
@@ -733,6 +756,7 @@ impl TargetConfig {
         match self {
             TargetConfig::Postgres(t) => t.validate(),
             TargetConfig::Mariadb(t) => t.validate(),
+            TargetConfig::Sqlite(t) => t.validate(),
         }
     }
 }
@@ -810,6 +834,48 @@ pub struct MariadbTargetConfig {
 }
 
 impl MariadbTargetConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.mode == "append" && self.source_tag.is_none() {
+            return Err(anyhow!(
+                "target.mode='append' requires target.source_tag to identify this cell"
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// SQLite target. Mirrors Python's `chunkshop.config.SqliteTarget`.
+/// `database` is validated as a non-empty ident at config-load (loose parity
+/// with Postgres) but ignored at runtime — SQLite has no schema namespace.
+/// `target.hnsw=true` is a no-op on SQLite (sqlite-vec is brute-force KNN);
+/// the sink emits a one-time process-level warning when set.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SqliteTargetConfig {
+    /// Env var holding the path to the SQLite file (or `:memory:`).
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    /// Legacy bool from 0.3.x — accepted but never preferred. New configs use `mode`.
+    #[serde(default)]
+    pub overwrite: bool,
+    #[serde(default = "default_hnsw")]
+    pub hnsw: bool,
+    /// `overwrite` (default), `append`, or `create_if_missing`.
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub source_tag: Option<String>,
+    #[serde(default)]
+    pub promote_metadata: Vec<PromoteColumn>,
+    #[serde(default)]
+    pub force_overwrite: bool,
+    /// Mirror PostgresTargetConfig.delete_orphans. Same per-doc-shrink semantics.
+    #[serde(default)]
+    pub delete_orphans: bool,
+}
+
+impl SqliteTargetConfig {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.mode == "append" && self.source_tag.is_none() {
             return Err(anyhow!(
@@ -915,6 +981,13 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
                 validate_ident(tag, "target.source_tag")?;
             }
         }
+        TargetConfig::Sqlite(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
     }
     if let SourceConfig::PgTable(p) = &cfg.source {
         validate_ident(&p.schema_name, "source.schema")?;
@@ -932,6 +1005,16 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
         validate_ident(&p.id_column, "source.id_column")?;
         validate_ident(&p.content_column, "source.content_column")?;
         if let Some(tc) = &p.title_column {
+            validate_ident(tc, "source.title_column")?;
+        }
+        // `where_clause` intentionally NOT validated — same contract as PgTableSourceConfig.
+    }
+    if let SourceConfig::SqliteTable(s) = &cfg.source {
+        validate_ident(&s.database_name, "source.database")?;
+        validate_ident(&s.table, "source.table")?;
+        validate_ident(&s.id_column, "source.id_column")?;
+        validate_ident(&s.content_column, "source.content_column")?;
+        if let Some(tc) = &s.title_column {
             validate_ident(tc, "source.title_column")?;
         }
         // `where_clause` intentionally NOT validated — same contract as PgTableSourceConfig.
@@ -1270,5 +1353,68 @@ target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hn
 "#;
         let path = write_yaml(yaml);
         load_config(&path).expect("should accept section_aware over hierarchy base");
+    }
+
+    #[test]
+    fn parses_sqlite_target_config() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        match &cfg.target {
+            TargetConfig::Sqlite(t) => {
+                assert_eq!(t.dsn_env, "SQLITE_PATH");
+                assert_eq!(t.database_name, "ignored");
+                assert_eq!(t.table, "chunks");
+                assert_eq!(t.mode, "overwrite");
+            }
+            _ => panic!("expected Sqlite target"),
+        }
+    }
+
+    #[test]
+    fn rejects_sqlite_append_without_source_tag() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, mode: append, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(err.contains("source_tag"), "expected source_tag mention, got: {err}");
+    }
+
+    #[test]
+    fn parses_sqlite_table_source_config() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: sqlite_table
+  dsn_env: SQLITE_PATH
+  database: ignored
+  table: docs
+  id_column: id
+  content_column: body
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        match &cfg.source {
+            SourceConfig::SqliteTable(s) => {
+                assert_eq!(s.dsn_env, "SQLITE_PATH");
+                assert_eq!(s.table, "docs");
+                assert_eq!(s.id_column, "id");
+            }
+            _ => panic!("expected SqliteTable source"),
+        }
     }
 }
