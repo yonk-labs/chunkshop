@@ -159,6 +159,73 @@ impl SqliteSink {
         conn.execute_batch(&self.backend.create_database_sql(&self.cfg.database_name))?;
         Ok(())
     }
+
+    fn create_if_missing(&self, conn: &rusqlite::Connection) -> Result<()> {
+        if !self.table_exists_sync(conn, &self.cfg.table) {
+            return self.create_base_ddl(conn);
+        }
+        // Idempotent ADD COLUMN source — catch duplicate-column.
+        match conn.execute_batch(&self.backend.add_column_if_not_exists_sql(
+            &self.fq_main(), "source", "TEXT")) {
+            Ok(()) => {}
+            Err(e) => {
+                let m = e.to_string().to_lowercase();
+                if !m.contains("duplicate column") {
+                    return Err(anyhow!("ADD COLUMN source: {e}"));
+                }
+            }
+        }
+        self.ensure_promote_columns(conn)
+    }
+
+    fn append_preflight(&self, conn: &rusqlite::Connection) -> Result<()> {
+        if !self.table_exists_sync(conn, &self.cfg.table) {
+            return Err(anyhow!(
+                "append mode: table {} does not exist. Use mode='create_if_missing' on the first cell.",
+                self.cfg.table
+            ));
+        }
+        let current_dim = self.read_embedding_dim_sync(conn)?;
+        let Some(d) = current_dim else {
+            return Err(anyhow!(
+                "append mode: {} has no vec0 partner table — not a chunkshop table.",
+                self.cfg.table
+            ));
+        };
+        if d != self.embed_dim {
+            return Err(anyhow!(
+                "append mode: target dim {d} != cell embed_dim {}", self.embed_dim
+            ));
+        }
+        // Ensure source column + promote columns.
+        match conn.execute_batch(&self.backend.add_column_if_not_exists_sql(
+            &self.fq_main(), "source", "TEXT")) {
+            Ok(()) => {}
+            Err(e) => {
+                let m = e.to_string().to_lowercase();
+                if !m.contains("duplicate column") {
+                    return Err(anyhow!("ADD COLUMN source: {e}"));
+                }
+            }
+        }
+        self.ensure_promote_columns(conn)
+    }
+
+    fn read_embedding_dim_sync(&self, conn: &rusqlite::Connection) -> Result<Option<usize>> {
+        let vec_table = format!("{}_vec", self.cfg.table);
+        let sql: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                rusqlite::params![vec_table],
+                |row| row.get(0),
+            )
+            .ok();
+        let Some(sql) = sql else { return Ok(None) };
+        let re = regex::Regex::new(r"(?i)FLOAT\[(\d+)\]").unwrap();
+        Ok(re.captures(&sql)
+            .and_then(|c| c.get(1))
+            .and_then(|m| m.as_str().parse().ok()))
+    }
 }
 
 impl Sink for SqliteSink {
@@ -171,8 +238,8 @@ impl Sink for SqliteSink {
                 this.create_database_noop(&g)?;
                 match this.cfg.mode.as_str() {
                     "overwrite" => this.overwrite_create(&g)?,
-                    "create_if_missing" => return Err(anyhow!("create_if_missing not yet implemented")),
-                    "append" => return Err(anyhow!("append not yet implemented")),
+                    "create_if_missing" => this.create_if_missing(&g)?,
+                    "append" => this.append_preflight(&g)?,
                     other => return Err(anyhow!("unknown target.mode: {other:?}")),
                 }
                 Ok(())

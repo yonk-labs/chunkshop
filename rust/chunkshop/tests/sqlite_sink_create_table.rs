@@ -55,3 +55,28 @@ async fn overwrite_drops_existing_table_and_recreates() {
     let b3 = SQLiteBackend::new(env);
     assert_both_tables_exist(&b3).await;
 }
+
+#[tokio::test]
+async fn create_if_missing_creates_when_absent() {
+    let dir = tempdir().unwrap();
+    let env = format!("R3_CIM_{}", std::process::id());
+    std::env::set_var(&env, dir.path().join("c.db").to_str().unwrap());
+    let b = SQLiteBackend::new(env.clone());
+    let sink = SqliteSink::new(cfg(&env, "create_if_missing"), b, 4);
+    sink.create_table().await.expect("create");
+    let b2 = SQLiteBackend::new(env);
+    assert_both_tables_exist(&b2).await;
+}
+
+#[tokio::test]
+async fn create_if_missing_is_idempotent() {
+    let dir = tempdir().unwrap();
+    let env = format!("R3_CIM2_{}", std::process::id());
+    std::env::set_var(&env, dir.path().join("c.db").to_str().unwrap());
+    let b = SQLiteBackend::new(env.clone());
+    let sink = SqliteSink::new(cfg(&env, "create_if_missing"), b, 4);
+    sink.create_table().await.expect("first");
+    let b2 = SQLiteBackend::new(env.clone());
+    let sink2 = SqliteSink::new(cfg(&env, "create_if_missing"), b2, 4);
+    sink2.create_table().await.expect("second");
+}
