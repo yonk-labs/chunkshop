@@ -17,6 +17,7 @@ pub mod summarizer;
 
 pub use backends::{
     AnyBackend, Backend, BackendConn, BackendDialect, ColSpec, MariadbBackend, PostgresBackend,
+    SQLiteBackend,
 };
 pub use bakeoff::{run_bakeoff, run_bakeoff_with_base, BakeoffConfig, BakeoffResults};
 pub use chunker::{Chunk, SentenceAwareChunker};
@@ -24,8 +25,8 @@ pub use config::{load_config, CellConfig};
 pub use embedder::FastembedEmbedder;
 pub use pipeline::Pipeline;
 pub use runner::{run_cell, CellResult};
-pub use sinks::{AnySink, MariadbSink, PgSink, Sink};
+pub use sinks::{AnySink, MariadbSink, PgSink, Sink, SqliteSink};
 pub use sources::{
     AnySource, Document, FilesSource, HttpSource, JsonCorpusSource, MariadbTableSource,
-    PgTableSource, S3Source,
+    PgTableSource, S3Source, SqliteTableSource,
 };
