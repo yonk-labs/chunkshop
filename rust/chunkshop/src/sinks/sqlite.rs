@@ -432,8 +432,30 @@ impl Sink for SqliteSink {
         }
     }
     fn query_top_k(
-        &self, _query_vec: &[f32], _k: usize,
+        &self, query_vec: &[f32], k: usize,
     ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
-        async move { Err(anyhow!("query_top_k not yet implemented")) }
+        let this = self.clone();
+        let q_owned = query_vec.to_vec();
+        async move {
+            let conn = this.backend.connect().await?;
+            tokio::task::spawn_blocking(move || -> Result<Vec<(String, i32, f64)>> {
+                let g = conn.blocking_lock();
+                let vec_lit = this.backend.vector_literal(&q_owned);
+                let stmt = format!(
+                    "SELECT c.doc_id, c.seq_num, v.distance \
+                     FROM {vec} v JOIN {main} c ON c.id = v.id \
+                     WHERE v.embedding MATCH ? AND k = ? \
+                     ORDER BY v.distance",
+                    vec = this.fq_vec(), main = this.fq_main()
+                );
+                let mut q = g.prepare(&stmt).context("prepare top_k")?;
+                let rows = q.query_map(
+                    rusqlite::params![vec_lit, k as i64],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, i32>(1)?, r.get::<_, f64>(2)?))
+                ).context("query top_k")?;
+                let out: rusqlite::Result<Vec<_>> = rows.collect();
+                Ok(out.context("collect top_k rows")?)
+            }).await.context("spawn_blocking query_top_k")?
+        }
     }
 }
