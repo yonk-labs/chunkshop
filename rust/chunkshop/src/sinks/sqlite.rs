@@ -379,11 +379,57 @@ impl Sink for SqliteSink {
             }).await.context("spawn_blocking write_document")?
         }
     }
-    fn delete_document(&self, _doc_id: &str) -> impl Future<Output = Result<i64>> + Send {
-        async move { Err(anyhow!("delete_document not yet implemented")) }
+    fn delete_document(&self, doc_id: &str) -> impl Future<Output = Result<i64>> + Send {
+        let this = self.clone();
+        let doc_id = doc_id.to_string();
+        async move {
+            let conn = this.backend.connect().await?;
+            tokio::task::spawn_blocking(move || -> Result<i64> {
+                let mut g = conn.blocking_lock();
+                let tx = g.transaction().context("begin tx")?;
+                // Two-phase: SELECT ids first, then DELETE both tables by id IN (...).
+                let ids: Vec<String> = {
+                    let stmt = if this.cfg.source_tag.is_some() {
+                        format!("SELECT id FROM {} WHERE doc_id = ? AND source = ?", this.fq_main())
+                    } else {
+                        format!("SELECT id FROM {} WHERE doc_id = ?", this.fq_main())
+                    };
+                    let mut q = tx.prepare(&stmt)?;
+                    let rows: rusqlite::Result<Vec<String>> = if let Some(tag) = &this.cfg.source_tag {
+                        q.query_map(rusqlite::params![doc_id, tag], |r| r.get(0))?.collect()
+                    } else {
+                        q.query_map(rusqlite::params![doc_id], |r| r.get(0))?.collect()
+                    };
+                    rows.context("collect ids to delete")?
+                };
+                if ids.is_empty() {
+                    tx.commit()?;
+                    return Ok(0);
+                }
+                let placeholders: String = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(",");
+                let main_del = format!("DELETE FROM {} WHERE id IN ({placeholders})", this.fq_main());
+                let vec_del = format!("DELETE FROM {} WHERE id IN ({placeholders})", this.fq_vec());
+                let p: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+                let n = tx.execute(&main_del, p.as_slice()).context("delete main")? as i64;
+                tx.execute(&vec_del, p.as_slice()).context("delete vec")?;
+                tx.commit()?;
+                Ok(n)
+            }).await.context("spawn_blocking delete_document")?
+        }
     }
     fn count_docs(&self) -> impl Future<Output = Result<i64>> + Send {
-        async move { Err(anyhow!("count_docs not yet implemented")) }
+        let this = self.clone();
+        async move {
+            let conn = this.backend.connect().await?;
+            tokio::task::spawn_blocking(move || -> Result<i64> {
+                let g = conn.blocking_lock();
+                let n: i64 = g.query_row(
+                    &format!("SELECT COUNT(DISTINCT doc_id) FROM {}", this.fq_main()),
+                    [], |r| r.get(0)
+                ).context("count_docs")?;
+                Ok(n)
+            }).await.context("spawn_blocking count_docs")?
+        }
     }
     fn query_top_k(
         &self, _query_vec: &[f32], _k: usize,
