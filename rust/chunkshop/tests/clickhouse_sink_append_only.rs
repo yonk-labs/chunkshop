@@ -141,3 +141,43 @@ async fn delete_orphans_warns_exactly_once() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn query_top_k_returns_nearest_chunks() -> anyhow::Result<()> {
+    if skip_if_no_dsn().is_none() {
+        return Ok(());
+    }
+    let db = "chunkshop_r4_top_k";
+    let backend = ClickhouseBackend::new(DSN_ENV.to_string());
+    drop_db(&backend, db).await?;
+
+    let cfg = make_cfg(db, "chunks", "overwrite", false);
+    let sink = ClickhouseSink::new(cfg, ClickhouseBackend::new(DSN_ENV.to_string()), 4);
+    sink.create_table_impl().await?;
+
+    // Insert 3 chunks with distinct vectors. Query for [1,0,0,0], expect doc-1::0 first.
+    let chunks = vec![
+        Chunk { doc_id: "doc-1".into(), seq_num: 0, original_content: "a".into(), embedded_content: "a".into(), metadata: json!({}) },
+        Chunk { doc_id: "doc-2".into(), seq_num: 0, original_content: "b".into(), embedded_content: "b".into(), metadata: json!({}) },
+        Chunk { doc_id: "doc-3".into(), seq_num: 0, original_content: "c".into(), embedded_content: "c".into(), metadata: json!({}) },
+    ];
+    let embs = vec![
+        vec![1.0_f32, 0.0, 0.0, 0.0],
+        vec![0.0_f32, 1.0, 0.0, 0.0],
+        vec![0.0_f32, 0.0, 1.0, 0.0],
+    ];
+    let tags = vec![vec![], vec![], vec![]];
+    sink.write_document_impl("doc-1", &chunks[..1], &embs[..1], &tags[..1]).await?;
+    sink.write_document_impl("doc-2", &chunks[1..2], &embs[1..2], &tags[1..2]).await?;
+    sink.write_document_impl("doc-3", &chunks[2..3], &embs[2..3], &tags[2..3]).await?;
+
+    let hits = sink.query_top_k_impl(&[1.0, 0.0, 0.0, 0.0], 3).await?;
+    assert_eq!(hits.len(), 3);
+    assert_eq!(hits[0].0, "doc-1", "expected doc-1 first; got {hits:?}");
+
+    let n = sink.count_docs_impl().await?;
+    assert_eq!(n, 3);
+
+    drop_db(&backend, db).await?;
+    Ok(())
+}

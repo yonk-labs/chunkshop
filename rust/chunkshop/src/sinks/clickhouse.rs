@@ -318,6 +318,85 @@ impl ClickhouseSink {
         // ReplacingMergeTree(created_at) for lazy dedup at merge time.
         Ok(())
     }
+
+    pub async fn delete_document_impl(&self, doc_id: &str) -> Result<i64> {
+        let client = self.backend.client().await?;
+
+        #[derive(Row, serde::Deserialize)]
+        struct C {
+            c: u64,
+        }
+        let count_n = if self.cfg.source_tag.is_some() {
+            let q = format!(
+                "SELECT count() AS c FROM {} WHERE doc_id = ? AND source = ?",
+                self.fq()
+            );
+            let mut cur = client
+                .query(&q)
+                .bind(doc_id)
+                .bind(self.cfg.source_tag.as_deref().unwrap())
+                .fetch::<C>()?;
+            let r = cur.next().await?.unwrap_or(C { c: 0 });
+            r.c
+        } else {
+            let q = format!("SELECT count() AS c FROM {} WHERE doc_id = ?", self.fq());
+            let mut cur = client.query(&q).bind(doc_id).fetch::<C>()?;
+            let r = cur.next().await?.unwrap_or(C { c: 0 });
+            r.c
+        };
+        if count_n == 0 {
+            return Ok(0);
+        }
+        // ALTER TABLE ... DELETE is async on CH — the caller accepts eventual consistency.
+        if let Some(tag) = &self.cfg.source_tag {
+            let stmt = format!(
+                "ALTER TABLE {} DELETE WHERE doc_id = ? AND source = ?",
+                self.fq()
+            );
+            client.query(&stmt).bind(doc_id).bind(tag.clone()).execute().await?;
+        } else {
+            let stmt = format!("ALTER TABLE {} DELETE WHERE doc_id = ?", self.fq());
+            client.query(&stmt).bind(doc_id).execute().await?;
+        }
+        Ok(count_n as i64)
+    }
+
+    pub async fn count_docs_impl(&self) -> Result<i64> {
+        #[derive(Row, serde::Deserialize)]
+        struct C {
+            c: u64,
+        }
+        let client = self.backend.client().await?;
+        let q = format!("SELECT uniqExact(doc_id) AS c FROM {}", self.fq());
+        let mut cur = client.query(&q).fetch::<C>()?;
+        let r = cur.next().await?.unwrap_or(C { c: 0 });
+        Ok(r.c as i64)
+    }
+
+    pub async fn query_top_k_impl(&self, query_vec: &[f32], k: usize) -> Result<Vec<(String, i32, f64)>> {
+        #[derive(Row, serde::Deserialize)]
+        struct Hit {
+            doc_id: String,
+            seq_num: i32,
+            dist: f64,
+        }
+        let client = self.backend.client().await?;
+        // cosineDistance(embedding, [array_literal]) — the official driver's
+        // `?` placeholder doesn't support inline-array binding, so we inline the
+        // array literal via the dialect's vector_literal (already test-covered).
+        let vec_lit = self.backend.vector_literal(query_vec);
+        let q = format!(
+            "SELECT doc_id, seq_num, cosineDistance(embedding, {vec_lit}) AS dist \
+             FROM {} ORDER BY dist LIMIT ?",
+            self.fq()
+        );
+        let mut cur = client.query(&q).bind(k as u32).fetch::<Hit>()?;
+        let mut out = Vec::with_capacity(k);
+        while let Some(h) = cur.next().await? {
+            out.push((h.doc_id, h.seq_num, h.dist));
+        }
+        Ok(out)
+    }
 }
 
 /// Canonical chunkshop columns, CH-typed. Mirrors
