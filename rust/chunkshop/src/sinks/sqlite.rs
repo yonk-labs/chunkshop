@@ -29,6 +29,15 @@ pub struct SqliteSink {
 /// Mirrors Python's `_HNSW_WARNED` set keyed on PID — one warning per process.
 static HNSW_WARNED_ONCE: OnceLock<()> = OnceLock::new();
 
+fn jsonb_path_get<'a>(meta: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut cur = meta;
+    for seg in path.split('.') {
+        let obj = cur.as_object()?;
+        cur = obj.get(seg)?;
+    }
+    Some(cur)
+}
+
 /// Map PG type names to SQLite equivalents for promote_metadata columns.
 /// Mirrors Python's `_SQLITE_TYPE` dict in sinks/sqlite.py.
 fn pg_type_to_sqlite(pg_type: &str) -> &str {
@@ -226,6 +235,98 @@ impl SqliteSink {
             .and_then(|c| c.get(1))
             .and_then(|m| m.as_str().parse().ok()))
     }
+
+    fn write_document_in_tx(
+        &self, tx: &rusqlite::Transaction<'_>,
+        doc_id: &str, chunks: &[Chunk],
+        embeddings: &[Vec<f32>], tags_per_chunk: &[Vec<String>],
+    ) -> Result<()> {
+        let promote = &self.cfg.promote_metadata;
+        // Main table cols (no embedding).
+        let mut main_col_names: Vec<String> = vec![
+            "id".into(), "doc_id".into(), "seq_num".into(),
+            "original_content".into(), "embedded_content".into(),
+            "tags".into(), "metadata".into(), "source".into(),
+        ];
+        for pc in promote { main_col_names.push(pc.column_name()); }
+        let mut update_cols: Vec<&str> = vec![
+            "original_content", "embedded_content", "tags", "metadata",
+        ];
+        // Source excluded from update — write-once.
+        let promoted_names: Vec<String> = promote.iter().map(|pc| pc.column_name()).collect();
+        for n in &promoted_names { update_cols.push(n.as_str()); }
+        let upsert = self.backend.upsert_clause(&["id"], &update_cols);
+        let cols_sql: String = main_col_names.iter()
+            .map(|c| self.backend.quote_ident(c)).collect::<Vec<_>>().join(", ");
+        let placeholders: String = std::iter::repeat("?")
+            .take(main_col_names.len()).collect::<Vec<_>>().join(", ");
+        let main_stmt = format!(
+            "INSERT INTO {tbl} ({cols_sql}) VALUES ({placeholders}) {upsert}",
+            tbl = self.fq_main()
+        );
+
+        // vec0 — DELETE-by-id then INSERT (vec0 refuses UPSERT and INSERT OR REPLACE).
+        let vec_delete = format!("DELETE FROM {} WHERE id = ?", self.fq_vec());
+        let vec_insert = format!(
+            "INSERT INTO {} (id, embedding) VALUES (?, ?)",
+            self.fq_vec()
+        );
+
+        let mut main_q = tx.prepare(&main_stmt).context("prepare main upsert")?;
+        let mut vec_del_q = tx.prepare(&vec_delete).context("prepare vec delete")?;
+        let mut vec_ins_q = tx.prepare(&vec_insert).context("prepare vec insert")?;
+
+        for (i, c) in chunks.iter().enumerate() {
+            let id = format!("{}::{}", c.doc_id, c.seq_num);
+            let tags_lit = serde_json::to_string(&tags_per_chunk[i])?;
+            let meta_lit = serde_json::to_string(&c.metadata)?;
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![
+                Box::new(id.clone()),
+                Box::new(c.doc_id.clone()),
+                Box::new(c.seq_num as i64),
+                Box::new(c.original_content.clone()),
+                Box::new(c.embedded_content.clone()),
+                Box::new(tags_lit),
+                Box::new(meta_lit),
+                Box::new(self.cfg.source_tag.clone()),
+            ];
+            for pc in promote {
+                let v = jsonb_path_get(&c.metadata, &pc.path);
+                let s: Option<String> = v.map(|val| match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => serde_json::to_string(other).unwrap_or_default(),
+                });
+                params.push(Box::new(s));
+            }
+            let p_refs: Vec<&dyn rusqlite::ToSql> = params.iter()
+                .map(|b| b.as_ref()).collect();
+            main_q.execute(p_refs.as_slice()).context("upsert main row")?;
+
+            // vec table
+            vec_del_q.execute(rusqlite::params![id]).context("delete vec")?;
+            let vec_lit = self.backend.vector_literal(&embeddings[i]);
+            vec_ins_q.execute(rusqlite::params![id, vec_lit]).context("insert vec")?;
+        }
+
+        if self.cfg.delete_orphans {
+            drop(main_q); drop(vec_del_q); drop(vec_ins_q);
+            let n_new = chunks.len() as i64;
+            tx.execute(
+                &format!("DELETE FROM {} WHERE doc_id = ? AND seq_num >= ?", self.fq_main()),
+                rusqlite::params![doc_id, n_new],
+            ).context("delete orphans main")?;
+            // Vec table: id format is `doc_id::seq_num`. Match by LIKE + parse seq.
+            tx.execute(
+                &format!(
+                    "DELETE FROM {} WHERE id LIKE ? || '::%' \
+                     AND CAST(substr(id, instr(id, '::') + 2) AS INTEGER) >= ?",
+                    self.fq_vec()
+                ),
+                rusqlite::params![doc_id, n_new],
+            ).context("delete orphans vec")?;
+        }
+        Ok(())
+    }
 }
 
 impl Sink for SqliteSink {
@@ -251,10 +352,32 @@ impl Sink for SqliteSink {
     // The other 4 trait methods stay as the stub-error returns until later
     // tasks implement them.
     fn write_document(
-        &self, _doc_id: &str, _chunks: &[Chunk],
-        _embeddings: &[Vec<f32>], _tags_per_chunk: &[Vec<String>],
+        &self, doc_id: &str, chunks: &[Chunk],
+        embeddings: &[Vec<f32>], tags_per_chunk: &[Vec<String>],
     ) -> impl Future<Output = Result<()>> + Send {
-        async move { Err(anyhow!("write_document not yet implemented")) }
+        let this = self.clone();
+        let doc_id = doc_id.to_string();
+        let chunks = chunks.to_vec();
+        let embeddings = embeddings.to_vec();
+        let tags_per_chunk = tags_per_chunk.to_vec();
+        async move {
+            if chunks.len() != embeddings.len() || chunks.len() != tags_per_chunk.len() {
+                return Err(anyhow!(
+                    "chunks/embeddings/tags length mismatch: {} / {} / {}",
+                    chunks.len(), embeddings.len(), tags_per_chunk.len()
+                ));
+            }
+            if chunks.is_empty() { return Ok(()); }
+
+            let conn = this.backend.connect().await?;
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let mut g = conn.blocking_lock();
+                let tx = g.transaction().context("begin tx")?;
+                this.write_document_in_tx(&tx, &doc_id, &chunks, &embeddings, &tags_per_chunk)?;
+                tx.commit().context("commit tx")?;
+                Ok(())
+            }).await.context("spawn_blocking write_document")?
+        }
     }
     fn delete_document(&self, _doc_id: &str) -> impl Future<Output = Result<i64>> + Send {
         async move { Err(anyhow!("delete_document not yet implemented")) }
