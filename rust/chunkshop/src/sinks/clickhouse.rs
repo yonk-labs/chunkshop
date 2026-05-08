@@ -181,6 +181,143 @@ impl ClickhouseSink {
             other => Err(anyhow!("unknown target.mode: {other:?}")),
         }
     }
+
+    /// Append-only document write. Mirrors Python's
+    /// `ClickHouseSink.write_document` (typed bulk insert via
+    /// `clickhouse-connect.client.insert(...)`). The fast path uses the
+    /// official `clickhouse` crate's `Insert<ChunkRow>` for binary RowBinary
+    /// streaming. The promote-metadata branch falls back to per-row INSERTs
+    /// because the typed Insert can't carry variable extra columns.
+    ///
+    /// CH semantics (different from PG):
+    /// * No upsert. Re-ingesting `(doc_id, seq_num)` produces duplicate rows
+    ///   on the default `MergeTree` engine; users opt into
+    ///   `ReplacingMergeTree(created_at)` for lazy dedup at merge time.
+    /// * `delete_orphans=true` is a no-op (warned at sink construction —
+    ///   see `DELETE_ORPHANS_WARNED`).
+    pub async fn write_document_impl(
+        &self,
+        _doc_id: &str,
+        chunks: &[Chunk],
+        embeddings: &[Vec<f32>],
+        tags_per_chunk: &[Vec<String>],
+    ) -> Result<()> {
+        if chunks.len() != embeddings.len() {
+            return Err(anyhow!(
+                "chunks ({}) and embeddings ({}) length mismatch",
+                chunks.len(),
+                embeddings.len()
+            ));
+        }
+        if chunks.len() != tags_per_chunk.len() {
+            return Err(anyhow!(
+                "chunks ({}) and tags_per_chunk ({}) length mismatch",
+                chunks.len(),
+                tags_per_chunk.len()
+            ));
+        }
+        if chunks.is_empty() {
+            return Ok(());
+        }
+
+        let promote = &self.cfg.promote_metadata;
+        let client = self.backend.client().await?;
+
+        if promote.is_empty() {
+            // Fast path: typed bulk insert via the official driver's Insert<T>.
+            // NOTE: `Client::insert` re-escapes its argument with backticks, but
+            // `self.fq()` is already `\`db\`.\`table\`` — using `insert_unescaped`
+            // avoids a double-escape that would produce one giant identifier.
+            let mut insert = client.insert_unescaped::<ChunkRow>(&self.fq()).await?;
+            for ((c, emb), tags) in chunks
+                .iter()
+                .zip(embeddings.iter())
+                .zip(tags_per_chunk.iter())
+            {
+                let row = ChunkRow {
+                    id: format!("{}::{}", c.doc_id, c.seq_num),
+                    doc_id: c.doc_id.clone(),
+                    seq_num: c.seq_num as i32,
+                    original_content: c.original_content.clone(),
+                    embedded_content: c.embedded_content.clone(),
+                    tags: tags.clone(),
+                    metadata: serde_json::to_string(&c.metadata)?,
+                    embedding: emb.clone(),
+                    source: self.cfg.source_tag.clone().unwrap_or_default(),
+                };
+                insert.write(&row).await?;
+            }
+            insert.end().await?;
+        } else {
+            // Promoted-metadata path: typed Insert doesn't carry variable extra
+            // columns, so we issue per-row INSERTs with parameter binding.
+            // Slower, but the promote path is operator-opt-in and per-row is
+            // acceptable.
+            let mut col_names: Vec<String> = vec![
+                "id",
+                "doc_id",
+                "seq_num",
+                "original_content",
+                "embedded_content",
+                "tags",
+                "metadata",
+                "embedding",
+                "source",
+            ]
+            .into_iter()
+            .map(|s| self.backend.quote_ident(s))
+            .collect();
+            for pc in promote {
+                col_names.push(self.backend.quote_ident(&pc.column_name()));
+            }
+            let cols_sql = col_names.join(", ");
+
+            for ((c, emb), tags) in chunks
+                .iter()
+                .zip(embeddings.iter())
+                .zip(tags_per_chunk.iter())
+            {
+                let id = format!("{}::{}", c.doc_id, c.seq_num);
+                let metadata = serde_json::to_string(&c.metadata)?;
+                let mut q_str = format!(
+                    "INSERT INTO {} ({}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?",
+                    self.fq(),
+                    cols_sql
+                );
+                for _ in promote {
+                    q_str.push_str(", ?");
+                }
+                q_str.push(')');
+                let mut q = client
+                    .query(&q_str)
+                    .bind(id)
+                    .bind(c.doc_id.clone())
+                    .bind(c.seq_num as i32)
+                    .bind(c.original_content.clone())
+                    .bind(c.embedded_content.clone())
+                    .bind(tags.clone())
+                    .bind(metadata)
+                    .bind(emb.clone())
+                    .bind(self.cfg.source_tag.clone().unwrap_or_default());
+                for pc in promote {
+                    let v = jsonb_path_get(&c.metadata, &pc.path);
+                    let cell = match v {
+                        Some(serde_json::Value::String(s)) => s.clone(),
+                        Some(other) => serde_json::to_string(other).unwrap_or_default(),
+                        None => String::new(),
+                    };
+                    q = q.bind(cell);
+                }
+                q.execute()
+                    .await
+                    .context("INSERT chunk row (promoted path)")?;
+            }
+        }
+        // delete_orphans is a no-op on CH (warned at sink construction).
+        // Re-ingesting same (doc_id, seq_num) produces dup rows; users opt into
+        // ReplacingMergeTree(created_at) for lazy dedup at merge time.
+        Ok(())
+    }
 }
 
 /// Canonical chunkshop columns, CH-typed. Mirrors
