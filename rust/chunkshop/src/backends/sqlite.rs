@@ -11,17 +11,123 @@
 //! `BackendConn` trait (R2 lift) because rusqlite is not a `sqlx::Database`
 //! (R3 Mission Brief, R3-SC-001).
 
+use std::sync::{Arc, OnceLock};
+
+use anyhow::{Context, Result};
+use rusqlite::Connection;
+use tokio::sync::Mutex;
+use tokio::task::spawn_blocking;
+
 use crate::backends::base::{BackendDialect, ColSpec};
 
 #[derive(Clone)]
 pub struct SQLiteBackend {
     pub(crate) dsn_env: String,
-    // Connection state added in Task 7.
 }
 
 impl SQLiteBackend {
     pub fn new(dsn_env: String) -> Self {
         Self { dsn_env }
+    }
+}
+
+/// Registers `sqlite_vec::sqlite3_vec_init` as an auto-extension exactly once
+/// per process. After this is called, every new `rusqlite::Connection` opened
+/// via `Connection::open(...)` automatically loads sqlite-vec.
+fn register_sqlite_vec_once() {
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        // SAFETY: sqlite-vec's init function is C-callable; the cast matches
+        // the expected sqlite3_auto_extension signature. This is the
+        // documented integration pattern.
+        unsafe {
+            let _ = rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
+    });
+}
+
+/// `Arc<Mutex<rusqlite::Connection>>` is the canonical shared-connection shape
+/// used by the sink and source. `rusqlite::Connection` is `!Sync` so we wrap it
+/// in `tokio::sync::Mutex` rather than `std::sync::Mutex` (we hold across
+/// `.await` points in some test scenarios).
+pub type SqliteConn = Arc<Mutex<Connection>>;
+
+impl SQLiteBackend {
+    /// Open a connection to the configured DB. Reads the path from the env var
+    /// at the moment of the call (mirrors Python). Sets WAL on best-effort.
+    /// Idempotent at the auto-extension level — sqlite-vec is registered once
+    /// per process via `OnceLock`.
+    pub async fn connect(&self) -> Result<SqliteConn> {
+        let dsn_env = self.dsn_env.clone();
+        spawn_blocking(move || -> Result<SqliteConn> {
+            register_sqlite_vec_once();
+            let path = std::env::var(&dsn_env)
+                .with_context(|| format!("DSN env var {dsn_env} not set"))?;
+            let conn = if path == ":memory:" {
+                Connection::open_in_memory().context("open :memory:")?
+            } else {
+                Connection::open(&path).with_context(|| format!("opening {path}"))?
+            };
+            // Best-effort WAL — same as Python (`except sqlite3.DatabaseError: pass`).
+            let _ = conn.pragma_update(None, "journal_mode", &"WAL");
+            Ok(Arc::new(Mutex::new(conn)))
+        })
+        .await
+        .context("spawn_blocking connect")?
+    }
+
+    /// Mirrors Python's `table_exists` — checks `sqlite_master` for table or
+    /// virtual table by name. The `db` argument is dropped (no schemas).
+    pub async fn table_exists(&self, conn: &SqliteConn, _db: &str, table: &str) -> Result<bool> {
+        let conn = conn.clone();
+        let table = table.to_string();
+        spawn_blocking(move || -> Result<bool> {
+            let g = conn.blocking_lock();
+            let r: Option<i32> = g
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type IN ('table','virtual table') AND name=?",
+                    rusqlite::params![table],
+                    |row| row.get(0),
+                )
+                .ok();
+            Ok(r.is_some())
+        })
+        .await
+        .context("spawn_blocking table_exists")?
+    }
+
+    /// Read the FLOAT[N] dim from the vec0 partner table's CREATE statement
+    /// in `sqlite_master`. Returns None when the partner table doesn't exist
+    /// or doesn't have a FLOAT[N] column.
+    pub async fn embedding_dim(
+        &self, conn: &SqliteConn, _db: &str, table: &str,
+    ) -> Result<Option<usize>> {
+        let conn = conn.clone();
+        let vec_table = format!("{table}_vec");
+        spawn_blocking(move || -> Result<Option<usize>> {
+            let g = conn.blocking_lock();
+            let sql: Option<String> = g
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    rusqlite::params![vec_table],
+                    |row| row.get(0),
+                )
+                .ok();
+            let Some(sql) = sql else { return Ok(None) };
+            let re = regex::Regex::new(r"(?i)FLOAT\[(\d+)\]").unwrap();
+            Ok(re.captures(&sql)
+                .and_then(|c| c.get(1))
+                .and_then(|m| m.as_str().parse().ok()))
+        })
+        .await
+        .context("spawn_blocking embedding_dim")?
+    }
+
+    /// SQLite has no advisory-lock primitive. Mirror Python's no-op.
+    pub async fn with_create_lock(&self, _conn: &SqliteConn, _key: &str) -> Result<()> {
+        Ok(())
     }
 }
 
