@@ -236,6 +236,7 @@ pub enum SourceConfig {
     Files(FilesSourceConfig),
     JsonCorpus(JsonCorpusSourceConfig),
     PgTable(PgTableSourceConfig),
+    MariadbTable(MariadbTableSourceConfig),
     Http(HttpSourceConfig),
     S3(S3SourceConfig),
     /// Library/embedded mode — no automatic iteration. The host application
@@ -288,6 +289,24 @@ pub struct PgTableSourceConfig {
     /// Extra columns to pull alongside id/content/title and put into each
     /// Document's metadata. Pair with `target.promote_metadata` to surface
     /// specific keys as typed columns in the target table.
+    #[serde(default)]
+    pub metadata_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MariadbTableSourceConfig {
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    pub id_column: String,
+    pub content_column: String,
+    #[serde(default)]
+    pub title_column: Option<String>,
+    /// Trusted operator-supplied SQL fragment appended after `WHERE`. Same
+    /// contract as PgTableSourceConfig.where_clause — NOT validated.
+    #[serde(default, rename = "where")]
+    pub where_clause: Option<String>,
     #[serde(default)]
     pub metadata_columns: Vec<String>,
 }
@@ -703,7 +722,8 @@ impl FastembedEmbedderConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TargetConfig {
     Postgres(PostgresTargetConfig),
-    // R2/R3/R4 add: Mariadb, Sqlite, Clickhouse
+    Mariadb(MariadbTargetConfig),
+    // R3/R4 add: Sqlite, Clickhouse
 }
 
 impl TargetConfig {
@@ -712,6 +732,7 @@ impl TargetConfig {
     fn validate(&self) -> Result<()> {
         match self {
             TargetConfig::Postgres(t) => t.validate(),
+            TargetConfig::Mariadb(t) => t.validate(),
         }
     }
 }
@@ -754,6 +775,42 @@ impl PostgresTargetConfig {
     /// mode/source_tag coupling). Identifier safety is enforced separately in
     /// `load_config` via `validate_ident`.
     fn validate(&self) -> Result<()> {
+        if self.mode == "append" && self.source_tag.is_none() {
+            return Err(anyhow!(
+                "target.mode='append' requires target.source_tag to identify this cell"
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MariadbTargetConfig {
+    #[serde(default = "default_dsn_env")]
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    /// Legacy bool field from 0.3.x — accepted but never preferred. Same shape
+    /// as PostgresTargetConfig.
+    #[serde(default)]
+    pub overwrite: bool,
+    #[serde(default = "default_hnsw")]
+    pub hnsw: bool,
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub source_tag: Option<String>,
+    #[serde(default)]
+    pub promote_metadata: Vec<PromoteColumn>,
+    #[serde(default)]
+    pub force_overwrite: bool,
+    #[serde(default)]
+    pub delete_orphans: bool,
+}
+
+impl MariadbTargetConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.mode == "append" && self.source_tag.is_none() {
             return Err(anyhow!(
                 "target.mode='append' requires target.source_tag to identify this cell"
@@ -851,6 +908,13 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
                 validate_ident(tag, "target.source_tag")?;
             }
         }
+        TargetConfig::Mariadb(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
     }
     if let SourceConfig::PgTable(p) = &cfg.source {
         validate_ident(&p.schema_name, "source.schema")?;
@@ -861,6 +925,16 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
             validate_ident(tc, "source.title_column")?;
         }
         // `where_clause` is intentionally NOT validated — see PgTableSourceConfig docstring.
+    }
+    if let SourceConfig::MariadbTable(p) = &cfg.source {
+        validate_ident(&p.database_name, "source.database")?;
+        validate_ident(&p.table, "source.table")?;
+        validate_ident(&p.id_column, "source.id_column")?;
+        validate_ident(&p.content_column, "source.content_column")?;
+        if let Some(tc) = &p.title_column {
+            validate_ident(tc, "source.title_column")?;
+        }
+        // `where_clause` intentionally NOT validated — same contract as PgTableSourceConfig.
     }
     cfg.target.validate()?;
     validate_chunker_config(&cfg.chunker)?;
@@ -1022,7 +1096,9 @@ target:
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("load");
-        let TargetConfig::Postgres(t) = &cfg.target;
+        let TargetConfig::Postgres(t) = &cfg.target else {
+            panic!("expected Postgres target");
+        };
         assert_eq!(t.promote_metadata.len(), 2);
         assert_eq!(t.promote_metadata[0].path, "heading");
         assert_eq!(t.promote_metadata[0].type_, "text");

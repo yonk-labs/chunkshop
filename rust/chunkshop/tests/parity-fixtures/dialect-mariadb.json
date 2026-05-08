@@ -1,0 +1,42 @@
+{
+  "backend": "mariadb",
+  "quote_ident": [
+    {"in": "my_table", "out": "`my_table`"},
+    {"in": "abc", "out": "`abc`"},
+    {"in": "with_underscore_123", "out": "`with_underscore_123`"}
+  ],
+  "fq_table": [
+    {"in": ["chunkshop", "test_chunks"], "out": "`chunkshop`.`test_chunks`"},
+    {"in": ["mydb", "my_table"], "out": "`mydb`.`my_table`"}
+  ],
+  "vector_type_ddl": [
+    {"in": 384, "out": "VECTOR(384)"},
+    {"in": 1024, "out": "VECTOR(1024)"},
+    {"in": 1, "out": "VECTOR(1)"}
+  ],
+  "json_path_sql": [
+    {"in": ["metadata", "a"], "out": "JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.a'))"},
+    {"in": ["metadata", "a.b"], "out": "JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.a.b'))"},
+    {"in": ["metadata", "a.b.c"], "out": "JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.a.b.c'))"}
+  ],
+  "upsert_clause": [
+    {"in": {"keys": ["id"], "updates": []}, "out": ""},
+    {"in": {"keys": ["id"], "updates": ["content"]}, "out": "ON DUPLICATE KEY UPDATE `content` = VALUES(`content`)"},
+    {"in": {"keys": ["id"], "updates": ["a", "b"]}, "out": "ON DUPLICATE KEY UPDATE `a` = VALUES(`a`), `b` = VALUES(`b`)"},
+    {"in": {"keys": ["a", "b"], "updates": ["c"]}, "out": "ON DUPLICATE KEY UPDATE `c` = VALUES(`c`)"}
+  ],
+  "create_database_sql": [
+    {"in": "chunkshop", "out": "CREATE DATABASE IF NOT EXISTS `chunkshop`"},
+    {"in": "my_db", "out": "CREATE DATABASE IF NOT EXISTS `my_db`"}
+  ],
+  "drop_table_sql": [
+    {"in": "`db`.`t`", "out": "DROP TABLE `db`.`t`"}
+  ],
+  "add_column_if_not_exists_sql": [
+    {"in": ["`db`.`t`", "source", "VARCHAR(255)"], "out": "ALTER TABLE `db`.`t` ADD COLUMN IF NOT EXISTS `source` VARCHAR(255)"}
+  ],
+  "vector_literal": [
+    {"in": [0.1, 0.2, -0.3], "out": "VEC_FromText('[0.100000,0.200000,-0.300000]')"},
+    {"in": [], "out": "VEC_FromText('[]')"}
+  ]
+}

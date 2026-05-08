@@ -1,0 +1,57 @@
+{
+  "embed_dim": 8,
+  "chunks": [
+    {
+      "doc_id": "doc-alpha",
+      "seq_num": 0,
+      "original_content": "Alpha original",
+      "embedded_content": "Alpha embedded",
+      "tags": ["alpha"],
+      "metadata": {"kind": "test"},
+      "embedding": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "doc_id": "doc-bravo",
+      "seq_num": 0,
+      "original_content": "Bravo original",
+      "embedded_content": "Bravo embedded",
+      "tags": ["bravo"],
+      "metadata": {"kind": "test"},
+      "embedding": [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "doc_id": "doc-charlie",
+      "seq_num": 0,
+      "original_content": "Charlie original",
+      "embedded_content": "Charlie embedded",
+      "tags": ["charlie"],
+      "metadata": {"kind": "test"},
+      "embedding": [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "doc_id": "doc-delta",
+      "seq_num": 0,
+      "original_content": "Delta original",
+      "embedded_content": "Delta embedded",
+      "tags": ["delta"],
+      "metadata": {"kind": "test"},
+      "embedding": [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "doc_id": "doc-echo",
+      "seq_num": 0,
+      "original_content": "Echo original",
+      "embedded_content": "Echo embedded",
+      "tags": ["echo"],
+      "metadata": {"kind": "test"},
+      "embedding": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+    }
+  ],
+  "queries": [
+    {
+      "name": "alpha-direction",
+      "vec": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      "expected_top_5_ids_in_order": ["doc-alpha::0", "doc-bravo::0", "doc-charlie::0", "doc-delta::0", "doc-echo::0"]
+    }
+  ]
+}
