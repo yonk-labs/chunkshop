@@ -24,6 +24,18 @@ const ALLOWED_PROMOTE_TYPES: &[&str] = &[
     "date",
 ];
 
+/// Allowlist regex for `ClickhouseTargetConfig::engine`. Hardening relative to
+/// Python (which interpolates the engine string raw — see
+/// python/src/chunkshop/config.py:542). Accepts:
+///   - `MergeTree` / `MergeTree()`
+///   - `ReplacingMergeTree(<single_ident>)` (the `created_at` dedup column)
+///   - Any of the above optionally followed by ` ORDER BY <expr>`
+///
+/// Rejects engines outside this whitelist (Replicated*, Distributed, Memory,
+/// engines with embedded SQL, etc.) — those need explicit user request and a
+/// separate brief.
+const CLICKHOUSE_ENGINE_RE: &str = r"^(MergeTree(\(\))?|ReplacingMergeTree\(\w+\))( ORDER BY .+)?$";
+
 /// One promoted jsonb path → typed Postgres column. Mirrors Python's
 /// `chunkshop.config.PromoteColumn`. The `path` is dot-separated; each segment
 /// must match `^[A-Za-z_][A-Za-z0-9_]*$`. The `type_` must be in
@@ -240,6 +252,7 @@ pub enum SourceConfig {
     SqliteTable(SqliteTableSourceConfig),
     Http(HttpSourceConfig),
     S3(S3SourceConfig),
+    ClickhouseTable(ClickhouseTableSourceConfig),
     /// Library/embedded mode — no automatic iteration. The host application
     /// drives ingestion via `chunkshop::Pipeline::from_yaml(...)` and calls
     /// `pipeline.ingest_text(doc_id, text, metadata)` per document.
@@ -327,6 +340,26 @@ pub struct SqliteTableSourceConfig {
     pub title_column: Option<String>,
     /// Trusted operator-supplied SQL fragment appended after `WHERE`. Same
     /// contract as PgTableSourceConfig.where_clause — NOT validated.
+    #[serde(default, rename = "where")]
+    pub where_clause: Option<String>,
+    #[serde(default)]
+    pub metadata_columns: Vec<String>,
+}
+
+/// ClickHouse source. Mirrors `python/src/chunkshop/sources/clickhouse_table.py`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickhouseTableSourceConfig {
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    pub id_column: String,
+    pub content_column: String,
+    #[serde(default)]
+    pub title_column: Option<String>,
+    /// Trusted operator-supplied SQL fragment appended after `WHERE`. Mirrors
+    /// Python's `clickhouse_table.py` which interpolates this verbatim. NOT
+    /// validated; don't expose this field to untrusted YAML authors.
     #[serde(default, rename = "where")]
     pub where_clause: Option<String>,
     #[serde(default)]
@@ -746,7 +779,7 @@ pub enum TargetConfig {
     Postgres(PostgresTargetConfig),
     Mariadb(MariadbTargetConfig),
     Sqlite(SqliteTargetConfig),
-    // R4 adds: Clickhouse
+    Clickhouse(ClickhouseTargetConfig),
 }
 
 impl TargetConfig {
@@ -757,6 +790,7 @@ impl TargetConfig {
             TargetConfig::Postgres(t) => t.validate(),
             TargetConfig::Mariadb(t) => t.validate(),
             TargetConfig::Sqlite(t) => t.validate(),
+            TargetConfig::Clickhouse(t) => t.validate(),
         }
     }
 }
@@ -839,6 +873,59 @@ impl MariadbTargetConfig {
             return Err(anyhow!(
                 "target.mode='append' requires target.source_tag to identify this cell"
             ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickhouseTargetConfig {
+    #[serde(default = "default_dsn_env")]
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    #[serde(default = "default_hnsw")]
+    pub hnsw: bool,
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub source_tag: Option<String>,
+    #[serde(default)]
+    pub promote_metadata: Vec<PromoteColumn>,
+    #[serde(default)]
+    pub force_overwrite: bool,
+    /// On ClickHouse, `delete_orphans: true` is a NO-OP that emits a single
+    /// `tracing::warn!` per process. CH's `ALTER TABLE ... DELETE` is async
+    /// and breaks chunkshop's per-document atomic write contract.
+    #[serde(default)]
+    pub delete_orphans: bool,
+    /// Optional engine override. When `None`, the sink emits
+    /// `MergeTree() ORDER BY (id)`. To opt into lazy dedup, set
+    /// `"ReplacingMergeTree(created_at) ORDER BY (id)"`. Validated against
+    /// `CLICKHOUSE_ENGINE_RE` at config-load — a Rust-only hardening relative
+    /// to Python which interpolates the field raw.
+    #[serde(default)]
+    pub engine: Option<String>,
+}
+
+impl ClickhouseTargetConfig {
+    fn validate(&self) -> Result<()> {
+        if self.mode == "append" && self.source_tag.is_none() {
+            return Err(anyhow!(
+                "target.mode='append' requires target.source_tag to identify this cell"
+            ));
+        }
+        if let Some(e) = &self.engine {
+            let re = Regex::new(CLICKHOUSE_ENGINE_RE).unwrap();
+            if !re.is_match(e) {
+                return Err(anyhow!(
+                    "target.engine {e:?} not in allowlist. Accepted shapes: \
+                     'MergeTree', 'MergeTree()', 'ReplacingMergeTree(<col>)', \
+                     each optionally followed by ' ORDER BY <expr>'. Custom engines \
+                     are not supported in v0.4 — file an issue if you need one."
+                ));
+            }
         }
         Ok(())
     }
@@ -988,6 +1075,13 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
                 validate_ident(tag, "target.source_tag")?;
             }
         }
+        TargetConfig::Clickhouse(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
     }
     if let SourceConfig::PgTable(p) = &cfg.source {
         validate_ident(&p.schema_name, "source.schema")?;
@@ -1018,6 +1112,19 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
             validate_ident(tc, "source.title_column")?;
         }
         // `where_clause` intentionally NOT validated — same contract as PgTableSourceConfig.
+    }
+    if let SourceConfig::ClickhouseTable(p) = &cfg.source {
+        validate_ident(&p.database_name, "source.database")?;
+        validate_ident(&p.table, "source.table")?;
+        validate_ident(&p.id_column, "source.id_column")?;
+        validate_ident(&p.content_column, "source.content_column")?;
+        if let Some(tc) = &p.title_column {
+            validate_ident(tc, "source.title_column")?;
+        }
+        for mc in &p.metadata_columns {
+            validate_ident(mc, "source.metadata_columns")?;
+        }
+        // `where_clause` is intentionally NOT validated — see ClickhouseTableSourceConfig docstring.
     }
     cfg.target.validate()?;
     validate_chunker_config(&cfg.chunker)?;
@@ -1416,5 +1523,96 @@ target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, 
             }
             _ => panic!("expected SqliteTable source"),
         }
+    }
+
+    #[test]
+    fn parses_clickhouse_target() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: CHUNKSHOP_DSN_CH
+  database: my_db
+  table: chunks
+  mode: overwrite
+  hnsw: true
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        let TargetConfig::Clickhouse(t) = &cfg.target else {
+            panic!("expected Clickhouse variant");
+        };
+        assert_eq!(t.database_name, "my_db");
+        assert_eq!(t.table, "chunks");
+        assert!(t.engine.is_none());
+    }
+
+    #[test]
+    fn accepts_replacing_merge_tree_engine() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: D
+  database: db
+  table: t
+  mode: overwrite
+  hnsw: false
+  engine: "ReplacingMergeTree(created_at) ORDER BY (id)"
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("ReplacingMergeTree should be accepted");
+        let TargetConfig::Clickhouse(t) = &cfg.target else { unreachable!() };
+        assert_eq!(t.engine.as_deref(), Some("ReplacingMergeTree(created_at) ORDER BY (id)"));
+    }
+
+    #[test]
+    fn rejects_arbitrary_engine_string() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: D
+  database: db
+  table: t
+  mode: overwrite
+  hnsw: false
+  engine: "Memory"
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(err.contains("allowlist") && err.contains("Memory"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_engine_with_drop_table_injection() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: D
+  database: db
+  table: t
+  mode: overwrite
+  hnsw: false
+  engine: "MergeTree(); DROP TABLE other"
+"#;
+        let path = write_yaml(yaml);
+        assert!(
+            load_config(&path).is_err(),
+            "engine with embedded DROP must be rejected"
+        );
     }
 }

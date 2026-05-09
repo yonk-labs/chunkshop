@@ -1,0 +1,91 @@
+{
+  "backend": "clickhouse",
+  "quote_ident": [
+    {"in": "my_table", "out": "`my_table`"},
+    {"in": "abc", "out": "`abc`"},
+    {"in": "with_underscore_123", "out": "`with_underscore_123`"}
+  ],
+  "fq_table": [
+    {"in": ["chunkshop_test", "handbook"], "out": "`chunkshop_test`.`handbook`"},
+    {"in": ["my_db", "my_table"], "out": "`my_db`.`my_table`"}
+  ],
+  "vector_type_ddl": [
+    {"in": 384, "out": "Array(Float32)"},
+    {"in": 1024, "out": "Array(Float32)"},
+    {"in": 1, "out": "Array(Float32)"}
+  ],
+  "json_path_sql": [
+    {"in": ["metadata", "a"], "out": "JSONExtractString(metadata, 'a')"},
+    {"in": ["metadata", "a.b"], "out": "JSONExtractString(metadata, 'a', 'b')"},
+    {"in": ["metadata", "a.b.c"], "out": "JSONExtractString(metadata, 'a', 'b', 'c')"}
+  ],
+  "upsert_clause": [
+    {"in": {"keys": ["id"], "updates": []}, "out": ""},
+    {"in": {"keys": ["id"], "updates": ["content"]}, "out": ""},
+    {"in": {"keys": ["a", "b"], "updates": ["c"]}, "out": ""}
+  ],
+  "create_database_sql": [
+    {"in": "chunkshop", "out": "CREATE DATABASE IF NOT EXISTS `chunkshop`"},
+    {"in": "my_db", "out": "CREATE DATABASE IF NOT EXISTS `my_db`"}
+  ],
+  "drop_table_sql": [
+    {"in": "`db`.`t`", "out": "DROP TABLE IF EXISTS `db`.`t` SYNC"}
+  ],
+  "add_column_if_not_exists_sql": [
+    {"in": ["`db`.`t`", "source", "String"], "out": "ALTER TABLE `db`.`t` ADD COLUMN IF NOT EXISTS `source` String"}
+  ],
+  "emit_chunks_table_ddl": [
+    {
+      "name": "default_engine_no_hnsw",
+      "in": {
+        "fq": "`db`.`t`",
+        "cols": [
+          {"name": "id", "type_ddl": "String", "is_primary_key": true},
+          {"name": "doc_id", "type_ddl": "String", "is_primary_key": false},
+          {"name": "embedding", "type_ddl": "Array(Float32)", "is_primary_key": false}
+        ],
+        "hnsw": false,
+        "dim": 384,
+        "engine": null
+      },
+      "out_contains": [
+        "CREATE TABLE IF NOT EXISTS `db`.`t`",
+        "`id` String",
+        "`embedding` Array(Float32)",
+        "ENGINE = MergeTree() ORDER BY (`id`)"
+      ],
+      "out_excludes": ["vector_similarity"]
+    },
+    {
+      "name": "with_hnsw_index",
+      "in": {
+        "fq": "`db`.`t`",
+        "cols": [
+          {"name": "id", "type_ddl": "String", "is_primary_key": true},
+          {"name": "embedding", "type_ddl": "Array(Float32)", "is_primary_key": false}
+        ],
+        "hnsw": true,
+        "dim": 384,
+        "engine": null
+      },
+      "out_contains": [
+        "INDEX vec_idx embedding TYPE vector_similarity('hnsw', 'cosineDistance') GRANULARITY 1"
+      ]
+    },
+    {
+      "name": "replacing_merge_tree_engine_override",
+      "in": {
+        "fq": "`db`.`t`",
+        "cols": [
+          {"name": "id", "type_ddl": "String", "is_primary_key": true}
+        ],
+        "hnsw": false,
+        "dim": 0,
+        "engine": "ReplacingMergeTree(created_at) ORDER BY (id)"
+      },
+      "out_contains": [
+        "ENGINE = ReplacingMergeTree(created_at) ORDER BY (id)"
+      ]
+    }
+  ]
+}

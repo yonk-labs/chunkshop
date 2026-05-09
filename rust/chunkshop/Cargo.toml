@@ -30,6 +30,7 @@ path = "src/main.rs"
 anyhow = "1"
 blake2 = { version = "0.10", default-features = false }
 clap = { version = "4", features = ["derive"] }
+clickhouse = "0.15"
 fastembed = "5"
 glob = "0.3"
 hf-hub = { version = "0.5", default-features = false, features = ["ureq"] }
@@ -55,6 +56,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1"
+url = "2"
+urlencoding = "2"
 whatlang = "0.16"
 object_store = { version = "0.11", default-features = false, features = ["aws"] }
 futures = "0.3"
