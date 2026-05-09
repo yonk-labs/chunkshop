@@ -100,6 +100,7 @@ fn corpus_label(cfg: &BakeoffConfig) -> String {
         SourceConfig::JsonCorpus(j) => j.path.clone(),
         SourceConfig::PgTable(p) => format!("pg:{}.{}", p.schema_name, p.table),
         SourceConfig::MariadbTable(p) => format!("mariadb:{}.{}", p.database_name, p.table),
+        SourceConfig::SqliteTable(s) => format!("sqlite:{}", s.table),
         SourceConfig::Http(_) => "http".to_string(),
         SourceConfig::S3(s) => format!("s3://{}/{}", s.bucket, s.prefix),
         SourceConfig::Inline(_) => "inline".to_string(),

@@ -339,6 +339,22 @@ fn source_to_yaml_value(s: &crate::config::SourceConfig) -> Value {
             }
             Value::Object(m)
         }
+        S::SqliteTable(s) => {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), json!("sqlite_table"));
+            m.insert("dsn_env".into(), json!(s.dsn_env));
+            m.insert("database".into(), json!(s.database_name));
+            m.insert("table".into(), json!(s.table));
+            m.insert("id_column".into(), json!(s.id_column));
+            m.insert("content_column".into(), json!(s.content_column));
+            if let Some(t) = &s.title_column {
+                m.insert("title_column".into(), json!(t));
+            }
+            if let Some(w) = &s.where_clause {
+                m.insert("where".into(), json!(w));
+            }
+            Value::Object(m)
+        }
         S::Http(h) => {
             let mut m = serde_json::Map::new();
             m.insert("type".into(), json!("http"));
