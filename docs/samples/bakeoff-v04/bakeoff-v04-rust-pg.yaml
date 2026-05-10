@@ -1,0 +1,42 @@
+# v0.4.0 release validation bakeoff — Rust single-PG variant.
+#
+# The Rust bakeoff CLI (`chunkshop-rs bakeoff`) is PG-only as of v0.4.0
+# (single `target:` with legacy `schema:` field — multi-target support is
+# tracked as v0.4.1 follow-up #7). For cross-backend bakeoff comparisons,
+# use Python's `chunkshop bakeoff` with the multi-target `bakeoff-v04.yaml`
+# in this same directory.
+#
+# Usage:
+#   export CHUNKSHOP_TEST_DSN=postgresql://postgres:postgres@localhost:5434/chunkshop_test
+#   chunkshop-rs bakeoff \
+#       --config docs/samples/bakeoff-v04/bakeoff-v04-rust-pg.yaml \
+#       --dsn $CHUNKSHOP_TEST_DSN \
+#       --yes
+
+name: v04_validation_rust_pg
+
+source:
+  type: files
+  glob: docs/samples/bakeoff-ntsb/corpus/*.md
+  id_from: stem
+
+framer:
+  type: identity
+
+gold_queries: docs/samples/bakeoff-ntsb/gold-ntsb.yaml
+
+matrix:
+  embedders:
+    - { type: fastembed, model_name: "Xenova/bge-small-en-v1.5-int8", dim: 384, threads: 2, batch_size: 8 }
+  chunkers:
+    - { type: hierarchy }
+    - { type: sentence_aware }
+
+target:
+  dsn_env: CHUNKSHOP_TEST_DSN
+  schema: chunkshop_bakeoff_v04_rust
+
+scoring:
+  k: [1, 3, 5]
+  include_mrr: true
+  top_k: 5
