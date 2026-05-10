@@ -19,9 +19,8 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{
-    CompositeExtractorConfig, ExtractorConfig, KeybertPhrasesExtractorConfig,
-    LangDetectExtractorConfig, NoneExtractorConfig, RakeKeywordsExtractorConfig,
-    SpacyEntitiesExtractorConfig,
+    CompositeExtractorConfig, ExtractorConfig, LangDetectExtractorConfig, NoneExtractorConfig,
+    RakeKeywordsExtractorConfig,
 };
 
 /// Mirrors Python's `ExtractResult`. `tags` flow into the `tags text[]` column;
@@ -390,6 +389,7 @@ fn lang_to_iso639_1(lang: whatlang::Lang) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{KeybertPhrasesExtractorConfig, SpacyEntitiesExtractorConfig};
 
     #[test]
     fn none_returns_empty() {
