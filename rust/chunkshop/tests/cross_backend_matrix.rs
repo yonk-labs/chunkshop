@@ -298,6 +298,7 @@ fn cell_config(cell_name: &str, source: SourceConfig, target: TargetConfig) -> C
             doc_limit: None,
             log_path: None,
             heartbeat_every: None,
+            log_format: "text".to_string(),
         },
         framer: FramerConfig::Identity(IdentityFramerConfig {}),
         extractor: ExtractorConfig::None(NoneExtractorConfig::default()),

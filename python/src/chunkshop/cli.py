@@ -1,6 +1,7 @@
 """chunkshop CLI — ingest, orchestrate, bakeoff."""
 from __future__ import annotations
 import json
+import logging
 import os
 import sys
 from importlib.metadata import version as _pkg_version
@@ -10,6 +11,39 @@ import click
 
 from chunkshop.config import load_config
 from chunkshop.runner import run_cell
+
+
+def _setup_cli_logging(json_format: bool = False) -> None:
+    """Configure stdout logging for CLI subcommands.
+
+    Library users importing chunkshop see no log output by default — they
+    configure their own root logger. CLI users see chunkshop's progress lines
+    on stdout. Idempotent: safe to call multiple times in one process.
+    """
+    chunkshop_logger = logging.getLogger("chunkshop")
+    # If a handler is already attached (e.g. the orchestrator-spawned subprocess
+    # also configures stdout), don't double it up.
+    if chunkshop_logger.handlers:
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    if json_format:
+        # Minimal hand-rolled JSON formatter — avoids pulling python-json-logger
+        # into the base install. Library users wanting richer JSON can wire
+        # their own handler.
+        class _JsonFormatter(logging.Formatter):
+            def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+                return json.dumps({
+                    "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "msg": record.getMessage(),
+                })
+        handler.setFormatter(_JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("[%(name)s] %(message)s"))
+    chunkshop_logger.addHandler(handler)
+    chunkshop_logger.setLevel(logging.INFO)
+    chunkshop_logger.propagate = False  # don't double-print via root logger
 
 
 @click.group()
@@ -26,6 +60,144 @@ def cli():
     Rank a chunker x embedder matrix against your corpus:
         chunkshop bakeoff --config bakeoff.yaml
     """
+
+
+_INIT_BACKEND_TEMPLATES = {
+    "postgres": """target:
+  type: postgres
+  dsn_env: CHUNKSHOP_DSN
+  database: {db}        # mapped to PG SCHEMA at the sink
+  table: chunks
+  mode: overwrite
+  hnsw: true
+  source_tag: {tag}""",
+    "mariadb": """target:
+  type: mariadb
+  dsn_env: CHUNKSHOP_DSN_MARIADB
+  database: {db}        # MariaDB DATABASE (not just the connection default)
+  table: chunks
+  mode: overwrite
+  source_tag: {tag}""",
+    "sqlite": """target:
+  type: sqlite
+  dsn_env: SQLITE_PATH  # env var holds the .db file path (or :memory:)
+  database: ignored     # SQLite has no schema namespace; field required but ignored at runtime
+  table: chunks
+  mode: overwrite
+  source_tag: {tag}""",
+    "clickhouse": """target:
+  type: clickhouse
+  dsn_env: CHUNKSHOP_DSN_CH
+  database: {db}
+  table: chunks
+  mode: overwrite
+  source_tag: {tag}
+  # For re-ingest deduplication, uncomment the next line:
+  # engine: "ReplacingMergeTree(created_at) ORDER BY (id)"
+""",
+}
+
+
+@cli.command()
+@click.option(
+    "--out", "out_path",
+    type=click.Path(path_type=Path), default=Path("cell.yaml"),
+    help="Output path for the generated cell YAML (default: cell.yaml).",
+)
+@click.option(
+    "--force", is_flag=True,
+    help="Overwrite the output file if it already exists.",
+)
+def init(out_path: Path, force: bool):
+    """Interactive scaffold for a new chunkshop cell YAML.
+
+    Prompts for the backend, corpus glob, chunker, embedder, and emits a
+    runnable cell config. Pair with `chunkshop validate` to dry-run the
+    config without opening DB connections.
+    """
+    if out_path.exists() and not force:
+        click.echo(f"[init] {out_path} already exists — pass --force to overwrite", err=True)
+        sys.exit(1)
+
+    cell_name = click.prompt("Cell name", default="my_cell")
+    backend = click.prompt(
+        "Backend",
+        type=click.Choice(list(_INIT_BACKEND_TEMPLATES.keys())),
+        default="postgres",
+    )
+    corpus = click.prompt("Corpus path (glob, e.g. ./docs/*.md)", default="./docs/*.md")
+    chunker = click.prompt(
+        "Chunker",
+        type=click.Choice(["hierarchy", "sentence_aware", "fixed_overlap"]),
+        default="hierarchy",
+    )
+    model = click.prompt(
+        "Embedder model",
+        default="Xenova/bge-small-en-v1.5-int8",
+    )
+    dim = click.prompt("Embedder dim", type=int, default=384)
+    database = click.prompt(
+        "Target database/schema name",
+        default=f"chunkshop_{cell_name}",
+    )
+    source_tag = click.prompt("source_tag", default=cell_name)
+
+    target_block = _INIT_BACKEND_TEMPLATES[backend].format(db=database, tag=source_tag)
+
+    yaml_text = f"""cell_name: {cell_name}
+
+source:
+  type: files
+  glob: "{corpus}"
+  id_from: stem
+
+framer:
+  type: identity
+
+chunker:
+  type: {chunker}
+
+embedder:
+  type: fastembed
+  model_name: {model}
+  dim: {dim}
+  batch_size: 64
+
+{target_block}
+"""
+    out_path.write_text(yaml_text)
+    click.echo(f"[init] wrote {out_path}")
+    click.echo(f"[init] next steps:")
+    click.echo(f"  1. Set the DSN env var for {backend} (see docs/engines/{backend}.md)")
+    click.echo(f"  2. chunkshop validate --config {out_path}")
+    click.echo(f"  3. chunkshop ingest --config {out_path}")
+
+
+@cli.command()
+@click.option(
+    "--config", "-c", required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to the YAML/JSON cell config.",
+)
+def validate(config: Path):
+    """Validate a YAML config without running it. Exits 0 if valid, non-zero otherwise.
+
+    Loads the config, runs pydantic validation, and reports the resolved
+    source/chunker/embedder/target shape. Does NOT open DB connections or
+    create tables — useful for fast iteration on config edits.
+    """
+    try:
+        cfg = load_config(config)
+    except Exception as e:
+        click.echo(f"[validate] FAIL: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"[validate] OK — cell {cfg.cell_name!r}")
+    click.echo(f"  source:   {cfg.source.type}")
+    click.echo(f"  framer:   {cfg.framer.type}")
+    click.echo(f"  chunker:  {cfg.chunker.type}")
+    click.echo(f"  embedder: {cfg.embedder.model_name} (dim={cfg.embedder.dim})")
+    click.echo(f"  extractor:{cfg.extractor.type}")
+    click.echo(f"  target:   {cfg.target.type} -> {cfg.target.database_name}.{cfg.target.table} (mode={cfg.target.mode})")
 
 
 @cli.command()
@@ -50,6 +222,7 @@ def cli():
 def ingest(config: Path, doc_limit, log_path, omp_threads):
     """Run one cell end-to-end: read source -> chunk -> embed -> extract tags -> write to pgvector table."""
     cfg = load_config(config)
+    _setup_cli_logging(json_format=(getattr(cfg.runtime, "log_format", "text") == "json"))
     if doc_limit is not None:
         cfg.runtime.doc_limit = doc_limit
     if log_path is not None:
@@ -96,6 +269,7 @@ def ingest(config: Path, doc_limit, log_path, omp_threads):
 )
 def orchestrate(config_dir, config, concurrency, checkpoints, timeout, smoke):
     """Run N cells in parallel, emit checkpoint reports at t=60/120/300/600s by default."""
+    _setup_cli_logging()
     from chunkshop.orchestrator import orchestrate as _orch
 
     if config_dir and config:
@@ -172,6 +346,7 @@ def bakeoff(config_path: Path, yes: bool):
       - report.md         — multi-backend leaderboard + per-query detail
       - recommended.yaml  — runnable `chunkshop ingest` cell for the top combo
     """
+    _setup_cli_logging()
     import yaml
 
     from chunkshop.bakeoff.config import BakeoffConfig
