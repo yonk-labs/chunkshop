@@ -3,7 +3,7 @@
 [![CI](https://github.com/yonk-labs/chunkshop/actions/workflows/ci.yml/badge.svg)](https://github.com/yonk-labs/chunkshop/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/chunkshop?label=pypi&color=blueviolet)](https://pypi.org/project/chunkshop/)
 [![crates.io](https://img.shields.io/crates/v/chunkshop-rs?label=crates.io&color=blueviolet)](https://crates.io/crates/chunkshop-rs)
-[![status: alpha](https://img.shields.io/badge/status-alpha-orange)](python/pyproject.toml)
+[![status: beta](https://img.shields.io/badge/status-beta-yellow)](python/pyproject.toml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue)](python/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -196,6 +196,7 @@ engine. Storage shape is identical; only column types differ. See
 | [`docs/executive-summary.md`](docs/executive-summary.md) | Two-page overview: what, why, current state, who should use it. |
 | [`docs/getting-started.md`](docs/getting-started.md) | Zero-to-retrieval end-to-end walkthrough. |
 | [`docs/architecture.md`](docs/architecture.md) | The trait surface, the pipeline, the cross-language parity story. |
+| [`docs/upgrading.md`](docs/upgrading.md) | Version-to-version migration notes. |
 
 ### Pick your backend
 

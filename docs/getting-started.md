@@ -44,7 +44,7 @@ export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/postgres"
 
 # Install chunkshop
 git clone https://github.com/yonk-labs/chunkshop && cd chunkshop
-cd python && uv sync --extra dev && cd ..
+cd python && uv sync --extra dev --extra all-backends && cd ..
 ```
 
 ## Step 1: Bring real data

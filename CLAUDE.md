@@ -14,7 +14,7 @@ All commands below assume you're in `python/` unless noted. `uv` is the default 
 cd python
 
 # Install — always include [extractors] so the RAKE test doesn't fail
-uv sync --extra dev --extra extractors
+uv sync --extra dev --extra extractors --extra all-backends
 
 # Full test suite (some tests skip if Postgres unreachable)
 uv run pytest -q

@@ -31,7 +31,14 @@ class ClickHouseBackend:
 
     @contextmanager
     def connect(self) -> Iterator[Any]:
-        import clickhouse_connect
+        try:
+            import clickhouse_connect
+        except ImportError as e:
+            raise ImportError(
+                "chunkshop's ClickHouse backend requires the 'clickhouse' extra. "
+                "Install with: pip install 'chunkshop[clickhouse]' "
+                "(or 'chunkshop[all-backends]' for all 4 backends)."
+            ) from e
         dsn = os.environ[self._dsn_env]
         kwargs = _parse_clickhouse_dsn(dsn)
         client = clickhouse_connect.get_client(**kwargs)

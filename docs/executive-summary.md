@@ -183,7 +183,7 @@ service" (chunkshop writes; your app reads).
 
 ```bash
 cd chunkshop/python
-uv sync --extra dev
+uv sync --extra dev --extra all-backends
 export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
 cd ..   # repo root
 chunkshop ingest --config docs/samples/sample.yaml

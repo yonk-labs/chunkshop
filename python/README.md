@@ -16,7 +16,7 @@ From source (recommended while alpha):
 
 ```bash
 cd chunkshop/python
-uv sync --extra dev
+uv sync --extra dev --extra all-backends
 ```
 
 As a path dependency from another project:

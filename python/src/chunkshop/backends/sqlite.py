@@ -29,7 +29,15 @@ class SQLiteBackend:
         path = os.environ[self._dsn_env]
         conn = sqlite3.connect(path)
         conn.enable_load_extension(True)
-        import sqlite_vec
+        try:
+            import sqlite_vec
+        except ImportError as e:
+            conn.close()
+            raise ImportError(
+                "chunkshop's SQLite backend requires the 'sqlite' extra. "
+                "Install with: pip install 'chunkshop[sqlite]' "
+                "(or 'chunkshop[all-backends]' for all 4 backends)."
+            ) from e
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
         try:

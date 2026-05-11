@@ -6,7 +6,15 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Literal
 
 import numpy as np
-import pymysql
+
+try:
+    import pymysql
+except ImportError as e:
+    raise ImportError(
+        "chunkshop's MariaDB backend requires the 'mariadb' extra. "
+        "Install with: pip install 'chunkshop[mariadb]' "
+        "(or 'chunkshop[all-backends]' for all 4 backends)."
+    ) from e
 
 
 class MariaDBBackend:
