@@ -197,6 +197,7 @@ engine. Storage shape is identical; only column types differ. See
 | [`docs/getting-started.md`](docs/getting-started.md) | Zero-to-retrieval end-to-end walkthrough. |
 | [`docs/architecture.md`](docs/architecture.md) | The trait surface, the pipeline, the cross-language parity story. |
 | [`docs/upgrading.md`](docs/upgrading.md) | Version-to-version migration notes. |
+| [`docs/benchmarks.md`](docs/benchmarks.md) | Measured performance + accuracy across backends. HNSW vs brute-force, concurrent-ingest scaling, 8k-chunk throughput. |
 
 ### Pick your backend
 
