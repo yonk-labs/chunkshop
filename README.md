@@ -34,6 +34,22 @@ by either are interchangeable.
   produced **identical MRR (0.903 sentence_aware, 0.896 hierarchy) on all 4
   backends.** Differences are wall time, not accuracy.
 
+## Headline benchmarks
+
+Three reproducible benches in [`docs/samples/benchmarks/`](docs/samples/benchmarks/),
+full writeup in [`docs/benchmarks.md`](docs/benchmarks.md). Numbers from a
+24-core / 122 GiB box with all 4 backends on `localhost`.
+
+| Bench | Setup | Result |
+|---|---|---|
+| **HNSW vs brute-force** (PG) | sentence_aware + bge-small-int8, 3 corpus sizes | At 75 chunks: HNSW 0.75× (slower). At 1k chunks: parity. **At 3.8k chunks: 4.20× faster query.** MRR identical at every scale. |
+| **Concurrent ingest** | `chunkshop orchestrate` on 8 PG cells, sentence_aware + bge-small | c=1: 42.3s. c=2: 1.71× speedup (85% efficient). **c=4: 2.45× speedup (61% efficient — sweet spot).** c=8: 2.81× (35%, contention). |
+| **8k-chunk throughput** | SCOTUS, 8079 chunks, all 4 backends | Query mean: SQLite 3.16ms < PG+HNSW 8.14ms < CH 14.67ms ≪ **MariaDB 158.74ms (20–50× cliff)**. Non-embed ingest: SQLite 2.19s ≪ MariaDB 35.69s. |
+
+The MariaDB query-latency cliff at scale is the clearest production-relevant
+finding. PG with `hnsw: true` is the production sweet spot; SQLite is the
+zero-ops dark horse at <1M chunks.
+
 ## Pipeline
 
 ```mermaid
