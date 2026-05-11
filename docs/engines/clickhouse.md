@@ -149,33 +149,159 @@ result = client.query(
 
 The chunkshop sink wraps the same query in `query_top_k(query_vec, k)`.
 
-## Gotchas
+## Benefits
 
-- **`delete_orphans: true` is a no-op + warn.** CH's `ALTER TABLE ... DELETE`
-  runs as an async mutation; it doesn't fit chunkshop's per-document atomic
-  write contract. The sink emits a one-time process-level warning when it
-  sees `delete_orphans: true`. To get dedup, use `engine:
-  "ReplacingMergeTree(created_at) ORDER BY (id)"` — duplicates collapse at
-  merge time (run `OPTIMIZE TABLE ... FINAL` to force merge for tests).
-- **No UPSERT path.** Re-running an `append` cell against `MergeTree` writes
-  duplicate rows. This is fundamental, not a chunkshop limitation — use
-  `ReplacingMergeTree` or `overwrite` mode.
-- **The `vector_similarity` index is experimental** in CH 24.10. Without the
-  server setting enabled, `hnsw: true` doesn't error — the CREATE INDEX
-  silently no-ops and queries fall back to brute-force `cosineDistance`. If
-  you measure that queries are slower than expected on big tables, the
-  index probably wasn't created.
-- **`metadata` is stored as a JSON string, not a typed Tuple.** ClickHouse
-  has rich nested types, but chunkshop normalizes metadata as a JSON-encoded
-  String for cross-backend portability. If you query metadata raw, you'll
-  need `JSONExtractString(metadata, 'key')`.
-- **`tags` is `Array(String)` — native, not JSON.** Unlike `metadata`, the
-  tags column uses CH's first-class array type, so `arrayJoin(tags)` and
-  similar work as expected.
-- **The Rust `ClickhouseBackend` is inherent-only**, not behind chunkshop's
-  `BackendConn` trait. R4 scoped it that way before R2's GAT lift made the
-  trait shape work for CH; lifting it to the trait surface is a v0.4.1
-  follow-up. End users don't notice; trait-surface contributors do.
+- **Horizontal scale.** ClickHouse is built for petabyte-scale columnar
+  workloads. Chunk tables routinely outgrow what PG / MariaDB can serve
+  with low latency; CH handles them with the same data-model layout.
+- **Columnar reads.** Querying just `doc_id, original_content` over
+  billions of rows is much faster than the equivalent row-store scan.
+- **Native `Array(String)` for `tags`.** First-class array column type —
+  `arrayJoin(tags)`, `has(tags, 'foo')`, all work without JSON parsing.
+- **Analytics-first.** Vector search joined to `GROUP BY` /
+  `quantile()` / window functions over millions of rows where columnar
+  engines pay off. Retrieval-augmented analytics in one place.
+- **Cheap append.** `INSERT` into `MergeTree` is genuinely append-only —
+  no row-level locks, no UPSERT lookups. Ingest throughput is higher than
+  any of the other 3 backends per unit of CPU.
+- **Experimental `vector_similarity` index.** Available in 24.10+ with a
+  server config flag; brings cosine queries from brute-force to indexed.
+
+## Limitations
+
+These are intrinsic to ClickHouse, not chunkshop bugs:
+
+- **No row-level UPSERT.** Re-running an `append` cell against the
+  default `MergeTree` engine writes **duplicate rows**. This is
+  fundamental to CH's append-only design. **Workaround:** use
+  `engine: "ReplacingMergeTree(created_at) ORDER BY (id)"` — duplicates
+  collapse at merge time (run `OPTIMIZE TABLE ... FINAL` to force merge
+  for tests).
+- **Async mutations don't fit per-document atomicity.**
+  `ALTER TABLE ... DELETE` is queued, not synchronous. **`delete_orphans:
+  true` is therefore a no-op + warn** in chunkshop — the sink emits a
+  one-time process-level warning when it sees it. For per-doc shrink
+  cleanup, use ReplacingMergeTree dedup at merge time instead.
+- **24.10+ required for `vector_similarity` index.** Earlier 24.x can
+  still ingest and query (cosine falls back to brute-force); the
+  experimental index requires server config to enable.
+- **`vector_similarity` is experimental.** Behavior and syntax may change
+  in future CH releases. If you depend on the index, pin your CH version
+  and re-validate on upgrade.
+- **`metadata` is stored as a JSON-encoded String, not a typed Tuple.**
+  ClickHouse has rich nested types, but chunkshop normalizes metadata as
+  String for cross-backend portability. If you query metadata raw, use
+  `JSONExtractString(metadata, 'key')`.
+
+## Gaps
+
+Tracked for v0.4.1+:
+
+- **`ClickhouseBackend` doesn't implement the `BackendConn` trait** on the
+  Rust side. R4 scoped it as inherent methods before R2's GAT lift made
+  the trait shape work for CH. Lifting it to the trait surface is a
+  v0.4.1 follow-up (Wave-2 #8). End users don't notice; trait-surface
+  contributors and embedders do.
+- **Bakeoff CLI in Rust is PG-only.** Rust's `chunkshop-rs bakeoff`
+  ignores CH targets. Use `python -m chunkshop.cli bakeoff` for
+  multi-backend bakeoffs including ClickHouse. v0.4.1 follow-up.
+- **No default to `ReplacingMergeTree`.** chunkshop's default is plain
+  `MergeTree`. Many users would actually want dedup-by-default. Will
+  consider flipping the default in a future release.
+
+## Troubleshooting
+
+**`Code: 36. DB::Exception: Unknown index type: vector_similarity`**
+
+Your CH server doesn't have the experimental setting enabled. Add this to
+`/etc/clickhouse-server/users.d/vector.xml` and restart the server:
+
+```xml
+<clickhouse>
+  <profiles>
+    <default>
+      <allow_experimental_vector_similarity_index>1</allow_experimental_vector_similarity_index>
+    </default>
+  </profiles>
+</clickhouse>
+```
+
+If you can't change the server config, set `hnsw: false` in your YAML —
+chunkshop will skip the CREATE INDEX and queries fall back to brute-force
+`cosineDistance`. Slower on big tables, but functional.
+
+**Re-running `mode: append` produced duplicate chunks**
+
+Default `MergeTree` doesn't dedup. Two options:
+
+```yaml
+# Option A: opt into lazy dedup
+target:
+  type: clickhouse
+  ...
+  engine: "ReplacingMergeTree(created_at) ORDER BY (id)"
+```
+
+Then force a merge for tests:
+
+```sql
+OPTIMIZE TABLE my_docs.chunks FINAL;
+```
+
+```yaml
+# Option B: use overwrite mode each run
+target:
+  type: clickhouse
+  ...
+  mode: overwrite       # drops + recreates; no duplicate accumulation
+```
+
+**Connection succeeds but queries return empty after `INSERT`**
+
+CH's INSERT path is eventually-consistent across replicas. On a
+single-node setup the row IS there immediately; on a replicated cluster
+with `internal_replication: true`, allow a few hundred ms for replication.
+Check `system.parts` to confirm:
+
+```sql
+SELECT count() FROM my_docs.chunks;
+SELECT * FROM system.parts WHERE database = 'my_docs' AND table = 'chunks';
+```
+
+**Query latency much higher than expected**
+
+Probably brute-force `cosineDistance` because the `vector_similarity`
+index wasn't created. Check:
+
+```sql
+SHOW CREATE TABLE my_docs.chunks;
+-- Look for INDEX ... TYPE vector_similarity
+```
+
+If the index isn't there, see the first troubleshooting entry.
+
+**`HTTP code 401: Unauthorized`**
+
+Verify your DSN credentials work directly:
+
+```bash
+curl -s -u "$USER:$PASS" "$HOST:8123/?query=SELECT+1"
+```
+
+The chunkshop CH driver uses HTTP basic auth via clickhouse-connect
+(Python) / `clickhouse` crate (Rust). DSN format is
+`clickhouse://user:pass@host:8123/database`.
+
+**`Memory limit exceeded` during a large ingest**
+
+CH defaults are conservative. For batch ingest of large corpora, raise
+the per-query memory limit:
+
+```sql
+SET max_memory_usage = 10000000000;  -- 10 GB
+```
+
+Or set it server-wide in `users.d/`.
 
 ## When to use ClickHouse
 

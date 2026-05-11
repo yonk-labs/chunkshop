@@ -125,23 +125,102 @@ with psycopg.connect(os.environ["CHUNKSHOP_DSN"]) as conn:
 Or via the sink's `query_top_k(query_vec, k)` method from either language.
 See [`docs/query-clients.md`](../query-clients.md) for full client examples.
 
-## Gotchas
+## Benefits
 
-- **`database:` means SCHEMA on PG.** This trips up new users; everywhere else
-  in chunkshop's vocabulary `database` is consistent, but the actual PG
-  catalog object is a schema. The DSN names the database; YAML names the
-  schema inside it.
-- **`source` column is write-once on `ON CONFLICT`.** The PG sink deliberately
-  excludes `source` from the UPDATE clause of an upsert. Two cells colliding
-  on `(doc_id, seq_num)` → the first writer's `source_tag` wins forever.
-  This is provenance, not a race condition.
-- **`PgVectorSink.write_document` commits per-document.** Mid-run crash only
-  loses the in-flight doc; the table's `{doc_id}::{seq_num}` primary key
-  means a rerun upserts cleanly. Live `SELECT COUNT(DISTINCT doc_id)` from
-  another psql session is a valid progress query.
-- **HNSW build cost is upfront.** `hnsw: true` builds the index after
-  ingest finishes. For >100k chunks expect minute-scale build time. Skip
-  it during bakeoffs (`hnsw: false`); enable for production tables.
+- **Most mature path.** pgvector is years old, widely deployed, well-tuned.
+  Every chunkshop feature works here first; other backends catch up.
+- **Native HNSW.** `hnsw: true` builds a proper approximate-nearest-neighbor
+  index. Queries on 100k+ chunks stay sub-100ms with the index; brute-force
+  on the same table would be seconds.
+- **Full upsert semantics.** `INSERT ... ON CONFLICT (id) DO UPDATE` lets
+  cells safely re-run without duplicating rows. Re-ingest the same corpus
+  with a new chunker — primary key collisions overwrite cleanly.
+- **Vectors join to your operational data.** Chunks in one schema, customers
+  in another — `JOIN` across them in a single query. None of the other 3
+  backends give you this without an ETL stage.
+- **Live progress queries work.** Per-document transactions mean
+  `SELECT COUNT(DISTINCT doc_id) FROM ...` from another `psql` session
+  reflects in-progress ingest state.
+
+## Limitations
+
+These are intrinsic to Postgres or pgvector — chunkshop won't change them:
+
+- **HNSW build is upfront.** With `hnsw: true`, the index builds after
+  ingest finishes. For >100k chunks expect minute-scale build time.
+  Workaround: skip during bakeoffs (`hnsw: false`), enable for production.
+- **Per-document transactions** make this a batch tool, not a streaming
+  one. One INSERT + COMMIT per document. Fine for batches up to ~1M docs;
+  unsuited for online single-row ingest at high QPS.
+- **`source` column is write-once on `ON CONFLICT`.** The sink deliberately
+  excludes `source` from the UPDATE clause. Two cells colliding on
+  `(doc_id, seq_num)` → first writer's `source_tag` wins forever.
+  Provenance is load-bearing, not a race.
+
+## Gaps
+
+Tracked for future versions, not in v0.4.0:
+
+- **No IVFFlat index variant.** chunkshop only exposes the HNSW knob;
+  pgvector also supports IVFFlat (smaller index, slower queries). If you
+  need IVFFlat for memory-constrained deployments, build the index manually
+  outside chunkshop after ingest.
+- **No `halfvec` / `bit` column type.** chunkshop writes `vector(N)`; pgvector
+  also supports half-precision and binary vector types for compression. Not
+  on the v0.4 roadmap; if you need this, file an issue.
+
+## Troubleshooting
+
+**`ERROR: type "vector" does not exist`**
+
+The pgvector extension isn't installed in your target database. Run as
+superuser:
+
+```sql
+CREATE EXTENSION vector;
+```
+
+chunkshop's sink does NOT auto-create the extension — that requires
+superuser, which most DSNs don't have.
+
+**`database:` confusion**
+
+If you're staring at psql and your chunkshop table doesn't appear under
+`\dt`, you're probably in the wrong schema. The YAML `database: my_docs`
+maps to a PG schema, not a database:
+
+```sql
+-- Wrong: looking in the public schema
+SELECT * FROM chunks;
+
+-- Right: chunkshop wrote to "my_docs.chunks"
+SELECT * FROM my_docs.chunks;
+-- or
+SET search_path = my_docs, public;
+SELECT * FROM chunks;
+```
+
+**`mode: overwrite` refused due to foreign source_tag**
+
+If you see `overwrite refuses to drop {schema}.{table}: table holds rows
+with source_tag X, this cell's source_tag is Y`, the table was populated
+by a different cell. Either:
+
+- Use `mode: append` if you meant to add rows alongside the existing cell's data.
+- Set `force_overwrite: true` if you really do want to drop a foreign cell's data.
+- Pick a different `database:` (schema) to keep cells isolated.
+
+**HNSW queries are slow on a fresh-ingest table**
+
+Did you run `ANALYZE my_docs.chunks;`? Postgres' query planner sometimes
+picks brute-force seq-scan over the HNSW index without fresh statistics.
+
+**Connection pool exhaustion under `chunkshop orchestrate`**
+
+Each cell subprocess opens its own per-document connection. With
+`orchestrate --concurrency 8`, you have up to 8 concurrent connections per
+backend. Make sure your PG `max_connections` accommodates the orchestrator
++ any other consumers.
 
 ## When to use Postgres
 

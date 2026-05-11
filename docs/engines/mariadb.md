@@ -126,29 +126,109 @@ with conn.cursor() as cur:
 The chunkshop sink's `query_top_k(query_vec, k)` method wraps this; use it
 from Python or Rust without writing the SQL.
 
-## Gotchas
+## Benefits
 
-- **`embedding` writes go through `VEC_FromText(...)`, not parameter binding.**
-  MariaDB's driver doesn't ship a typed vector parameter, so the sink renders
-  vectors as text and wraps them with `VEC_FromText('[…]')`. The placeholder
-  is interpolated server-side; values are still SQL-injection-safe because
-  the float list is rendered through Python's repr / Rust's `format!`. No
-  user-supplied string ever lands in this column.
-- **`VEC_DISTANCE_COSINE` returns DOUBLE on Rust today**, read through a
-  defensive `try_get::<f64>() → try_get::<f32>` cascade in the Rust sink.
-  Not user-visible, but noted in v0.4.1 follow-ups for tightening.
-- **`GET_LOCK` for create-table serialization is connection-scoped.** The
-  Rust `acquire_create_lock` shape doesn't take a guard yet (v0.4.1
-  follow-up); works in practice because the lock-holder transaction is
-  short-lived.
-- **`hnsw: true` is accepted but not load-bearing.** MariaDB 11.7's vector
-  index is build-on-INSERT, not a separate post-ingest step like PG's HNSW.
-  Set it for documentation intent; the sink doesn't emit a separate `CREATE
-  INDEX` for vectors.
-- **`tags JSON` doesn't round-trip identically to PG's `tags text[]` if you
-  inspect the column raw.** Pythonland: `["a", "b"]` (list); MariaDB raw:
-  `'["a", "b"]'` (JSON string). chunkshop's query path decodes either; only
-  matters if you `SELECT tags` outside chunkshop's API.
+- **No extension install.** Vector support is in MariaDB 11.7+ out of the
+  box. No `CREATE EXTENSION` step, no superuser required.
+- **MySQL-family compatibility.** Existing client libraries, ORMs, and
+  monitoring tools work. If your stack runs MySQL/MariaDB today, no new
+  ops surface.
+- **Native typed vector column.** `VECTOR(N)` enforces dim at the schema
+  level. A dim mismatch on INSERT fails immediately, not at query time.
+- **Native `Array(String)` ... actually, JSON for arrays.** Wait — that's
+  in the Limitations list. The benefit here: MariaDB does have a robust
+  JSON type with path operators (`JSON_EXTRACT`, `->`, `->>`) for querying
+  inside `tags` and `metadata` columns.
+- **Transactional + vector together.** Cosine search joined to your
+  customers table, all in one ACID transaction.
+
+## Limitations
+
+These are intrinsic to MariaDB — chunkshop can't work around them:
+
+- **11.7+ required.** No vector type or `VEC_*` functions exist on
+  earlier versions. Plain MySQL 8 / 9 are not supported (different vector
+  story, not yet ported). Workaround: stay on Postgres or SQLite if you
+  can't upgrade past MariaDB 10.x.
+- **No first-class array type.** chunkshop's `tags text[]` (PG) becomes
+  `tags JSON` here. Functionally equivalent through chunkshop's query API,
+  but raw `SELECT tags` returns a JSON-string blob, not a typed array.
+  Workaround: use `JSON_EXTRACT(tags, '$[*]')` or chunkshop's `query_top_k`.
+- **`embedding` writes via `VEC_FromText` interpolation, not parameter
+  binding.** MariaDB's driver doesn't ship a typed vector parameter. The
+  sink renders vectors as text and server-side-parses them. Values are
+  SQL-injection-safe (rendered through Python `repr` / Rust `format!` over
+  `Vec<f32>` — no user strings ever touch this code path), just slightly
+  less efficient than a typed bind.
+- **MariaDB's vector index is build-on-INSERT, not post-ingest.** Unlike
+  pgvector HNSW, there's no separate index-build step to tune. `hnsw: true`
+  in YAML is accepted but doesn't trigger a CREATE INDEX — the index is
+  managed by MariaDB when the `VECTOR(N)` column is queried.
+
+## Gaps
+
+Tracked for v0.4.1+:
+
+- **Rust distance reader uses defensive cascade** — `try_get::<f64>` then
+  `try_get::<f32>`. MariaDB's `VEC_DISTANCE_COSINE` return type can be
+  pinned once a larger-vector parity test confirms behavior. Wave-2
+  follow-up #2. End users don't see this; it's a Rust-side cleanup.
+- **`acquire_create_lock` has no paired release guard.** MariaDB's
+  `GET_LOCK` is connection-scoped, so the lock auto-releases when the
+  tx-bearing connection drops — works in practice for short-lived create
+  transactions. Wave-2 follow-up #1: lift to a `LockGuard<'_>` for RAII
+  symmetry with the Python `with_create_lock` context manager.
+- **Bakeoff CLI is Python-only multi-backend.** Rust's `chunkshop-rs
+  bakeoff` is PG-only. Use `python -m chunkshop.cli bakeoff` for
+  cross-backend bakeoffs including MariaDB until v0.4.1.
+
+## Troubleshooting
+
+**`ERROR 1064 ... near 'VECTOR(384)'`**
+
+Your MariaDB is older than 11.7. Check with:
+
+```sql
+SELECT VERSION();
+```
+
+If it reports `10.x` or any MariaDB <11.7, you need to upgrade — there is
+no shim or extension that adds `VECTOR` to older versions.
+
+**`Unknown function VEC_DISTANCE_COSINE` on query**
+
+Same root cause as above — pre-11.7 server. Verify
+`SELECT @@version_compile_os, VERSION();` and upgrade.
+
+**Connection succeeds but `CREATE TABLE` fails with privilege error**
+
+The user in your DSN needs `CREATE`, `INSERT`, `SELECT`, `UPDATE`, `DELETE`,
+plus `INDEX` (for the vector index) on the target database. A minimal grant:
+
+```sql
+GRANT ALL PRIVILEGES ON `my_chunks`.* TO 'chunkshop_user'@'%';
+FLUSH PRIVILEGES;
+```
+
+`ALL` is overkill but easiest; tighten in production.
+
+**`tags` shows up as a string in psql/MySQL Workbench but as a list in
+chunkshop**
+
+This is expected — the underlying column type is `JSON`, which MySQL
+clients render as a string. chunkshop's read path decodes it. To filter on
+tags inline:
+
+```sql
+SELECT doc_id FROM my_docs.chunks
+WHERE JSON_CONTAINS(tags, '"my_tag"');
+```
+
+**`mysql:` vs `mariadb:` DSN scheme**
+
+Both work. chunkshop uses `pymysql` / sqlx-mysql under the hood; both
+drivers connect to MariaDB via the MySQL wire protocol regardless of the
+scheme name in your DSN.
 
 ## When to use MariaDB
 

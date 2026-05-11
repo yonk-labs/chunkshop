@@ -138,28 +138,117 @@ rows = conn.execute(
 
 The chunkshop sink wraps this in `query_top_k(query_vec, k)`.
 
-## Gotchas
+## Benefits
 
-- **`target.hnsw: true` is a no-op.** sqlite-vec uses **brute-force KNN** —
-  there is no index data structure to build. The sink emits a one-time
-  process-level warning when it sees `hnsw: true`. Set `hnsw: false` to
-  silence it. Querying with `embedding MATCH '[...]' AND k = N` works just
-  fine without an index.
-- **vec0 refuses UPSERT / INSERT OR REPLACE.** chunkshop's write path does
-  `DELETE FROM chunks_vec WHERE id = ?` then `INSERT` — two statements per
-  chunk on rewrites. Fine for tens of thousands of chunks; less ideal for
-  millions.
-- **No schema namespace.** `database:` is accepted for parity with the other
-  backends' YAML shape, but ignored at runtime. Don't try to scope two
-  chunkshop tables by "database" — point them at different `.db` files
-  instead.
-- **No connection pool.** rusqlite holds a single connection per backend
-  instance. Concurrent ingest into the same `.db` file from multiple cells
-  will serialize on SQLite's file lock; this is fine for a single-machine
-  build, painful for fan-out.
-- **`:memory:` is per-connection.** If you set `dsn_env` to a var resolving
-  to `:memory:`, every fresh `connect()` is a fresh empty database. Use for
-  tests; not useful for cross-process ingest.
+- **Zero server.** No daemon to run, no port to open, no auth to configure.
+  The `.db` file IS the database. Move it, copy it, version it, ship it
+  in a Docker image, embed it in your app binary.
+- **`:memory:` mode.** Point `dsn_env` at a var resolving to `":memory:"`
+  for ephemeral in-process tests. Fastest possible test isolation.
+- **Tiny operational surface.** ~5 MB total native code (SQLite +
+  sqlite-vec). No service to monitor, no backup story beyond `cp file.db`.
+- **Same chunkshop pipeline.** Every chunker, embedder, extractor, source,
+  and sink mode works. No "SQLite mode" feature gap.
+- **Single-file portable archives.** Bake an embedded vector store into
+  the artifact you ship — CLI tools, desktop apps, edge agents.
+
+## Limitations
+
+These are intrinsic to SQLite + sqlite-vec, not chunkshop bugs:
+
+- **Brute-force KNN only.** sqlite-vec has no ANN index data structure.
+  `hnsw: true` in YAML is **accepted but a no-op** (the sink emits a
+  one-time process-level warning when it sees it). Set `hnsw: false` to
+  silence the warning. Queries with `MATCH '[…]' AND k = N` still work —
+  they just scan every vector. Workable to ~1M chunks; painful beyond.
+- **`vec0` virtual table refuses UPSERT.** chunkshop's write path is
+  `DELETE FROM chunks_vec WHERE id = ?; INSERT INTO chunks_vec (...) VALUES (...)`
+  — two statements per chunk on rewrites. Fine for thousands of chunks;
+  less ideal for tens of millions.
+- **No schema namespace.** `database:` in YAML is accepted for cross-engine
+  parity but **ignored at runtime**. Two chunkshop tables can't share a
+  `.db` file by "different database" — point them at different files.
+- **Single-writer file lock.** SQLite serializes writers via OS file lock.
+  Multi-process ingest into the same `.db` file is sequential, not
+  parallel. Use one `.db` per cell, or use Postgres / ClickHouse for
+  fan-out.
+- **`:memory:` is per-connection, not per-process.** A fresh `.connect()`
+  to `:memory:` is an empty database — every connection holds its own.
+  Don't share across processes.
+
+## Gaps
+
+Tracked for future versions:
+
+- **No connection pool.** Rust uses `rusqlite` directly (no pool); Python
+  uses `sqlite3.connect` per write. Both languages open + close per
+  document. For single-cell ingest this is invisible (the file is local
+  and the open syscall is microseconds); for high-cell-count fan-out you
+  might want pooling. Not on the v0.4 roadmap.
+- **Bakeoff CLI in Rust is PG-only.** The Rust `chunkshop-rs bakeoff` CLI
+  ignores SQLite targets. Use `python -m chunkshop.cli bakeoff` for
+  multi-backend bakeoffs including SQLite. v0.4.1 follow-up.
+
+## Troubleshooting
+
+**`ImportError: No module named 'sqlite_vec'`** (Python)
+
+Install the extras: `uv sync --extra sqlite` or `pip install
+'chunkshop[sqlite]'`. The `sqlite-vec` package ships pre-built native
+binaries for common platforms.
+
+**`Could not load extension`** at runtime
+
+You need to call `conn.enable_load_extension(True)` BEFORE `sqlite_vec.load(conn)`.
+chunkshop's sink does this internally; only matters if you query the
+`.db` from outside chunkshop's API.
+
+**Concurrent ingest is slower than expected**
+
+If you're running `chunkshop orchestrate --concurrency 4` against
+**the same `.db` file**, you're hitting SQLite's writer lock — only one
+process can write at a time. Two fixes:
+
+```yaml
+# Option A: one file per cell (use cell_name as suffix)
+target:
+  type: sqlite
+  dsn_env: SQLITE_PATH       # set per-cell to /tmp/chunks-{cell}.db
+  database: ignored
+  table: chunks
+```
+
+```bash
+# Option B: switch to a server backend for parallel ingest
+chunkshop ingest --config cell.yaml  # one at a time, single .db
+# or
+export CHUNKSHOP_DSN=postgresql://...   # move to PG and fan out
+```
+
+**`disk image is malformed` after a crash**
+
+WAL mode (which sqlite-vec uses by default) usually recovers cleanly. If
+it doesn't, the `.db` was being written to mid-`fsync`. Recovery:
+
+```bash
+sqlite3 broken.db ".recover" | sqlite3 recovered.db
+```
+
+For production use cases where this matters, switch to Postgres — SQLite
+on networked storage is not a supported deployment topology.
+
+**`:memory:` ingest works, but queries return empty**
+
+Each `connect()` opens a fresh `:memory:` database. If your ingest and
+your query are in different processes (or different `sqlite3.connect`
+calls without the URI `file::memory:?cache=shared` extension), they don't
+share state. Use a real file path for cross-process work.
+
+**`target.hnsw: true` warning is annoying**
+
+You set `hnsw: true` but sqlite-vec has no index. Either flip to
+`hnsw: false` (no functional change, warning silenced) or accept the
+warning. The warning fires once per process; subsequent cells stay quiet.
 
 ## When to use SQLite
 
