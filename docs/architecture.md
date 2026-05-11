@@ -272,6 +272,12 @@ Rust — both load the same ONNX file from Hugging Face. For Xenova int8
 BGE variants, Rust pins `intra_threads=1` for bit-near-exact parity vs
 Python (validated by `tests/embedding_parity.rs`).
 
+The shared YAML parser surface is `pyyaml.safe_load` on Python and
+`serde_yaml_ng` on Rust (a maintained fork of `serde_yaml`; migrated from
+`serde_yml` in v0.4.1 for supply-chain hygiene). Loading semantics are
+identical across both — the same `serde` / pydantic derive contract;
+behavior unchanged from prior chunkshop releases.
+
 ## Parallel orchestration
 
 ```mermaid

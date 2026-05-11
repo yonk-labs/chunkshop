@@ -18,8 +18,8 @@ fn cfg(database: &str, table: &str, mode: &str) -> chunkshop::config::Clickhouse
     let yaml = format!(
         "type: clickhouse\ndsn_env: {DSN_ENV}\ndatabase: {database}\ntable: {table}\nmode: {mode}\nhnsw: false"
     );
-    let raw: serde_yml::Value = serde_yml::from_str(&yaml).unwrap();
-    let target: chunkshop::config::TargetConfig = serde_yml::from_value(raw).unwrap();
+    let raw: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+    let target: chunkshop::config::TargetConfig = serde_yaml_ng::from_value(raw).unwrap();
     match target {
         chunkshop::config::TargetConfig::Clickhouse(t) => t,
         _ => panic!("expected Clickhouse variant"),
@@ -89,8 +89,8 @@ async fn append_mode_rejects_missing_table() -> anyhow::Result<()> {
     let yaml = format!(
         "type: clickhouse\ndsn_env: {DSN_ENV}\ndatabase: {db}\ntable: chunks\nmode: append\nsource_tag: cell_a\nhnsw: false"
     );
-    let raw: serde_yml::Value = serde_yml::from_str(&yaml).unwrap();
-    let target: chunkshop::config::TargetConfig = serde_yml::from_value(raw).unwrap();
+    let raw: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+    let target: chunkshop::config::TargetConfig = serde_yaml_ng::from_value(raw).unwrap();
     let chunkshop::config::TargetConfig::Clickhouse(cfg) = target else { unreachable!() };
 
     let sink = ClickhouseSink::new(cfg, ClickhouseBackend::new(DSN_ENV.to_string()), 384);

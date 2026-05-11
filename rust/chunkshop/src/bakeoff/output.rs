@@ -238,7 +238,7 @@ pub fn write_recommended_yaml(
         },
     });
 
-    let yaml_text = serde_yml::to_string(&recommended)?;
+    let yaml_text = serde_yaml_ng::to_string(&recommended)?;
     let out = out_dir.join("recommended.yaml");
     std::fs::write(&out, yaml_text).with_context(|| format!("write {}", out.display()))?;
     Ok(out)

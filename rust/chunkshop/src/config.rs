@@ -993,6 +993,14 @@ pub struct RuntimeConfig {
     pub log_path: Option<String>,
     #[serde(default)]
     pub heartbeat_every: Option<usize>,
+    /// "text" (default) or "json" — controls the CLI's tracing-subscriber
+    /// formatter. JSON emits one structured event per line for log aggregators.
+    #[serde(default = "default_log_format")]
+    pub log_format: String,
+}
+
+fn default_log_format() -> String {
+    "text".to_string()
 }
 
 /// Validate identifier against Python's regex: `^[a-z_][a-z0-9_]*$`.
@@ -1012,7 +1020,7 @@ fn validate_ident(name: &str, field: &str) -> Result<()> {
 /// migration-friendly error when found. Without this pass, serde's default
 /// errors are cryptic ("unknown variant `pgvector`") or absent (silently
 /// accepted legacy fields).
-fn reject_legacy_forms(yaml: &serde_yml::Value) -> Result<()> {
+fn reject_legacy_forms(yaml: &serde_yaml_ng::Value) -> Result<()> {
     let target = yaml.get("target").and_then(|v| v.as_mapping());
     let Some(target) = target else {
         return Ok(()); // No target block; nothing to validate.
@@ -1047,11 +1055,11 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
 
     // V4-SC-006: reject 0.3.x legacy YAML shapes with friendly errors before
     // typed deserialization (which would emit cryptic "unknown variant" errors).
-    let raw_value: serde_yml::Value = serde_yml::from_str(&text)
+    let raw_value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
         .with_context(|| format!("parsing YAML at {}", path.display()))?;
     reject_legacy_forms(&raw_value)?;
 
-    let cfg: CellConfig = serde_yml::from_str(&text)
+    let cfg: CellConfig = serde_yaml_ng::from_str(&text)
         .with_context(|| format!("parsing YAML {}", path.display()))?;
     match &cfg.target {
         TargetConfig::Postgres(t) => {
@@ -1262,7 +1270,7 @@ target:
     #[test]
     fn promote_column_name_lowercases_and_double_underscores() {
         let pc: PromoteColumn =
-            serde_yml::from_str("{ path: entities.ORG, type: \"text[]\" }").unwrap();
+            serde_yaml_ng::from_str("{ path: entities.ORG, type: \"text[]\" }").unwrap();
         assert_eq!(pc.column_name(), "entities__org");
     }
 

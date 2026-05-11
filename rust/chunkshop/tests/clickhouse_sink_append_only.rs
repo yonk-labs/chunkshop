@@ -29,8 +29,8 @@ fn make_cfg(
     let yaml = format!(
         "type: clickhouse\ndsn_env: {DSN_ENV}\ndatabase: {db}\ntable: {table}\nmode: {mode}\nhnsw: false\ndelete_orphans: {delete_orphans}"
     );
-    let raw: serde_yml::Value = serde_yml::from_str(&yaml).unwrap();
-    let target: TargetConfig = serde_yml::from_value(raw).unwrap();
+    let raw: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+    let target: TargetConfig = serde_yaml_ng::from_value(raw).unwrap();
     let TargetConfig::Clickhouse(t) = target else {
         unreachable!("expected Clickhouse variant");
     };

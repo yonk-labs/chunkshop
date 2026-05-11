@@ -12,7 +12,75 @@ use clap::{Parser, Subcommand};
 
 use chunkshop::bakeoff::output::{write_recommended_yaml, write_report_md, write_results_json};
 use chunkshop::bakeoff::BakeoffConfig;
+use chunkshop::config::{
+    ChunkerConfig, EmbedderConfig, ExtractorConfig, FramerConfig, SourceConfig, TargetConfig,
+};
 use chunkshop::{load_config, run_bakeoff_with_base, run_cell};
+
+fn source_type_label(s: &SourceConfig) -> &'static str {
+    match s {
+        SourceConfig::Files(_) => "files",
+        SourceConfig::JsonCorpus(_) => "json_corpus",
+        SourceConfig::PgTable(_) => "pg_table",
+        SourceConfig::MariadbTable(_) => "mariadb_table",
+        SourceConfig::SqliteTable(_) => "sqlite_table",
+        SourceConfig::Http(_) => "http",
+        SourceConfig::S3(_) => "s3",
+        SourceConfig::ClickhouseTable(_) => "clickhouse_table",
+        SourceConfig::Inline(_) => "inline",
+    }
+}
+
+fn framer_type_label(f: &FramerConfig) -> &'static str {
+    match f {
+        FramerConfig::Identity(_) => "identity",
+        FramerConfig::HeadingBoundary(_) => "heading_boundary",
+        FramerConfig::RegexBoundary(_) => "regex_boundary",
+        FramerConfig::Jsonpath(_) => "jsonpath",
+    }
+}
+
+fn chunker_type_label(c: &ChunkerConfig) -> &'static str {
+    match c {
+        ChunkerConfig::SentenceAware(_) => "sentence_aware",
+        ChunkerConfig::Hierarchy(_) => "hierarchy",
+        ChunkerConfig::FixedOverlap(_) => "fixed_overlap",
+        ChunkerConfig::NeighborExpand(_) => "neighbor_expand",
+        ChunkerConfig::Semantic(_) => "semantic",
+        ChunkerConfig::SummaryEmbed(_) => "summary_embed",
+        ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
+    }
+}
+
+fn embedder_type_label(e: &EmbedderConfig) -> String {
+    match e {
+        EmbedderConfig::Fastembed(c) => format!("fastembed: {} (dim={})", c.model_name, c.dim),
+    }
+}
+
+fn extractor_type_label(e: &ExtractorConfig) -> &'static str {
+    match e {
+        ExtractorConfig::None(_) => "none",
+        ExtractorConfig::Composite(_) => "composite",
+        ExtractorConfig::RakeKeywords(_) => "rake_keywords",
+        ExtractorConfig::LangDetect(_) => "lang_detect",
+        ExtractorConfig::KeybertPhrases(_) => "keybert_phrases",
+        ExtractorConfig::SpacyEntities(_) => "spacy_entities",
+    }
+}
+
+fn target_type_label(t: &TargetConfig) -> String {
+    match t {
+        TargetConfig::Postgres(c) =>
+            format!("postgres -> {}.{} (mode={})", c.database_name, c.table, c.mode),
+        TargetConfig::Mariadb(c) =>
+            format!("mariadb -> {}.{} (mode={})", c.database_name, c.table, c.mode),
+        TargetConfig::Sqlite(c) =>
+            format!("sqlite -> {}.{} (mode={})", c.database_name, c.table, c.mode),
+        TargetConfig::Clickhouse(c) =>
+            format!("clickhouse -> {}.{} (mode={})", c.database_name, c.table, c.mode),
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "chunkshop-rs", version, about = "Rust chunkshop ingest + bakeoff")]
@@ -25,6 +93,15 @@ struct Cli {
 enum Command {
     /// Run a single ingest cell from a YAML config.
     Ingest {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    /// Validate a YAML config without running it. Exits 0 if valid, non-zero otherwise.
+    ///
+    /// Loads + runs serde + custom validation (identifier regex, mode/source_tag
+    /// coupling, BYO-embedder field pairing). Does NOT open DB connections or
+    /// create tables.
+    Validate {
         #[arg(long)]
         config: PathBuf,
     },
@@ -58,7 +135,7 @@ async fn run_bakeoff_command(
     keep_schema: bool,
 ) -> Result<()> {
     let text = std::fs::read_to_string(&config)?;
-    let cfg: BakeoffConfig = serde_yml::from_str(&text)
+    let cfg: BakeoffConfig = serde_yaml_ng::from_str(&text)
         .map_err(|e| anyhow!("parse {}: {e}", config.display()))?;
 
     let n_combos = cfg.matrix.chunkers.len() * cfg.matrix.embedders.len();
@@ -131,12 +208,21 @@ async fn run_bakeoff_command(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "chunkshop=info".into()),
-        )
-        .init();
+    // CHUNKSHOP_LOG_FORMAT=json switches the tracing subscriber to JSON output
+    // (one structured event per line — for log aggregators). Default: text.
+    // Mirror of runtime.log_format in YAML; env var takes precedence here
+    // because tracing-subscriber initializes once at process start, before the
+    // subcommand has loaded the YAML.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "chunkshop=info".into());
+    if std::env::var("CHUNKSHOP_LOG_FORMAT").as_deref() == Ok("json") {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .json()
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
 
     let cli = Cli::parse();
     match cli.command {
@@ -148,6 +234,26 @@ async fn main() -> Result<()> {
                 result.cell_name, result.docs_processed, result.chunks_written, result.wall_seconds
             );
             Ok(())
+        }
+        Command::Validate { config } => {
+            match load_config(&config) {
+                Ok(cfg) => {
+                    println!("[validate] OK — cell {:?}", cfg.cell_name);
+                    println!("  source:   {}", source_type_label(&cfg.source));
+                    println!("  framer:   {}", framer_type_label(&cfg.framer));
+                    println!("  chunker:  {}", chunker_type_label(&cfg.chunker));
+                    let emb_label = embedder_type_label(&cfg.embedder);
+                    println!("  embedder: {emb_label}");
+                    println!("  extractor:{}", extractor_type_label(&cfg.extractor));
+                    let tgt = target_type_label(&cfg.target);
+                    println!("  target:   {tgt}");
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("[validate] FAIL: {e:#}");
+                    std::process::exit(1);
+                }
+            }
         }
         Command::Bakeoff {
             config,

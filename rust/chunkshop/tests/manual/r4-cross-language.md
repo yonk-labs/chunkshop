@@ -55,8 +55,8 @@ use chunkshop::sinks::ClickhouseSink;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let yaml = "type: clickhouse\ndsn_env: CHUNKSHOP_TEST_DSN_CH\ndatabase: chunkshop_xlang\ntable: parity_chunks\nmode: append\nsource_tag: rs_query\nhnsw: false";
-    let raw: serde_yml::Value = serde_yml::from_str(yaml).unwrap();
-    let target: chunkshop::config::TargetConfig = serde_yml::from_value(raw).unwrap();
+    let raw: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml).unwrap();
+    let target: chunkshop::config::TargetConfig = serde_yaml_ng::from_value(raw).unwrap();
     let chunkshop::config::TargetConfig::Clickhouse(cfg) = target else { unreachable!() };
     let backend = ClickhouseBackend::new(cfg.dsn_env.clone());
     let sink = ClickhouseSink::new(cfg, backend, 4);
