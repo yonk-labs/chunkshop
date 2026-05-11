@@ -1,8 +1,11 @@
 """Single-cell runner: wires source -> chunker -> embedder -> extractor -> sink."""
 from __future__ import annotations
+import logging
 import os
 import time
 import traceback
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, replace as _replace
 from pathlib import Path
 from typing import Optional
@@ -33,7 +36,7 @@ class CellResult:
 
 def _log(msg: str, log_path: Optional[Path]) -> None:
     line = f"[{time.strftime('%H:%M:%S')}] {msg}"
-    print(line, flush=True)
+    logger.info("%s", line)
     if log_path:
         with log_path.open("a") as f:
             f.write(line + "\n")

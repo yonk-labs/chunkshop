@@ -364,10 +364,14 @@ fn split_prose(text: &str, max_chars: usize, min_chars: usize) -> Vec<String> {
 ///
 /// The trailing "\n" flush-marker is kept byte-for-byte with Python so chunks
 /// concatenate back into something close to the input.
+///
+/// # Panics
+///
+/// Panics if `max_chars == 0`. Validation is expected at the caller — config
+/// loaders enforce `max_chars > 0` at YAML parse time, so this assertion is
+/// reachable only via programmatic API misuse.
 pub fn split_to_max_chars(text: &str, max_chars: usize) -> Vec<String> {
-    if max_chars == 0 {
-        panic!("max_chars must be positive");
-    }
+    assert!(max_chars > 0, "max_chars must be positive");
     if text.chars().count() <= max_chars {
         return vec![text.to_string()];
     }
