@@ -564,6 +564,10 @@ class RuntimeConfig(_Base):
     doc_limit: Optional[int] = None
     log_path: Optional[str] = None
     heartbeat_every: int = 25
+    # "text" (default) or "json" — controls the CLI's stdout log handler format.
+    # JSON format emits one structured event per line; useful for log aggregators
+    # (Datadog, Loki, CloudWatch, Cloud Logging).
+    log_format: Literal["text", "json"] = "text"
 
 
 class CellConfig(_Base):

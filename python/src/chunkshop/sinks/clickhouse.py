@@ -30,6 +30,7 @@ from chunkshop.config import TargetConfig
 
 _log = logging.getLogger(__name__)
 _DELETE_ORPHANS_WARNED: set[int] = set()  # PID-keyed: warn once per process
+_APPEND_WITHOUT_REPLACING_WARNED: set[int] = set()
 
 
 def _jsonb_path_get(meta: dict, path: str):
@@ -96,6 +97,22 @@ class ClickHouseSink:
                     "are async background ops that don't fit chunkshop's per-document "
                     "atomic write contract. Use ReplacingMergeTree(created_at) for "
                     "lazy dedup or run manual ALTER TABLE … DELETE WHERE."
+                )
+        # Warn once per process if mode=append against the default MergeTree
+        # engine (no per-row UPSERT → re-ingest duplicates accumulate). Silent
+        # on overwrite mode and on explicit ReplacingMergeTree engines.
+        engine = getattr(cfg, "engine", None) or ""
+        if cfg.mode == "append" and "ReplacingMergeTree" not in engine:
+            pid = os.getpid()
+            if pid not in _APPEND_WITHOUT_REPLACING_WARNED:
+                _APPEND_WITHOUT_REPLACING_WARNED.add(pid)
+                _log.warning(
+                    "ClickHouse mode='append' on the default MergeTree engine "
+                    "accumulates duplicate rows when the same (doc_id, seq_num) is "
+                    "re-ingested. ClickHouse has no per-row UPSERT. Set "
+                    "target.engine: 'ReplacingMergeTree(created_at) ORDER BY (id)' "
+                    "for lazy dedup at merge time (run OPTIMIZE TABLE … FINAL to "
+                    "force a merge), or use mode='overwrite' for fresh ingests."
                 )
 
     def _fq(self) -> str:

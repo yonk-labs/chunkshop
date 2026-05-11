@@ -24,11 +24,19 @@ use crate::sinks::base::Sink;
 /// (each process gets its own static); the OnceLock is process-scoped by
 /// definition.
 static DELETE_ORPHANS_WARNED: OnceLock<()> = OnceLock::new();
+static APPEND_WITHOUT_REPLACING_WARNED: OnceLock<()> = OnceLock::new();
 
 const ORPHAN_WARN_MSG: &str =
     "target.delete_orphans=true on ClickHouse is a no-op — CH mutations are async \
      background ops that don't fit chunkshop's per-document atomic write contract. \
      Use ReplacingMergeTree(created_at) for lazy dedup or run manual ALTER TABLE … DELETE WHERE.";
+
+const APPEND_WITHOUT_REPLACING_MSG: &str =
+    "ClickHouse mode='append' on the default MergeTree engine accumulates duplicate \
+     rows when the same (doc_id, seq_num) is re-ingested. ClickHouse has no per-row \
+     UPSERT. Set target.engine: 'ReplacingMergeTree(created_at) ORDER BY (id)' for \
+     lazy dedup at merge time (run OPTIMIZE TABLE … FINAL to force a merge), or use \
+     mode='overwrite' for fresh ingests.";
 
 pub struct ClickhouseSink {
     cfg: ClickhouseTargetConfig,
@@ -41,6 +49,16 @@ impl ClickhouseSink {
         if cfg.delete_orphans {
             DELETE_ORPHANS_WARNED.get_or_init(|| {
                 warn!("{ORPHAN_WARN_MSG}");
+            });
+        }
+        // Warn once per process if the user is using append mode without
+        // opting into ReplacingMergeTree-style dedup. Silent on overwrite mode
+        // (no duplicate risk) or when an explicit ReplacingMergeTree engine is set.
+        if cfg.mode == "append"
+            && cfg.engine.as_deref().map(|e| !e.contains("ReplacingMergeTree")).unwrap_or(true)
+        {
+            APPEND_WITHOUT_REPLACING_WARNED.get_or_init(|| {
+                warn!("{APPEND_WITHOUT_REPLACING_MSG}");
             });
         }
         Self { cfg, backend, embed_dim }

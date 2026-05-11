@@ -230,6 +230,37 @@ Both work. chunkshop uses `pymysql` / sqlx-mysql under the hood; both
 drivers connect to MariaDB via the MySQL wire protocol regardless of the
 scheme name in your DSN.
 
+## Security note: transitive `rsa` Marvin Attack CVE
+
+chunkshop's MariaDB code path uses `sqlx-mysql` (Rust) and `pymysql` (Python).
+`sqlx-mysql` pulls in the `rsa` crate transitively for RSA-based MariaDB auth
+plugins. As of v0.4.0, `rsa 0.9.10` carries
+[RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071)
+(Marvin Attack: potential key recovery through timing sidechannels).
+**No upstream fix is available.**
+
+**Risk:** An adversary on the network path between chunkshop and MariaDB,
+with the ability to observe many TLS / auth handshakes, could recover RSA
+private key bits over time. Requires (a) MariaDB configured to use an
+RSA-based auth plugin (`caching_sha2_password` or `sha256_password`), AND
+(b) network position to observe handshake timing.
+
+**Mitigation for users on untrusted networks:**
+
+1. Prefer `mysql_native_password` auth, which doesn't use RSA:
+   ```sql
+   ALTER USER 'chunkshop_user'@'%' IDENTIFIED WITH mysql_native_password BY '...';
+   ```
+2. Terminate TLS outside chunkshop (e.g., at a sidecar / proxy) so the
+   handshake timing is in a sealed context.
+3. Watch the `rsa` crate for a Marvin-resistant release; chunkshop will bump
+   as soon as one ships.
+
+**This risk does NOT apply to:**
+- Local MariaDB connections (loopback).
+- MariaDB in a trusted VPC with no adversarial network position.
+- Connections using `mysql_native_password` (RSA path is not exercised).
+
 ## When to use MariaDB
 
 - **Your stack is MySQL-family.** You already operate MariaDB; no reason to
