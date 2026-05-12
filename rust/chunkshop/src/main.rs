@@ -116,13 +116,17 @@ enum Command {
         /// Path to the bakeoff YAML config.
         #[arg(long)]
         config: PathBuf,
-        /// Postgres DSN (sets `target.dsn_env` before running).
+        /// Optional Postgres DSN (legacy single-target mode). Sets
+        /// `target.dsn_env` before running. For multi-target bakeoffs
+        /// (YAML uses `targets:` list), DSN env vars must be exported
+        /// before invocation — this flag is ignored.
         #[arg(long)]
-        dsn: String,
+        dsn: Option<String>,
         /// Bypass the >50-cell matrix confirmation prompt.
         #[arg(long)]
         yes: bool,
         /// Keep the bakeoff schema after run (default: drop CASCADE on exit).
+        /// Only applies to legacy single-PG bakeoffs.
         #[arg(long)]
         keep_schema: bool,
     },
@@ -130,7 +134,7 @@ enum Command {
 
 async fn run_bakeoff_command(
     config: PathBuf,
-    dsn: String,
+    dsn: Option<String>,
     yes: bool,
     keep_schema: bool,
 ) -> Result<()> {
@@ -138,21 +142,42 @@ async fn run_bakeoff_command(
     let cfg: BakeoffConfig = serde_yaml_ng::from_str(&text)
         .map_err(|e| anyhow!("parse {}: {e}", config.display()))?;
 
-    let n_combos = cfg.matrix.chunkers.len() * cfg.matrix.embedders.len();
+    let combos_per_target = cfg.matrix.chunkers.len() * cfg.matrix.embedders.len();
+    let targets = cfg.effective_targets()?;
+    let n_combos = combos_per_target * targets.len();
+
     if n_combos > 50 && !yes {
         eprintln!(
-            "WARNING: {n_combos} combos is large ({} embedders × {} chunkers).",
+            "WARNING: {n_combos} combos is large ({} embedders × {} chunkers × {} targets).",
             cfg.matrix.embedders.len(),
-            cfg.matrix.chunkers.len()
+            cfg.matrix.chunkers.len(),
+            targets.len(),
         );
         eprintln!("Each combo ingests the full corpus into its own table.");
         eprintln!("Pass --yes to proceed without this prompt.");
         return Err(anyhow!("aborted (matrix size > 50; pass --yes to confirm)"));
     }
 
-    std::env::set_var(&cfg.target.dsn_env, &dsn);
+    // Legacy single-target mode: --dsn populates the env var for the single
+    // Postgres target the YAML references via target.dsn_env. Multi-target
+    // mode: env vars must already be set; --dsn ignored.
+    if let Some(d) = &dsn {
+        if let Some(legacy) = &cfg.target {
+            std::env::set_var(&legacy.dsn_env, d);
+        } else {
+            eprintln!(
+                "NOTE: --dsn ignored for multi-target bakeoff; \
+                 export DSN env vars before running."
+            );
+        }
+    }
 
-    eprintln!("Running bakeoff '{}' — {n_combos} combos", cfg.name);
+    eprintln!(
+        "Running bakeoff '{}' — {n_combos} combos across {} target(s): {}",
+        cfg.name,
+        targets.len(),
+        targets.iter().map(|t| t.backend_name()).collect::<Vec<_>>().join(", "),
+    );
     let base_dir = config.parent().map(|p| p.to_path_buf());
     let results = run_bakeoff_with_base(&cfg, base_dir.as_deref()).await?;
 
@@ -191,17 +216,19 @@ async fn run_bakeoff_command(
     eprintln!("Report:  {}", report_path.display());
     eprintln!("Recommended cell: {}", rec_path.display());
 
-    if !keep_schema {
-        // Drop the per-combo schema. Identifier safety: cfg.target.schema_name
-        // already passed the [a-z_][a-z0-9_]* allowlist on YAML load.
+    if !keep_schema && cfg.target.is_some() {
+        // Legacy single-PG cleanup only. Multi-target bakeoffs don't auto-drop
+        // (caller's responsibility — many backends, many concerns, easy to mess up).
         use sqlx::postgres::PgPoolOptions;
-        let pool = PgPoolOptions::new().max_connections(1).connect(&dsn).await?;
+        let legacy = cfg.target.as_ref().unwrap();
+        let dsn_str = dsn.as_ref().ok_or_else(|| anyhow!("--dsn required for legacy single-PG cleanup"))?;
+        let pool = PgPoolOptions::new().max_connections(1).connect(dsn_str).await?;
         let stmt = format!(
             r#"DROP SCHEMA IF EXISTS "{}" CASCADE"#,
-            cfg.target.schema_name
+            legacy.schema_name
         );
         sqlx::query(&stmt).execute(&pool).await?;
-        eprintln!("Dropped schema {} (use --keep-schema to preserve)", cfg.target.schema_name);
+        eprintln!("Dropped schema {} (use --keep-schema to preserve)", legacy.schema_name);
     }
     Ok(())
 }

@@ -223,6 +223,47 @@ pub fn write_recommended_yaml(
         top.aggregate.get("recall_at_1").copied().unwrap_or(0.0),
     );
 
+    // For multi-target bakeoffs, use the FIRST target as the recommendation's
+    // target shape. For legacy single-PG, use the legacy target. The
+    // recommended.yaml is a starting point — users tweak per-deployment.
+    let targets = cfg.effective_targets()?;
+    let first_target = targets.first().ok_or_else(|| {
+        anyhow::anyhow!("no targets resolved for recommended.yaml")
+    })?;
+    let target_yaml = match first_target {
+        super::config::BakeoffTargetEntry::Postgres(t) => json!({
+            "type": "postgres",
+            "dsn_env": t.dsn_env,
+            "database": t.database_name,
+            "table": format!("{}_production", results.run_name),
+            "mode": "overwrite",
+            "hnsw": true,
+        }),
+        super::config::BakeoffTargetEntry::Mariadb(t) => json!({
+            "type": "mariadb",
+            "dsn_env": t.dsn_env,
+            "database": t.database_name,
+            "table": format!("{}_production", results.run_name),
+            "mode": "overwrite",
+            "hnsw": true,
+        }),
+        super::config::BakeoffTargetEntry::Sqlite(t) => json!({
+            "type": "sqlite",
+            "dsn_env": t.dsn_env,
+            "database": t.database_name,
+            "table": format!("{}_production", results.run_name),
+            "mode": "overwrite",
+        }),
+        super::config::BakeoffTargetEntry::Clickhouse(t) => json!({
+            "type": "clickhouse",
+            "dsn_env": t.dsn_env,
+            "database": t.database_name,
+            "table": format!("{}_production", results.run_name),
+            "mode": "overwrite",
+            "engine": t.engine.clone().unwrap_or_else(|| "ReplacingMergeTree(created_at) ORDER BY (id)".to_string()),
+        }),
+    };
+
     let recommended = json!({
         "# NOTE": note,
         "cell_name": format!("{}_recommended", results.run_name),
@@ -230,12 +271,7 @@ pub fn write_recommended_yaml(
         "framer": framer_yaml,
         "chunker": chunker_yaml,
         "embedder": embedder_yaml,
-        "target": {
-            "dsn_env": cfg.target.dsn_env,
-            "schema": cfg.target.schema_name,
-            "table": format!("{}_production", results.run_name),
-            "mode": "overwrite",
-        },
+        "target": target_yaml,
     });
 
     let yaml_text = serde_yaml_ng::to_string(&recommended)?;

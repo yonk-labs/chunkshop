@@ -22,17 +22,18 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 
 use super::config::{
-    BakeoffConfig, BakeoffResults, ComboResult, GoldQuery, PerQueryResult, TopKHit,
+    BakeoffConfig, BakeoffResults, BakeoffTargetEntry, ComboResult, GoldQuery, PerQueryResult, TopKHit,
 };
 use super::gold::load_gold_queries_with_base;
 use super::keys::{chunker_key, combo_table, embedder_key};
 use super::score::{aggregate_scores, score_query};
 use crate::config::{
-    CellConfig, ChunkerConfig, EmbedderConfig, ExtractorConfig, FastembedEmbedderConfig,
-    FramerConfig, IdentityFramerConfig, NoneExtractorConfig, PostgresTargetConfig, SourceConfig,
-    TargetConfig,
+    CellConfig, ChunkerConfig, ClickhouseTargetConfig, EmbedderConfig, ExtractorConfig,
+    FastembedEmbedderConfig, FramerConfig, IdentityFramerConfig, MariadbTargetConfig,
+    NoneExtractorConfig, PostgresTargetConfig, SourceConfig, SqliteTargetConfig, TargetConfig,
 };
 use crate::embedder::FastembedEmbedder;
+use crate::sinks::Sink;
 
 /// Human-readable chunker label for the report.md leaderboard. Matches
 /// Python's `_chunker_label` shape exactly so the rendered tables diff
@@ -108,15 +109,74 @@ fn corpus_label(cfg: &BakeoffConfig) -> String {
     }
 }
 
+/// Materialize a per-cell TargetConfig from a bakeoff target entry. Each
+/// backend writes to a per-combo table under the target's database/schema.
+/// `hnsw: false` for bakeoff cells across all backends — fair query-time
+/// comparison without ANN approximation skew.
+fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetConfig {
+    match target {
+        BakeoffTargetEntry::Postgres(t) => TargetConfig::Postgres(PostgresTargetConfig {
+            dsn_env: t.dsn_env.clone(),
+            database_name: t.database_name.clone(),
+            table: table.to_string(),
+            overwrite: false,
+            hnsw: false,
+            mode: "overwrite".to_string(),
+            source_tag: None,
+            promote_metadata: vec![],
+            force_overwrite: false,
+            delete_orphans: false,
+        }),
+        BakeoffTargetEntry::Mariadb(t) => TargetConfig::Mariadb(MariadbTargetConfig {
+            dsn_env: t.dsn_env.clone(),
+            database_name: t.database_name.clone(),
+            table: table.to_string(),
+            overwrite: false,
+            hnsw: false,
+            mode: "overwrite".to_string(),
+            source_tag: None,
+            promote_metadata: vec![],
+            force_overwrite: false,
+            delete_orphans: false,
+        }),
+        BakeoffTargetEntry::Sqlite(t) => TargetConfig::Sqlite(SqliteTargetConfig {
+            dsn_env: t.dsn_env.clone(),
+            database_name: t.database_name.clone(),
+            table: table.to_string(),
+            overwrite: false,
+            hnsw: false,
+            mode: "overwrite".to_string(),
+            source_tag: None,
+            promote_metadata: vec![],
+            force_overwrite: false,
+            delete_orphans: false,
+        }),
+        BakeoffTargetEntry::Clickhouse(t) => TargetConfig::Clickhouse(ClickhouseTargetConfig {
+            dsn_env: t.dsn_env.clone(),
+            database_name: t.database_name.clone(),
+            table: table.to_string(),
+            hnsw: false,
+            mode: "overwrite".to_string(),
+            source_tag: None,
+            promote_metadata: vec![],
+            force_overwrite: false,
+            delete_orphans: false,
+            engine: t.engine.clone(),
+        }),
+    }
+}
+
 fn build_cell_cfg(
     bakeoff: &BakeoffConfig,
+    target: &BakeoffTargetEntry,
     chunker_cfg: &ChunkerConfig,
     embedder_cfg: &FastembedEmbedderConfig,
     table: &str,
 ) -> Result<CellConfig> {
     let cell_name = format!(
-        "{}__{}__{}",
+        "{}__{}__{}__{}",
         bakeoff.name,
+        target.backend_name(),
         chunker_key(chunker_cfg)?,
         embedder_key(embedder_cfg)
     );
@@ -130,61 +190,86 @@ fn build_cell_cfg(
         source: bakeoff.source.clone(),
         chunker: chunker_cfg.clone(),
         embedder: EmbedderConfig::Fastembed(embedder_cfg.clone()),
-        target: TargetConfig::Postgres(PostgresTargetConfig {
-            dsn_env: bakeoff.target.dsn_env.clone(),
-            database_name: bakeoff.target.schema_name.clone(),
-            table: table.to_string(),
-            overwrite: false,
-            hnsw: false,
-            mode: "overwrite".to_string(),
-            source_tag: None,
-            promote_metadata: vec![],
-            force_overwrite: false,
-            delete_orphans: false,
-        }),
+        target: build_target_for_combo(target, table),
         runtime,
         framer,
         extractor: ExtractorConfig::None(NoneExtractorConfig {}),
     })
 }
 
-async fn count_chunks(dsn: &str, schema: &str, table: &str) -> Result<i64> {
-    let pool = PgPoolOptions::new().max_connections(1).connect(dsn).await?;
-    let stmt = format!(r#"SELECT COUNT(*) FROM "{schema}"."{table}""#);
-    let row = sqlx::query(&stmt).fetch_one(&pool).await?;
-    Ok(row.get::<i64, _>(0))
+/// Backend-dispatched chunk count. Each backend has a slightly different
+/// fully-qualified table name shape so we can't share one SQL string.
+async fn count_chunks(target: &BakeoffTargetEntry, table: &str) -> Result<i64> {
+    match target {
+        BakeoffTargetEntry::Postgres(t) => {
+            let dsn = std::env::var(&t.dsn_env)?;
+            let pool = PgPoolOptions::new().max_connections(1).connect(&dsn).await?;
+            let stmt = format!(r#"SELECT COUNT(*) FROM "{}"."{}""#, t.database_name, table);
+            let row = sqlx::query(&stmt).fetch_one(&pool).await?;
+            Ok(row.get::<i64, _>(0))
+        }
+        BakeoffTargetEntry::Mariadb(t) => {
+            use sqlx::mysql::MySqlPoolOptions;
+            let dsn = std::env::var(&t.dsn_env)?;
+            let pool = MySqlPoolOptions::new().max_connections(1).connect(&dsn).await?;
+            let stmt = format!("SELECT COUNT(*) FROM `{}`.`{}`", t.database_name, table);
+            let row = sqlx::query(&stmt).fetch_one(&pool).await?;
+            Ok(row.get::<i64, _>(0))
+        }
+        BakeoffTargetEntry::Sqlite(t) => {
+            // SQLite path is in the env var; use rusqlite directly.
+            let path = std::env::var(&t.dsn_env)?;
+            let conn = rusqlite::Connection::open(&path)?;
+            let n: i64 = conn.query_row(
+                &format!(r#"SELECT COUNT(*) FROM "{}""#, table),
+                [],
+                |r| r.get(0),
+            )?;
+            Ok(n)
+        }
+        BakeoffTargetEntry::Clickhouse(t) => {
+            use crate::backends::ClickhouseBackend;
+            let backend = ClickhouseBackend::new(t.dsn_env.clone());
+            let client = backend.client().await?;
+            #[derive(clickhouse::Row, serde::Deserialize)]
+            struct CountRow {
+                c: u64,
+            }
+            let mut cur = client
+                .query(&format!(
+                    "SELECT count() AS c FROM `{}`.`{}`",
+                    t.database_name, table
+                ))
+                .fetch::<CountRow>()?;
+            let row = cur
+                .next()
+                .await?
+                .ok_or_else(|| anyhow!("count() returned no rows"))?;
+            Ok(row.c as i64)
+        }
+    }
 }
 
-async fn query_top_k(
-    dsn: &str,
-    schema: &str,
+/// Backend-dispatched top-K via the Sink trait. Bakeoff cells are built with
+/// `hnsw: false` so the comparison across backends is fair (all approximate-
+/// vs-exact tradeoffs disabled). The sink's own query_top_k handles dialect
+/// differences (cosine vs hybrid-euclidean on MariaDB, JOIN on vec0 for SQLite,
+/// cosineDistance on CH, etc.).
+async fn query_top_k_via_sink(
+    target: &BakeoffTargetEntry,
     table: &str,
     query_vec: &[f32],
     k: usize,
+    embed_dim: usize,
 ) -> Result<Vec<TopKHit>> {
-    let pool = PgPoolOptions::new().max_connections(1).connect(dsn).await?;
-    let vec_str: String = format!(
-        "[{}]",
-        query_vec
-            .iter()
-            .map(|x| format!("{:.8}", x))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    let stmt = format!(
-        r#"SELECT doc_id, seq_num FROM "{schema}"."{table}" ORDER BY embedding <=> $1::vector LIMIT $2"#
-    );
-    let rows = sqlx::query(&stmt)
-        .bind(&vec_str)
-        .bind(k as i64)
-        .fetch_all(&pool)
-        .await?;
-    Ok(rows
+    use crate::backends::load_backend;
+    let target_cfg = build_target_for_combo(target, table);
+    let backend = load_backend(&target_cfg)?;
+    let sink = crate::sinks::load_sink(&target_cfg, backend, embed_dim)?;
+    let results = sink.query_top_k(query_vec, k).await?;
+    Ok(results
         .into_iter()
-        .map(|r| TopKHit {
-            doc_id: r.get::<String, _>(0),
-            seq_num: r.get::<i32, _>(1),
-        })
+        .map(|(doc_id, seq_num, _dist)| TopKHit { doc_id, seq_num })
         .collect())
 }
 
@@ -203,63 +288,29 @@ pub async fn run_bakeoff_with_base(
     cfg: &BakeoffConfig,
     base_dir: Option<&std::path::Path>,
 ) -> Result<BakeoffResults> {
-    let dsn = std::env::var(&cfg.target.dsn_env).map_err(|_| {
-        anyhow!(
-            "DSN env var {:?} is not set. The CLI sets it from --dsn before \
-             calling run_bakeoff.",
-            cfg.target.dsn_env
-        )
-    })?;
-    let schema = &cfg.target.schema_name;
+    let targets = cfg.effective_targets()?;
+    // Verify every target's DSN env var is set before doing any work.
+    for t in &targets {
+        let var = t.dsn_env();
+        std::env::var(var).map_err(|_| {
+            anyhow!("DSN env var {var:?} is not set (required for {} target)", t.backend_name())
+        })?;
+    }
 
     let gold: Vec<GoldQuery> = load_gold_queries_with_base(&cfg.gold_queries, base_dir)?;
 
-    // Build (chunker, embedder) cross-product. Order: outer = chunkers,
-    // inner = embedders — same as Python's list comprehension.
-    let mut combos_in: Vec<(ChunkerConfig, FastembedEmbedderConfig)> = Vec::new();
+    // Build (chunker, embedder) cross-product per target. Order: outer = chunkers,
+    // inner = embedders — same as Python.
+    let mut chunker_embedder_combos: Vec<(ChunkerConfig, FastembedEmbedderConfig)> = Vec::new();
     for c in &cfg.matrix.chunkers {
         for e in &cfg.matrix.embedders {
-            combos_in.push((c.clone(), e.clone()));
+            chunker_embedder_combos.push((c.clone(), e.clone()));
         }
     }
 
-    // Format: "YYYY-MM-DD HH:MM:SS" UTC, matches Python's strftime in the
-    // bakeoff runner so report.md timestamp prefix is comparable.
     let started_at = format_utc_now();
 
-    // ----- Phase 1: ingest every combo serially -----
-    struct IngestMeta {
-        chunker: ChunkerConfig,
-        embedder: FastembedEmbedderConfig,
-        table: String,
-        chunks: i64,
-        wall_seconds: f64,
-        embed_seconds: f64,
-    }
-    let mut ingest_meta: Vec<IngestMeta> = Vec::with_capacity(combos_in.len());
-
-    for (c, e) in &combos_in {
-        let table = combo_table(c, e)?;
-        let cell_cfg = build_cell_cfg(cfg, c, e, &table)?;
-        let t0 = Instant::now();
-        let res = crate::runner::run_cell(cell_cfg)
-            .await
-            .with_context(|| format!("ingest failed for combo {table}"))?;
-        let wall = t0.elapsed().as_secs_f64();
-        let chunks = count_chunks(&dsn, schema, &table).await?;
-        ingest_meta.push(IngestMeta {
-            chunker: c.clone(),
-            embedder: e.clone(),
-            table,
-            chunks,
-            wall_seconds: (wall * 100.0).round() / 100.0,
-            embed_seconds: (res.embed_seconds * 100.0).round() / 100.0,
-        });
-    }
-
-    // ----- Phase 2: embed gold queries once per unique embedder -----
-    // Capture wall time per embedder — that's a proxy for production
-    // query-time latency at scale.
+    // ----- Phase 2: embed gold queries once per unique embedder (shared across targets) -----
     let mut query_vecs_by_emb_key: std::collections::HashMap<String, Vec<Vec<f32>>> =
         std::collections::HashMap::new();
     let mut query_embed_seconds_by_emb_key: BTreeMap<String, f64> = BTreeMap::new();
@@ -277,44 +328,72 @@ pub async fn run_bakeoff_with_base(
         query_vecs_by_emb_key.insert(k, vecs);
     }
 
-    // ----- Phase 3: score every combo -----
-    let mut combo_results: Vec<ComboResult> = Vec::with_capacity(ingest_meta.len());
-    for meta in &ingest_meta {
-        let ck = chunker_key(&meta.chunker)?;
-        let ek = embedder_key(&meta.embedder);
-        let table = &meta.table;
-        let vecs = query_vecs_by_emb_key
-            .get(&ek)
-            .ok_or_else(|| anyhow!("missing query vecs for embedder key {ek}"))?;
+    // ----- Phase 1 + 3: per-target, ingest + score every combo -----
+    let mut combo_results: Vec<ComboResult> = Vec::new();
 
-        let mut per_query: Vec<PerQueryResult> = Vec::with_capacity(gold.len());
-        let mut per_query_scores: Vec<BTreeMap<String, f64>> = Vec::with_capacity(gold.len());
-        for (i, g) in gold.iter().enumerate() {
-            let top = query_top_k(&dsn, schema, table, &vecs[i], cfg.scoring.top_k).await?;
-            let doc_ids: Vec<String> = top.iter().map(|h| h.doc_id.clone()).collect();
-            let s = score_query(&doc_ids, &g.gold_doc_id, &cfg.scoring.k);
-            per_query_scores.push(s.clone());
-            per_query.push(PerQueryResult {
-                query: g.query.clone(),
-                gold_doc_id: g.gold_doc_id.clone(),
-                top_k: top,
-                scores: s,
+    for target in &targets {
+        let backend_name = target.backend_name().to_string();
+
+        for (c, e) in &chunker_embedder_combos {
+            let table = combo_table(c, e)?;
+            let cell_cfg = build_cell_cfg(cfg, target, c, e, &table)?;
+            let t0 = Instant::now();
+            let res = crate::runner::run_cell(cell_cfg).await.with_context(|| {
+                format!(
+                    "ingest failed for combo {table} on backend {backend_name}"
+                )
+            })?;
+            let wall = t0.elapsed().as_secs_f64();
+            let chunks = count_chunks(target, &table).await?;
+
+            let ck = chunker_key(c)?;
+            let ek = embedder_key(e);
+            let vecs = query_vecs_by_emb_key
+                .get(&ek)
+                .ok_or_else(|| anyhow!("missing query vecs for embedder key {ek}"))?;
+
+            let mut per_query: Vec<PerQueryResult> = Vec::with_capacity(gold.len());
+            let mut per_query_scores: Vec<BTreeMap<String, f64>> = Vec::with_capacity(gold.len());
+            let mut query_walls_ms: Vec<f64> = Vec::with_capacity(gold.len());
+            for (i, g) in gold.iter().enumerate() {
+                let tq = Instant::now();
+                let top =
+                    query_top_k_via_sink(target, &table, &vecs[i], cfg.scoring.top_k, e.dim)
+                        .await?;
+                query_walls_ms.push(tq.elapsed().as_secs_f64() * 1000.0);
+                let doc_ids: Vec<String> = top.iter().map(|h| h.doc_id.clone()).collect();
+                let s = score_query(&doc_ids, &g.gold_doc_id, &cfg.scoring.k);
+                per_query_scores.push(s.clone());
+                per_query.push(PerQueryResult {
+                    query: g.query.clone(),
+                    gold_doc_id: g.gold_doc_id.clone(),
+                    top_k: top,
+                    scores: s,
+                });
+            }
+
+            let agg = aggregate_scores(&per_query_scores);
+            let query_wall_ms_mean = if query_walls_ms.is_empty() {
+                0.0
+            } else {
+                query_walls_ms.iter().sum::<f64>() / query_walls_ms.len() as f64
+            };
+
+            combo_results.push(ComboResult {
+                backend: backend_name.clone(),
+                chunker_key: ck,
+                embedder_key: ek,
+                chunker_label: chunker_label(c),
+                embedder_label: e.model_name.clone(),
+                table,
+                ingest_chunks: chunks,
+                ingest_wall_seconds: (wall * 100.0).round() / 100.0,
+                ingest_embed_seconds: (res.embed_seconds * 100.0).round() / 100.0,
+                query_wall_ms_mean: (query_wall_ms_mean * 100.0).round() / 100.0,
+                aggregate: agg,
+                per_query,
             });
         }
-
-        let agg = aggregate_scores(&per_query_scores);
-        combo_results.push(ComboResult {
-            chunker_key: ck,
-            embedder_key: ek,
-            chunker_label: chunker_label(&meta.chunker),
-            embedder_label: meta.embedder.model_name.clone(),
-            table: table.clone(),
-            ingest_chunks: meta.chunks,
-            ingest_wall_seconds: meta.wall_seconds,
-            ingest_embed_seconds: meta.embed_seconds,
-            aggregate: agg,
-            per_query,
-        });
     }
 
     Ok(BakeoffResults {
