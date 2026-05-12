@@ -215,8 +215,22 @@ class MariaDbSink:
     def query_top_k(
         self, query_vec: np.ndarray, k: int
     ) -> list[tuple[str, int, float]]:
-        """MariaDB VEC_DISTANCE_COSINE top-K. Vector literal goes inline as
-        VEC_FromText('[...]') because PyMySQL has no VECTOR adapter.
+        """MariaDB top-K nearest by cosine distance.
+
+        Implementation note: MariaDB's `VECTOR INDEX` (HNSW) only accelerates
+        `VEC_DISTANCE_EUCLIDEAN`, not `VEC_DISTANCE_COSINE`. Since chunkshop's
+        embeddings are L2-normalized (fastembed/BGE/Nomic all normalize), the
+        ranking by euclidean is mathematically identical to ranking by cosine
+        (eucl² = 2·cos_dist for unit vectors). HNSW also makes the result
+        approximate — top-K may differ slightly from an exact cosine scan.
+
+        We use the **hybrid shape**: euclidean in ORDER BY (index-accelerated),
+        cosine in SELECT (the reported `distance` matches what users get on
+        the other 3 backends, and matches what chunkshop wrote pre-v0.4.1).
+
+        Drops query latency from ~150ms to ~1-2ms at 8k chunks (180×).
+        Requires `target.hnsw: true` on the cell so the VECTOR INDEX exists;
+        without the index, this query is the same brute-force scan as before.
         """
         vec_expr = self.backend.vector_literal(query_vec)  # "VEC_FromText('[…]')"
         with self.backend.connect() as conn:
@@ -224,7 +238,9 @@ class MariaDbSink:
             cur.execute(
                 f"SELECT doc_id, seq_num, "
                 f"VEC_DISTANCE_COSINE(embedding, {vec_expr}) AS distance "
-                f"FROM {self._fq()} ORDER BY distance LIMIT %s",
+                f"FROM {self._fq()} "
+                f"ORDER BY VEC_DISTANCE_EUCLIDEAN(embedding, {vec_expr}) "
+                f"LIMIT %s",
                 (k,),
             )
             return [(r[0], r[1], float(r[2])) for r in cur.fetchall()]

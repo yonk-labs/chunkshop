@@ -162,8 +162,10 @@ These are intrinsic to MariaDB — chunkshop can't work around them:
   less efficient than a typed bind.
 - **MariaDB's vector index is build-on-INSERT, not post-ingest.** Unlike
   pgvector HNSW, there's no separate index-build step to tune. `hnsw: true`
-  in YAML is accepted but doesn't trigger a CREATE INDEX — the index is
-  managed by MariaDB when the `VECTOR(N)` column is queried.
+  emits `VECTOR INDEX vec_idx (embedding)` in the CREATE TABLE; the index
+  populates as rows insert. The query layer uses
+  `VEC_DISTANCE_EUCLIDEAN` in ORDER BY to hit the index (see Performance
+  note below).
 
 ## Gaps
 
@@ -229,6 +231,38 @@ WHERE JSON_CONTAINS(tags, '"my_tag"');
 Both work. chunkshop uses `pymysql` / sqlx-mysql under the hood; both
 drivers connect to MariaDB via the MySQL wire protocol regardless of the
 scheme name in your DSN.
+
+## Performance note: `hnsw: true` is load-bearing on MariaDB
+
+MariaDB 11.7's `VECTOR INDEX` (HNSW) is required for sub-10ms cosine
+search at table sizes above ~1k rows. Without it, every query is a full
+table scan + sort.
+
+Two important MariaDB-specific behaviors chunkshop's sink handles for you:
+
+1. **HNSW supports `VEC_DISTANCE_EUCLIDEAN` only**, not
+   `VEC_DISTANCE_COSINE`. chunkshop's sink uses a hybrid query shape —
+   euclidean in `ORDER BY` (index-accelerated), cosine in `SELECT` (the
+   reported distance matches the other 3 backends). For L2-normalized
+   embeddings (which every chunkshop-supported embedder produces), the
+   ranking is mathematically equivalent.
+
+2. **HNSW is approximate.** Like pgvector's HNSW, MariaDB's index trades a
+   small amount of recall for large query speedups. Measured on the
+   SCOTUS bench: cosine brute-force MRR=0.4236, hybrid+HNSW MRR=0.4028
+   (drop of ~0.02 at top-5 on 12 queries). The speedup is **~43×** at
+   8k chunks (158ms → 3.7ms).
+
+**Performance comparison at 8079 chunks** (see [`docs/benchmarks.md`](../benchmarks.md)):
+
+| `hnsw:` | Query mean | MRR | Note |
+|---|---:|---:|---|
+| `false` | 158ms | 0.4236 | Full table scan via cosine; exact ranking |
+| `true` (default for production cells) | **3.7ms** | 0.4028 | Index-accelerated via euclidean; HNSW approximation |
+
+**Recommendation:** `hnsw: true` for production MariaDB cells unless you
+have a specific reason to want exact cosine ranking (e.g. ground-truth
+evaluation, reproducing exact results across backends).
 
 ## Security note: transitive `rsa` Marvin Attack CVE
 

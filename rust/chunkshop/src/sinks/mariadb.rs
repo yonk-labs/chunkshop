@@ -513,9 +513,19 @@ impl Sink for MariadbSink {
             let pool = self.backend.pool().await?;
             // Vector literal goes INLINE — sqlx-mysql has no VECTOR adapter.
             let vec_lit = self.backend.vector_literal(query_vec);
+            // MariaDB's VECTOR INDEX (HNSW) only accelerates VEC_DISTANCE_EUCLIDEAN,
+            // not VEC_DISTANCE_COSINE. Since chunkshop's embeddings are L2-normalized
+            // (fastembed BGE/Nomic all normalize), ranking by euclidean is
+            // mathematically identical to ranking by cosine for unit vectors
+            // (eucl² = 2·cos_dist). HNSW also makes the result approximate.
+            // We use the hybrid shape: euclidean in ORDER BY (index-accelerated),
+            // cosine in SELECT (reported distance matches the other 3 backends).
+            // Drops query latency ~180× at 8k chunks. Requires target.hnsw: true
+            // on the cell so the VECTOR INDEX exists.
             let stmt = format!(
                 "SELECT doc_id, seq_num, VEC_DISTANCE_COSINE(embedding, {vec_lit}) AS distance \
-                 FROM {tbl} ORDER BY distance LIMIT ?",
+                 FROM {tbl} \
+                 ORDER BY VEC_DISTANCE_EUCLIDEAN(embedding, {vec_lit}) LIMIT ?",
                 tbl = self.fq()
             );
             let rows = sqlx::query(&stmt)

@@ -64,6 +64,7 @@ def _cell_yaml(backend: str) -> str:
             "  database: bench_scale_md\n"
             "  table: chunks\n"
             "  mode: overwrite\n"
+            "  hnsw: true\n"
             "  source_tag: bench_scale"
         ),
         "sqlite": (
@@ -131,6 +132,10 @@ def _query_pg(dsn: str, schema: str, qvec: list[float], k: int) -> tuple[list[tu
 
 
 def _query_mariadb(dsn: str, schema: str, qvec: list[float], k: int) -> tuple[list[tuple[str, int]], float]:
+    """Hybrid query: euclidean in ORDER BY (index-accelerated), cosine in SELECT
+    (reported distance matches the other 3 backends). Identical ranking to
+    cosine for L2-normalized vectors. See sinks/mariadb.py for rationale.
+    """
     import pymysql
     from chunkshop.backends.mariadb import _parse_mysql_dsn
     qvec_str = "[" + ",".join(f"{v:.7f}" for v in qvec) + "]"
@@ -141,7 +146,7 @@ def _query_mariadb(dsn: str, schema: str, qvec: list[float], k: int) -> tuple[li
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT doc_id, seq_num FROM `{schema}`.`chunks` "
-                f"ORDER BY VEC_DISTANCE_COSINE(embedding, VEC_FromText(%s)) LIMIT %s",
+                f"ORDER BY VEC_DISTANCE_EUCLIDEAN(embedding, VEC_FromText(%s)) LIMIT %s",
                 (qvec_str, k),
             )
             rows = cur.fetchall()

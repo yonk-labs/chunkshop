@@ -93,10 +93,11 @@ each.
 
 | Backend | Ingest wall | Embed time | Non-embed time | Query mean | Query p95 | MRR |
 |---|---:|---:|---:|---:|---:|---:|
-| **Postgres + HNSW** | 64.06s | 47.11s | **16.95s** | 8.14ms | 9.93ms | 0.4236 |
-| **MariaDB** | 82.34s | 46.65s | 35.69s | **158.74ms** | 169.70ms | 0.4236 |
-| **SQLite + sqlite-vec** | 47.13s | 44.94s | **2.19s** | **3.16ms** | 3.82ms | 0.4028 |
-| **ClickHouse** | 53.76s | 45.13s | 8.63s | 14.67ms | 20.06ms | 0.4306 |
+| **Postgres + HNSW** | 63.91s | 47.06s | 16.85s | 9.22ms | 13.75ms | 0.4236 |
+| **MariaDB + HNSW** (hybrid query, post v0.4.1) | 78.38s | 47.07s | 31.31s | **3.66ms** | 5.55ms | 0.4028 |
+| **MariaDB** (pre-v0.4.1, cosine brute-force) | 82.34s | 46.65s | 35.69s | 158.74ms | 169.70ms | 0.4236 |
+| **SQLite + sqlite-vec** | 48.08s | 45.89s | 2.19s | **3.21ms** | 3.80ms | 0.4028 |
+| **ClickHouse** | 54.97s | 46.24s | 8.73s | 15.06ms | 19.35ms | 0.4306 |
 
 ### Read 1 — Embedder dominates ingest
 
@@ -111,18 +112,33 @@ Non-embed cost from smallest to largest:
 4. **MariaDB: 35.69s** — per-row INSERT through pymysql plus VEC_FromText
    interpolation; 16× SQLite
 
-### Read 2 — MariaDB query latency cliff is real
+### Read 2 — MariaDB cliff fixed in v0.4.1; was a chunkshop-side query shape
 
-At 8k chunks, MariaDB takes **158ms mean query latency** vs. **8ms for
-PG with HNSW**. This is consistent with what the mega-table foreshadowed
-on SCOTUS (1095 chunks → ~0.64s MariaDB vs 0.14s PG). The bigger the
-table, the wider the gap.
+**v0.4.0 behavior** (since-fixed): MariaDB cosine queries took **158ms
+mean latency** at 8k chunks vs 8ms for PG with HNSW. The mega-table
+foreshadowed the same shape on SCOTUS (~0.64s MariaDB vs 0.14s PG at
+1095 chunks).
 
-Root cause is MariaDB 11.7's VECTOR index: it doesn't expose HNSW-like
-ANN knobs and scans more rows than a fast-tuned cosine query needs to.
-This is intrinsic to MariaDB's current vector implementation, not a
-chunkshop bug — but it makes MariaDB unsuitable for low-latency
-retrieval at scale.
+**Root cause** found during this audit: MariaDB 11.7's `VECTOR INDEX`
+only accelerates `VEC_DISTANCE_EUCLIDEAN`, not `VEC_DISTANCE_COSINE`.
+chunkshop's pre-v0.4.1 query used cosine, which bypassed the index and
+forced a full table scan + sort.
+
+**Fix** (shipped in v0.4.1): chunkshop now uses a hybrid query —
+euclidean in `ORDER BY` (index-accelerated), cosine in `SELECT` (the
+reported distance matches what PG/CH/SQLite return). For L2-normalized
+embeddings (every chunkshop-supported embedder), euclidean and cosine
+produce the same ranking.
+
+**Tradeoff:** MariaDB's HNSW is approximate. MRR drops from 0.4236
+(cosine brute-force) to 0.4028 (euclidean+HNSW) — a ~5% relative drop
+on top-5. Same approximation tradeoff PG's HNSW makes; same MRR shape
+as SQLite's vec0 MATCH.
+
+**Requirement:** MariaDB cells must set `hnsw: true` for the index to
+exist. The pre-v0.4.1 default of `hnsw: false` on MariaDB has been
+revisited in the engine doc — MariaDB users should treat `hnsw: true` as
+load-bearing for production retrieval.
 
 **Recommendation:**
 - **High-QPS read workloads, larger than ~1k chunks: PG with HNSW.**

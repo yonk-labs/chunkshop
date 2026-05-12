@@ -44,11 +44,18 @@ full writeup in [`docs/benchmarks.md`](docs/benchmarks.md). Numbers from a
 |---|---|---|
 | **HNSW vs brute-force** (PG) | sentence_aware + bge-small-int8, 3 corpus sizes | At 75 chunks: HNSW 0.75× (slower). At 1k chunks: parity. **At 3.8k chunks: 4.20× faster query.** MRR identical at every scale. |
 | **Concurrent ingest** | `chunkshop orchestrate` on 8 PG cells, sentence_aware + bge-small | c=1: 42.3s. c=2: 1.71× speedup (85% efficient). **c=4: 2.45× speedup (61% efficient — sweet spot).** c=8: 2.81× (35%, contention). |
-| **8k-chunk throughput** | SCOTUS, 8079 chunks, all 4 backends | Query mean: SQLite 3.16ms < PG+HNSW 8.14ms < CH 14.67ms ≪ **MariaDB 158.74ms (20–50× cliff)**. Non-embed ingest: SQLite 2.19s ≪ MariaDB 35.69s. |
+| **8k-chunk throughput** | SCOTUS, 8079 chunks, all 4 backends, `hnsw: true` everywhere | Query mean: SQLite 3.21ms ≈ MariaDB 3.66ms < PG+HNSW 9.22ms < CH 15.06ms. All ≤16ms. |
 
-The MariaDB query-latency cliff at scale is the clearest production-relevant
-finding. PG with `hnsw: true` is the production sweet spot; SQLite is the
-zero-ops dark horse at <1M chunks.
+MariaDB had a 158ms cosine query in pre-v0.4.1 because chunkshop's query
+shape bypassed the MariaDB `VECTOR INDEX` (which only accelerates
+`VEC_DISTANCE_EUCLIDEAN`, not cosine). The v0.4.1 sink uses a hybrid
+query — euclidean in `ORDER BY`, cosine in `SELECT` — closing the cliff to
+3.66ms (43× speedup). For L2-normalized embeddings (every chunkshop
+embedder) the ranking is mathematically equivalent. Write-up:
+[`docs/benchmarks.md`](docs/benchmarks.md) → Read 2.
+
+Today PG with `hnsw: true` is the production sweet spot; SQLite is the
+zero-ops dark horse at <1M chunks; MariaDB is now competitive on query.
 
 ## Pipeline
 
