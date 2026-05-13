@@ -28,10 +28,13 @@ import yaml
 # Make the chunkshop package importable from its src/ layout.
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "python" / "src"))
+# Helpers shared across bench scripts.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from chunkshop.config import load_config
-from chunkshop.embedders import load_embedder
-from chunkshop.runner import run_cell
+from _common import vector_text  # noqa: E402
+from chunkshop.config import load_config  # noqa: E402
+from chunkshop.embedders import load_embedder  # noqa: E402
+from chunkshop.runner import run_cell  # noqa: E402
 
 # Configurable via env: BENCH_CORPUS=ntsb|scotus
 CORPUS_NAME = os.environ.get("BENCH_CORPUS", "ntsb")
@@ -143,7 +146,7 @@ def _run_queries(schema: str, embedder, gold: list[dict]) -> tuple[float, list[f
             query = entry["query"]
             gold_doc = entry["gold_doc_id"]
             [qvec] = embedder.embed([query])
-            qvec_str = "[" + ",".join(f"{v:.7f}" for v in qvec) + "]"
+            qvec_str = vector_text(qvec)
 
             t0 = time.perf_counter()
             rows = conn.execute(

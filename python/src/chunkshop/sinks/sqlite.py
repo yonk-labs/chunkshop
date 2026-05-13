@@ -123,7 +123,10 @@ class SqliteSink:
             foreign = existing - ({my_tag} if my_tag else set())
             if foreign:
                 raise RuntimeError(
-                    f"overwrite refuses to drop {self.cfg.table}: foreign source_tag {sorted(foreign)!r}"
+                    f"overwrite refuses to drop {self.cfg.table}: "
+                    f"table holds rows with source_tag values {sorted(foreign)!r} that differ "
+                    f"from this cell's source_tag {my_tag!r}. Set target.force_overwrite: true "
+                    f"in YAML to bypass."
                 )
         if self._table_exists(cur):
             cur.execute(self.backend.drop_table_sql(self._fq_main()))

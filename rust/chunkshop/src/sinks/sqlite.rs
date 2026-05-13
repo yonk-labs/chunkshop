@@ -149,8 +149,12 @@ impl SqliteSink {
                 .collect();
             if !foreign.is_empty() {
                 return Err(anyhow!(
-                    "overwrite refuses to drop {table}: foreign source_tag {foreign:?}",
-                    table = self.cfg.table, foreign = foreign,
+                    "overwrite refuses to drop {table}: table holds rows with source_tag \
+                     values {foreign:?} that differ from this cell's source_tag {my_tag:?}. \
+                     Set target.force_overwrite: true in YAML to bypass.",
+                    table = self.cfg.table,
+                    foreign = foreign,
+                    my_tag = my_tag,
                 ));
             }
         }

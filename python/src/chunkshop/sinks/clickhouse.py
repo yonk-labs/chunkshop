@@ -161,10 +161,12 @@ class ClickHouseSink:
             my_tag = self.cfg.source_tag
             foreign = existing - ({my_tag} if my_tag else set())
             if foreign:
+                my_tag = self.cfg.source_tag
                 raise RuntimeError(
                     f"overwrite refuses to drop {self.cfg.database_name}.{self.cfg.table}: "
-                    f"foreign source_tag values {sorted(foreign)!r}. Set "
-                    f"target.force_overwrite: true to bypass."
+                    f"table holds rows with source_tag values {sorted(foreign)!r} that differ "
+                    f"from this cell's source_tag {my_tag!r}. Set target.force_overwrite: true "
+                    f"in YAML to bypass."
                 )
         if self._table_exists(client):
             client.command(self.backend.drop_table_sql(self._fq()))

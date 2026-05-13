@@ -92,7 +92,7 @@ async fn overwrite_refuses_foreign_source_tag() {
     let sink2 = SqliteSink::new(cfg(&env, "overwrite", "t2"), b2, 4);
     let err = sink2.create_table().await.unwrap_err();
     let msg = format!("{err:#}");
-    assert!(msg.contains("foreign source_tag"), "expected: {msg}");
+    assert!(msg.contains("overwrite refuses to drop"), "expected: {msg}");
 }
 
 #[tokio::test]

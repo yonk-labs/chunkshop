@@ -29,10 +29,12 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "python" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from chunkshop.config import load_config, FastembedEmbedder
-from chunkshop.embedders import load_embedder
-from chunkshop.runner import run_cell
+from _common import vector_text  # noqa: E402
+from chunkshop.config import load_config, FastembedEmbedder  # noqa: E402
+from chunkshop.embedders import load_embedder  # noqa: E402
+from chunkshop.runner import run_cell  # noqa: E402
 
 OUTPUT_DIR = ROOT / "skill-output/bench-scale"
 GOLD_FILE = ROOT / "docs/samples/bakeoff-scotus/gold-scotus.yaml"
@@ -120,7 +122,7 @@ def _backend_dsn_env(backend: str) -> str:
 
 def _query_pg(dsn: str, schema: str, qvec: list[float], k: int) -> tuple[list[tuple[str, int]], float]:
     import psycopg
-    qvec_str = "[" + ",".join(f"{v:.7f}" for v in qvec) + "]"
+    qvec_str = vector_text(qvec)
     t0 = time.perf_counter()
     with psycopg.connect(dsn) as conn:
         rows = conn.execute(
@@ -138,7 +140,7 @@ def _query_mariadb(dsn: str, schema: str, qvec: list[float], k: int) -> tuple[li
     """
     import pymysql
     from chunkshop.backends.mariadb import _parse_mysql_dsn
-    qvec_str = "[" + ",".join(f"{v:.7f}" for v in qvec) + "]"
+    qvec_str = vector_text(qvec)
     kwargs = _parse_mysql_dsn(dsn)
     t0 = time.perf_counter()
     conn = pymysql.connect(**kwargs)
@@ -157,7 +159,7 @@ def _query_mariadb(dsn: str, schema: str, qvec: list[float], k: int) -> tuple[li
 
 def _query_sqlite(path: str, qvec: list[float], k: int) -> tuple[list[tuple[str, int]], float]:
     import sqlite3, sqlite_vec
-    qvec_str = "[" + ",".join(f"{v:.7f}" for v in qvec) + "]"
+    qvec_str = vector_text(qvec)
     t0 = time.perf_counter()
     conn = sqlite3.connect(path)
     conn.enable_load_extension(True)

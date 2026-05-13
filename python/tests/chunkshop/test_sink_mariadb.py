@@ -95,7 +95,7 @@ def test_sc007_overwrite_foreign_tag_safety(cleanup, db_name):
 
     cfg2 = _make_cfg(db_name, mode="overwrite", source_tag="t2")
     sink2 = MariaDbSink(cfg2, MariaDBBackend(dsn_env=DSN_VAR), embed_dim=4)
-    with pytest.raises(RuntimeError, match=r"foreign source_tag"):
+    with pytest.raises(RuntimeError, match=r"overwrite refuses to drop"):
         sink2.create_table()
 
 

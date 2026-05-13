@@ -75,7 +75,7 @@ def test_sc009_overwrite_foreign_tag(dsn):
 
     cfg2 = _cfg(dsn, source_tag="t2")
     sink2 = SqliteSink(cfg2, sink1.backend, embed_dim=4)
-    with pytest.raises(RuntimeError, match=r"foreign source_tag"):
+    with pytest.raises(RuntimeError, match=r"overwrite refuses to drop"):
         sink2.create_table()
 
 

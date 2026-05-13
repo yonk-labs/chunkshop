@@ -81,7 +81,7 @@ def test_overwrite_foreign_tag_safety(db_name):
 
     cfg2 = _cfg(db_name, mode="overwrite", source_tag="t2")
     sink2 = ClickHouseSink(cfg2, ClickHouseBackend(dsn_env=DSN_VAR), embed_dim=4)
-    with pytest.raises(RuntimeError, match=r"foreign source_tag"):
+    with pytest.raises(RuntimeError, match=r"overwrite refuses to drop"):
         sink2.create_table()
 
 

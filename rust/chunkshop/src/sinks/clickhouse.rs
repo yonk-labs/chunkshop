@@ -123,11 +123,13 @@ impl ClickhouseSink {
                 .collect();
             if !foreign.is_empty() {
                 return Err(anyhow!(
-                    "overwrite refuses to drop {db}.{tbl}: foreign source_tag values {foreign:?}. \
-                     Set target.force_overwrite: true to bypass.",
+                    "overwrite refuses to drop {db}.{tbl}: table holds rows with source_tag \
+                     values {foreign:?} that differ from this cell's source_tag {my_tag:?}. \
+                     Set target.force_overwrite: true in YAML to bypass.",
                     db = self.cfg.database_name,
                     tbl = self.cfg.table,
-                    foreign = foreign
+                    foreign = foreign,
+                    my_tag = my_tag,
                 ));
             }
         }

@@ -214,6 +214,40 @@ If any check fails, chunkshop raises and inserts nothing. Pre-flight
 refusing early is why `mode: append` is safe to drive from multiple cells
 in parallel.
 
+### Append mode pre-flight contract
+
+Every sink's `mode: append` path runs the same 4-step pre-flight BEFORE
+any INSERT — the same contract across PG, MariaDB, SQLite, and ClickHouse
+in both Python and Rust:
+
+1. **Table exists.** If not, raise with a pointer to
+   `mode: create_if_missing` for the first-cell-into-table flow.
+2. **Embedding dim matches.** Read the existing table's vector column
+   dim; compare to the cell's embedder `dim`. Refuse on mismatch
+   (vectors would be incomparable).
+3. **`source` column exists** or is addable via
+   `ADD COLUMN IF NOT EXISTS`. Provenance requires this column on every
+   chunkshop table; pre-existing v0.3.x tables get the column added the
+   first time a v0.4.x cell appends to them.
+4. **`promote_metadata` columns** exist or are addable with the declared
+   type. Same `ADD COLUMN IF NOT EXISTS` pattern.
+
+The pre-flight runs inside the same connection / transaction the
+subsequent INSERT will use, so a refused pre-flight leaves the table
+untouched. This is why `mode: append` is safe to drive from multiple
+parallel cells — each one either proves it can write compatibly or
+exits cleanly with no rows written.
+
+The `mode: overwrite` foreign-tag refusal follows the same shape: same
+business rule across all 4 sinks, same canonical error wording —
+`"overwrite refuses to drop {qualified_table}: table holds rows with
+source_tag values {foreign} that differ from this cell's source_tag
+{my_tag}. Set target.force_overwrite: true in YAML to bypass."` —
+across all 8 implementations (4 sinks × 2 languages). Adding a 5th
+backend? Implement these 4 pre-flight steps in your sink's equivalent
+of `_append_preflight` (Python) / `append_preflight` async fn (Rust),
+and match the canonical wording for the overwrite-refusal path.
+
 ### Extractor contract
 
 Extractors return `ExtractResult(tags: list[str], metadata: dict)`. The
