@@ -67,12 +67,16 @@ fn assert_chunks_match(actual: &[chunkshop::chunker::Chunk], expected: &[RefChun
 }
 
 fn make_base_chunker() -> Box<dyn ChunkerImpl + Send + Sync> {
-    Box::new(HierarchyChunker::new(HierarchyChunkerConfig {
-        prefix_heading: true,
-        min_section_chars: 100,
-        max_chars: 400,
-        if_oversize: None,
-    }))
+    Box::new(
+        HierarchyChunker::new(HierarchyChunkerConfig {
+            prefix_heading: true,
+            min_section_chars: 100,
+            max_chars: 400,
+            if_oversize: None,
+            heading_pattern: None,
+        })
+        .expect("build hierarchy chunker"),
+    )
 }
 
 #[test]

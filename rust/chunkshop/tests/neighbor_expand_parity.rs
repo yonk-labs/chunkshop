@@ -58,7 +58,9 @@ fn rust_neighbor_expand_chunks_match_python() {
         min_section_chars: r.config.base.min_section_chars,
         max_chars: r.config.base.max_chars,
         if_oversize: None,
-    });
+        heading_pattern: None,
+    })
+    .expect("build hierarchy chunker");
     let chunker = NeighborExpandChunker::new(r.config.window, Box::new(base), None, None);
 
     let doc = Document {

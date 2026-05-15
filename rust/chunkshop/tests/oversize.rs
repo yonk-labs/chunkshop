@@ -30,6 +30,7 @@ fn neighbor_expand_with_if_oversize_fires() {
         min_section_chars: 100,
         max_chars: 1500,
         if_oversize: None,
+        heading_pattern: None,
     });
     let fallback = ChunkerConfig::FixedOverlap(FixedOverlapChunkerConfig {
         window_words: 200,
