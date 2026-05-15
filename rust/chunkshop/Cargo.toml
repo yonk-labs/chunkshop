@@ -31,7 +31,10 @@ anyhow = "1"
 blake2 = { version = "0.10", default-features = false }
 clap = { version = "4", features = ["derive"] }
 clickhouse = "0.15"
-fastembed = "5"
+# Pinned to >= 5.13.1 — earlier 5.x bumps (5.0.x..5.10.x) require an older
+# `ort` (=2.0.0-rc.10 / =2.0.0-rc.11) and conflict with chunkshop's
+# `ort = "=2.0.0-rc.12"` pin below. fastembed 5.13.1+ aligns on rc.12.
+fastembed = "5.13.1"
 glob = "0.3"
 hf-hub = { version = "0.5", default-features = false, features = ["ureq"] }
 ndarray = { version = "0.17.2", default-features = false }
