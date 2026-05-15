@@ -95,8 +95,16 @@ The bakeoff is **step 1 of every adoption**, not a sample. It's the
 experiment that picks the recipe you'll ship with.
 
 ```bash
-# 1. Install
-cd chunkshop/python && uv sync --extra dev --extra all-backends && cd ..
+# 1a. Install from source — required for the 0.4.x modular backends
+#     (the sample corpora and dev tooling also live in the repo, not the wheel):
+git clone https://github.com/yonk-labs/chunkshop && cd chunkshop
+cd python && uv sync --extra dev --extra all-backends && cd ..
+
+# 1b. pip ships the CLI + library, but PyPI currently serves the 0.3.x
+#     (Postgres-only) line. For 0.4.x modular backends until the PyPI
+#     publish lands, pin the immutable tag:
+#       pip install 'chunkshop[all-backends] @ \
+#         git+https://github.com/yonk-labs/chunkshop.git@v0.4.1#subdirectory=python'
 
 # 2. Pick your backend. Postgres is the default; SQLite for zero-server.
 export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"

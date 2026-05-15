@@ -12,12 +12,18 @@ For the high-level shape and mermaid diagram, see the [top-level README](../READ
 
 ## Install
 
-From source (recommended while alpha):
+From source — required for the 0.4.x modular backends (also gets the
+sample corpora and dev tooling, which the wheel doesn't ship):
 
 ```bash
-cd chunkshop/python
+git clone https://github.com/yonk-labs/chunkshop && cd chunkshop/python
 uv sync --extra dev --extra all-backends
 ```
+
+> `pip install chunkshop` works, but PyPI currently serves the 0.3.x
+> Postgres-only line. For 0.4.x modular backends until the PyPI publish
+> lands, pin the immutable tag:
+> `pip install 'chunkshop[all-backends] @ git+https://github.com/yonk-labs/chunkshop.git@v0.4.1#subdirectory=python'`
 
 As a path dependency from another project:
 
