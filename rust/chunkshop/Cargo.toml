@@ -45,11 +45,17 @@ tracing = "0.1"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# --- `embedder` feature: ML inference stack ---
+# --- `embedder` / `embedder-core` / `embedder-hub` features: ML inference stack ---
 # fastembed pinned to >= 5.13.1 — earlier 5.x bumps (5.0.x..5.10.x) require an
 # older `ort` (=2.0.0-rc.10 / =2.0.0-rc.11) and conflict with chunkshop's
 # `ort = "=2.0.0-rc.12"` pin below. fastembed 5.13.1+ aligns on rc.12.
-fastembed = { version = "5.13.1", optional = true }
+#
+# Declared with `default-features = false` so its bundled `hf-hub-native-tls`
+# feature does NOT pull `hf-hub` transitively. Consumers using `embedder-core`
+# get fastembed's BYO (`try_new_from_user_defined`) path without `hf-hub` /
+# `ureq` / native-tls deps. The `embedder-hub` feature re-enables fastembed's
+# `hf-hub-native-tls` for the stock auto-download path.
+fastembed = { version = "5.13.1", default-features = false, features = ["ort-download-binaries-native-tls", "image-models"], optional = true }
 hf-hub = { version = "0.5", default-features = false, features = ["ureq"], optional = true }
 ndarray = { version = "0.17.2", default-features = false, optional = true }
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "std", "api-24"], optional = true }
@@ -106,13 +112,31 @@ full = ["chunkers", "embedder", "extractor", "source", "sink", "pipeline", "bake
 
 # Just the chunker module + its config types and supporting modules
 # (sentence_split, summarizer, the `Document` struct). Pulls only the
-# small always-on core deps. The `SemanticChunker` requires `embedder` in
-# addition; without that feature the semantic chunker is excluded.
+# small always-on core deps. The `SemanticChunker` requires `embedder-hub`
+# (or `embedder`) in addition; without that feature the semantic chunker is
+# excluded.
 chunkers = []
 
 # ML inference stack (fastembed + ORT). Required for `FastembedEmbedder`
 # and the `SemanticChunker`'s boundary embedder.
-embedder = ["dep:fastembed", "dep:hf-hub", "dep:ndarray", "dep:ort", "dep:tokenizers"]
+#
+# Split into two sub-features so external consumers (e.g. embedded library
+# users that load model bytes from their own storage) can avoid pulling
+# `hf-hub`, `ureq`, and the native-tls crypto stack:
+#
+# - `embedder-core` — fastembed (BYO/`try_new_from_user_defined`) + ort +
+#   ndarray + tokenizers. NO hf-hub. NO auto-download. Caller supplies model
+#   bytes directly via `FastembedEmbedder::from_user_defined_files`.
+#
+# - `embedder-hub` — adds `hf-hub` and re-enables fastembed's
+#   `hf-hub-native-tls` for the stock auto-download path
+#   (`FastembedEmbedder::new` + the bit-near-exact Xenova int8 BGE path).
+#
+# - `embedder` = `embedder-core` + `embedder-hub` — historical alias,
+#   preserves the dep tree existing consumers see today.
+embedder = ["embedder-core", "embedder-hub"]
+embedder-core = ["dep:fastembed", "dep:ndarray", "dep:ort", "dep:tokenizers"]
+embedder-hub = ["embedder-core", "dep:hf-hub", "fastembed/hf-hub-native-tls"]
 
 # Language-detection extractor (whatlang).
 extractor = ["dep:whatlang"]

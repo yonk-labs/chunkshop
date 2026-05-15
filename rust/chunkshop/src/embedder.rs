@@ -5,6 +5,7 @@
 //! 1. **Stock-variant path** — for models where fastembed-rs's built-in
 //!    registry already matches what we want (BGE non-quantized, MiniLM, etc.).
 //!    Resolves through `resolve_model_name` and uses `TextEmbedding::try_new`.
+//!    Requires `embedder-hub` (hf-hub auto-download).
 //!
 //! 2. **User-defined path (bit-exact)** — for `Xenova/bge-base-en-v1.5-int8`
 //!    and `Xenova/bge-small-en-v1.5-int8`, where the goal is byte-identical
@@ -13,19 +14,29 @@
 //!    which makes the reduction order CPU-count-dependent and breaks bit-
 //!    exactness across machines. We pin `with_intra_threads(1)` for these two
 //!    int8 models and replicate fastembed's tokenize → infer → CLS-pool →
-//!    L2-normalize pipeline.
-
-use std::collections::HashMap;
+//!    L2-normalize pipeline. Requires `embedder-hub` for the HF download.
+//!
+//! 3. **Bytes-in path** — `from_user_defined_files`. Caller hands in the ONNX
+//!    and tokenizer bytes already loaded from disk / Postgres / their own
+//!    storage. No `hf-hub` involvement, available under `embedder-core`.
+//!    Used by embedded library consumers who manage model artifacts
+//!    out-of-band.
 
 use anyhow::{anyhow, Context, Result};
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fastembed::TextEmbedding;
 use ndarray::{s, Array2};
 use ort::session::{builder::GraphOptimizationLevel, Session};
 use ort::value::Value;
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 use tracing::info;
 
+#[cfg(feature = "embedder-hub")]
+use fastembed::{EmbeddingModel, InitOptions};
+#[cfg(feature = "embedder-hub")]
+use std::collections::HashMap;
+
 use crate::config::FastembedEmbedderConfig;
+#[cfg(feature = "embedder-hub")]
 use crate::hf_cache::{fetch_user_defined_files, HfModelFiles};
 
 pub struct FastembedEmbedder {
@@ -38,6 +49,11 @@ pub struct FastembedEmbedder {
 }
 
 enum Backend {
+    /// fastembed's stock `TextEmbedding` (registry variant). Constructed
+    /// only by `FastembedEmbedder::new`, which is gated under `embedder-hub`
+    /// because `TextEmbedding::try_new` itself requires fastembed's hf-hub
+    /// feature. Allow dead_code under `embedder-core`-only builds.
+    #[cfg_attr(not(feature = "embedder-hub"), allow(dead_code))]
     Stock(TextEmbedding),
     UserDefined(UserDefinedRunner),
 }
@@ -72,6 +88,7 @@ struct UserDefinedRunner {
 
 /// Returns `Some((repo, onnx_path))` when `model_name` is a Xenova int8 variant
 /// we have a bit-exact path for. Otherwise `None`.
+#[cfg(feature = "embedder-hub")]
 fn user_defined_source(model_name: &str) -> Option<(&'static str, &'static str)> {
     match model_name {
         "Xenova/bge-base-en-v1.5-int8" => {
@@ -85,6 +102,12 @@ fn user_defined_source(model_name: &str) -> Option<(&'static str, &'static str)>
 }
 
 impl FastembedEmbedder {
+    /// Constructor that fetches model files from HuggingFace at runtime.
+    /// Requires the `embedder-hub` Cargo feature (pulls `hf-hub` + native-tls).
+    /// Embedded library consumers that load model bytes from their own
+    /// storage should use [`FastembedEmbedder::from_user_defined_files`]
+    /// instead — it works under `embedder-core` alone.
+    #[cfg(feature = "embedder-hub")]
     pub fn new(cfg: FastembedEmbedderConfig) -> Result<Self> {
         // Priority order for embedder dispatch:
         //   1. BYO mode (cfg.hf_repo set): user-defined ONNX path, runtime
@@ -145,6 +168,50 @@ impl FastembedEmbedder {
         })
     }
 
+    /// Bytes-in constructor: caller supplies the model files directly. No
+    /// HuggingFace fetch, no `hf-hub` dep. Available under `embedder-core`.
+    ///
+    /// `onnx` is the raw ONNX model bytes. `tokenizer` is the raw
+    /// `tokenizer.json` bytes. `tokenizer_config` and `model_config` carry
+    /// the JSON bytes from `tokenizer_config.json` and `config.json` (used to
+    /// pin pad-token / max-length tokenizer settings — same shape the
+    /// HF-fetch path uses).
+    ///
+    /// Pooling is read from `cfg.pooling` (`"cls"` or `"mean"`). `cfg.threads`
+    /// controls ORT intra-threads (default 1). `cfg.is_byo()` is not required
+    /// — this constructor never consults `cfg.hf_repo` / `cfg.onnx_path`.
+    ///
+    /// Used by embedded library consumers (e.g. AIDB pgrx extension) that
+    /// load model bytes from extension-managed storage rather than fetching
+    /// at runtime.
+    pub fn from_user_defined_files(
+        cfg: FastembedEmbedderConfig,
+        onnx: Vec<u8>,
+        tokenizer: Vec<u8>,
+        tokenizer_config: Vec<u8>,
+        model_config: Vec<u8>,
+    ) -> Result<Self> {
+        let pooling = parse_pooling(&cfg.pooling)?;
+        let intra = cfg.threads.unwrap_or(1);
+        let runner = build_user_defined_runner_from_bytes(
+            onnx,
+            tokenizer,
+            tokenizer_config,
+            model_config,
+            pooling,
+            intra,
+        )?;
+        info!(
+            "embedder loaded (bytes-in, no hf-hub): {} (dim={}, pooling={:?})",
+            cfg.model_name, cfg.dim, pooling
+        );
+        Ok(Self {
+            cfg,
+            backend: Backend::UserDefined(runner),
+            embed_seconds: 0.0,
+        })
+    }
+
     /// Cumulative wall time spent in `embed()` calls so far.
     pub fn embed_seconds(&self) -> f64 {
         self.embed_seconds
@@ -194,6 +261,9 @@ impl FastembedEmbedder {
     }
 }
 
+/// HF-fetch path: download files via `hf-hub` then delegate to the bytes-only
+/// builder. Only available under `embedder-hub`.
+#[cfg(feature = "embedder-hub")]
 fn build_user_defined_runner(
     repo: &str,
     onnx_path: &str,
@@ -209,6 +279,28 @@ fn build_user_defined_runner(
     } = fetch_user_defined_files(repo, onnx_path)
         .with_context(|| format!("fetching user-defined files for {repo}"))?;
 
+    build_user_defined_runner_from_bytes(
+        onnx,
+        tokenizer,
+        tokenizer_config,
+        config,
+        pooling,
+        intra_threads,
+    )
+    .with_context(|| format!("building user-defined runner for {repo}"))
+}
+
+/// Bytes-in builder: shared by `build_user_defined_runner` (HF path) and
+/// [`FastembedEmbedder::from_user_defined_files`] (bytes-in API). No HF
+/// dependency — available under `embedder-core`.
+fn build_user_defined_runner_from_bytes(
+    onnx: Vec<u8>,
+    tokenizer: Vec<u8>,
+    tokenizer_config: Vec<u8>,
+    config: Vec<u8>,
+    pooling: Pooling,
+    intra_threads: usize,
+) -> Result<UserDefinedRunner> {
     // intra_threads = 1 is the bit-exactness setting. Caller passes 1 by
     // default for the Xenova int8 BGE bit-near-exact path (parity tests
     // depend on it). For BYO mode with `threads: 4` in YAML, the caller
@@ -222,22 +314,22 @@ fn build_user_defined_runner(
         .with_intra_threads(intra_threads)
         .map_err(|e| anyhow!("ort with_intra_threads({intra_threads}): {e}"))?
         .commit_from_memory(&onnx)
-        .map_err(|e| anyhow!("commit ONNX from memory for {repo}: {e}"))?;
+        .map_err(|e| anyhow!("commit ONNX from memory: {e}"))?;
 
     let need_token_type_ids = session
         .inputs()
         .iter()
         .any(|i| i.name() == "token_type_ids");
 
-    let mut tokenizer = Tokenizer::from_bytes(&tokenizer)
-        .map_err(|e| anyhow!("tokenizer load failed: {e}"))?;
+    let mut tokenizer =
+        Tokenizer::from_bytes(&tokenizer).map_err(|e| anyhow!("tokenizer load failed: {e}"))?;
 
     // Mirror fastembed-py's tokenizer configuration: read pad token / id from
     // config.json + tokenizer_config.json, set BatchLongest padding + 512
     // truncation. Without this, our tokenizer pads per its bundled defaults
     // which can differ from Python's resulting attention_mask shape.
-    let cfg_json: serde_json::Value = serde_json::from_slice(&config)
-        .map_err(|e| anyhow!("parse config.json: {e}"))?;
+    let cfg_json: serde_json::Value =
+        serde_json::from_slice(&config).map_err(|e| anyhow!("parse config.json: {e}"))?;
     let tcfg_json: serde_json::Value = serde_json::from_slice(&tokenizer_config)
         .map_err(|e| anyhow!("parse tokenizer_config.json: {e}"))?;
     let pad_id = cfg_json
@@ -298,10 +390,10 @@ impl UserDefinedRunner {
             type_ids.extend(enc.get_type_ids().iter().map(|x| *x as i64));
         }
 
-        let ids_arr: Array2<i64> = Array2::from_shape_vec((batch_size, seq_len), ids)
-            .context("ids array shape")?;
-        let mask_arr: Array2<i64> = Array2::from_shape_vec((batch_size, seq_len), mask)
-            .context("mask array shape")?;
+        let ids_arr: Array2<i64> =
+            Array2::from_shape_vec((batch_size, seq_len), ids).context("ids array shape")?;
+        let mask_arr: Array2<i64> =
+            Array2::from_shape_vec((batch_size, seq_len), mask).context("mask array shape")?;
         let type_ids_arr: Array2<i64> = Array2::from_shape_vec((batch_size, seq_len), type_ids)
             .context("type_ids array shape")?;
 
@@ -334,8 +426,8 @@ impl UserDefinedRunner {
                 break;
             }
         }
-        let last_hidden = last_hidden
-            .ok_or_else(|| anyhow!("no f32 output tensor found in session outputs"))?;
+        let last_hidden =
+            last_hidden.ok_or_else(|| anyhow!("no f32 output tensor found in session outputs"))?;
 
         // Expect shape (batch, seq, hidden). Pool per `self.pooling`.
         if last_hidden.ndim() != 3 {
@@ -345,7 +437,11 @@ impl UserDefinedRunner {
             ));
         }
         let pooled: ndarray::Array2<f32> = match self.pooling {
-            Pooling::Cls => last_hidden.slice(s![.., 0, ..]).to_owned().into_dimensionality().unwrap(),
+            Pooling::Cls => last_hidden
+                .slice(s![.., 0, ..])
+                .to_owned()
+                .into_dimensionality()
+                .unwrap(),
             Pooling::Mean => mean_pool(&last_hidden, &mask_arr)?,
         };
 
@@ -425,6 +521,7 @@ fn mean_pool(
 /// Map a Python-style `model_name` to a fastembed-rs `EmbeddingModel`. Only
 /// reached for names that are NOT in `user_defined_source` — the int8 names
 /// are handled by the user-defined path.
+#[cfg(feature = "embedder-hub")]
 fn resolve_model_name(name: &str) -> Result<EmbeddingModel> {
     let mut table: HashMap<&str, EmbeddingModel> = HashMap::new();
     table.insert("BAAI/bge-base-en-v1.5", EmbeddingModel::BGEBaseENV15);
@@ -487,10 +584,7 @@ mod tests {
         let last_hidden = ndarray::Array3::<f32>::from_shape_vec(
             (1, 4, 3),
             vec![
-                1.0, 2.0, 3.0,
-                4.0, 5.0, 6.0,
-                99.0, 99.0, 99.0,
-                99.0, 99.0, 99.0,
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0,
             ],
         )
         .unwrap()
@@ -508,12 +602,10 @@ mod tests {
     /// All-padding row falls back to first-token (no NaN). Defensive path.
     #[test]
     fn mean_pool_all_padding_uses_first_token() {
-        let last_hidden = ndarray::Array3::<f32>::from_shape_vec(
-            (1, 2, 2),
-            vec![7.0, 8.0, 99.0, 99.0],
-        )
-        .unwrap()
-        .into_dyn();
+        let last_hidden =
+            ndarray::Array3::<f32>::from_shape_vec((1, 2, 2), vec![7.0, 8.0, 99.0, 99.0])
+                .unwrap()
+                .into_dyn();
         let mask = ndarray::Array2::<i64>::from_shape_vec((1, 2), vec![0, 0]).unwrap();
         let pooled = mean_pool(&last_hidden, &mask).unwrap();
         let row: Vec<f32> = pooled.row(0).to_vec();
@@ -526,7 +618,7 @@ mod tests {
         let last_hidden = ndarray::Array3::<f32>::from_shape_vec(
             (2, 3, 1),
             vec![
-                1.0, 2.0, 3.0,    // batch 0
+                1.0, 2.0, 3.0, // batch 0
                 10.0, 20.0, 30.0, // batch 1
             ],
         )
@@ -534,11 +626,7 @@ mod tests {
         .into_dyn();
         // batch 0: all real → mean = 2.0
         // batch 1: only first → mean = 10.0
-        let mask = ndarray::Array2::<i64>::from_shape_vec(
-            (2, 3),
-            vec![1, 1, 1, 1, 0, 0],
-        )
-        .unwrap();
+        let mask = ndarray::Array2::<i64>::from_shape_vec((2, 3), vec![1, 1, 1, 1, 0, 0]).unwrap();
         let pooled = mean_pool(&last_hidden, &mask).unwrap();
         assert!((pooled[[0, 0]] - 2.0).abs() < 1e-6);
         assert!((pooled[[1, 0]] - 10.0).abs() < 1e-6);
