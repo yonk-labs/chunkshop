@@ -14,7 +14,7 @@ All commands below assume you're in `python/` unless noted. `uv` is the default 
 cd python
 
 # Install — always include [extractors] so the RAKE test doesn't fail
-uv sync --extra dev --extra extractors
+uv sync --extra dev --extra extractors --extra all-backends
 
 # Full test suite (some tests skip if Postgres unreachable)
 uv run pytest -q
@@ -30,9 +30,18 @@ uv run chunkshop ingest --config ../docs/samples/sample.yaml
 uv run chunkshop orchestrate --config-dir src/chunkshop/configs/factorial-int8/ --concurrency 4
 ```
 
-### Postgres for integration tests
+### Databases for integration tests
 
-Tests that talk to Postgres connect via `$CHUNKSHOP_TEST_DSN` or the default `postgresql://postgres:postgres@localhost:5434/age_bakeoff_pgrg`. If the DSN is unreachable, those tests **skip** rather than fail — an all-green `pytest` run without Postgres only exercises unit tests. Integration tests drop their own schema in teardown (`chunkshop_test_*`, `chunkshop_e2e_samples`, `chunkshop_test_append`, `chunkshop_test_multi`).
+Tests that talk to a database connect via env vars and **skip** if unreachable:
+
+- `$CHUNKSHOP_TEST_DSN` — Postgres (default `postgresql://postgres:postgres@localhost:5434/chunkshop_test` if `docker-compose.test.yaml` is up)
+- `$CHUNKSHOP_TEST_DSN_MARIADB` — MariaDB 11.7+ (default `mysql://root:rootpw@localhost:3307/chunkshop_test` if `docker-compose.test.yaml` is up)
+
+Spin both up:
+
+    docker compose -f docker-compose.test.yaml up -d
+
+Cross-backend tests (`test_cross_backend.py`) require both DSNs set. SQLite tests use `:memory:` or `tmp_path` and need no infrastructure. Postgres integration tests drop their own schema in teardown (`chunkshop_test_*`, `chunkshop_e2e_samples`, `chunkshop_test_append`, `chunkshop_test_multi`); MariaDB tests drop their own database (`chunkshop_xb_*`, etc.).
 
 ## Architecture
 

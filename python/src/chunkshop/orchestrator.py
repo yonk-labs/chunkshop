@@ -6,6 +6,7 @@ has process-global state that doesn't play nicely with thread sharing, and
 (2) a silent crash in one cell must not take down siblings or the orchestrator.
 """
 from __future__ import annotations
+import logging
 import os
 import signal
 import subprocess
@@ -14,6 +15,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -65,7 +68,7 @@ def orchestrate(
             cp = pending.pop(0)
             h = _spawn_cell(cp)
             running.append(h)
-            print(f"[orchestrator] started {cp.name} pid={h.proc.pid}", flush=True)
+            logger.info("started %s pid=%s", cp.name, h.proc.pid)
 
         # Poll for completions
         still_running: list[CellHandle] = []
@@ -78,10 +81,7 @@ def orchestrate(
                 h.done_at = time.time()
                 status = "OK" if rc == 0 else f"FAIL(rc={rc})"
                 wall = h.done_at - h.started_at
-                print(
-                    f"[orchestrator] finished {h.config_path.name} {status} wall={wall:.1f}s",
-                    flush=True,
-                )
+                logger.info("finished %s %s wall=%.1fs", h.config_path.name, status, wall)
                 done.append(h)
         running = still_running
 
@@ -93,9 +93,8 @@ def orchestrate(
 
         # Overall timeout
         if elapsed > overall_timeout_seconds:
-            print(
-                f"[orchestrator] OVERALL TIMEOUT at {elapsed:.0f}s, killing {len(running)} workers",
-                flush=True,
+            logger.warning(
+                "OVERALL TIMEOUT at %.0fs, killing %d workers", elapsed, len(running)
             )
             for h in running:
                 try:
@@ -132,7 +131,6 @@ def _checkpoint_report(running: list[CellHandle], done: list[CellHandle], elapse
         status = "OK" if h.returncode == 0 else f"FAIL({h.returncode})"
         rows.append(f"  DONE {h.config_path.name}  {status}")
     body = "\n".join(rows) if rows else "  (nothing to report)"
-    print(
-        f"[orchestrator] checkpoint t={elapsed:.0f}s ({len(running)} running, {len(done)} done)\n{body}",
-        flush=True,
+    logger.info(
+        "checkpoint t=%.0fs (%d running, %d done)\n%s", elapsed, len(running), len(done), body
     )

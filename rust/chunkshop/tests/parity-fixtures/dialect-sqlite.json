@@ -1,0 +1,39 @@
+{
+  "backend": "sqlite",
+  "quote_ident": [
+    {"in": "my_table", "out": "\"my_table\""},
+    {"in": "abc", "out": "\"abc\""},
+    {"in": "with_underscore_123", "out": "\"with_underscore_123\""}
+  ],
+  "fq_table": [
+    {"in": ["public", "my_table"], "out": "\"my_table\""},
+    {"in": ["chunkshop", "test_chunks"], "out": "\"test_chunks\""},
+    {"in": ["ignored_db", "chunks"], "out": "\"chunks\""}
+  ],
+  "vector_type_ddl": [
+    {"in": 384, "out": "FLOAT[384]"},
+    {"in": 1024, "out": "FLOAT[1024]"},
+    {"in": 1, "out": "FLOAT[1]"}
+  ],
+  "json_path_sql": [
+    {"in": ["metadata", "a"], "out": "json_extract(metadata,'$.a')"},
+    {"in": ["metadata", "a.b"], "out": "json_extract(metadata,'$.a.b')"},
+    {"in": ["metadata", "a.b.c"], "out": "json_extract(metadata,'$.a.b.c')"}
+  ],
+  "upsert_clause": [
+    {"in": {"keys": ["id"], "updates": []}, "out": "ON CONFLICT (\"id\") DO NOTHING"},
+    {"in": {"keys": ["id"], "updates": ["content"]}, "out": "ON CONFLICT (\"id\") DO UPDATE SET \"content\" = excluded.\"content\""},
+    {"in": {"keys": ["id"], "updates": ["a", "b"]}, "out": "ON CONFLICT (\"id\") DO UPDATE SET \"a\" = excluded.\"a\", \"b\" = excluded.\"b\""},
+    {"in": {"keys": ["a", "b"], "updates": ["c"]}, "out": "ON CONFLICT (\"a\", \"b\") DO UPDATE SET \"c\" = excluded.\"c\""}
+  ],
+  "create_database_sql": [
+    {"in": "chunkshop", "out": "SELECT 1 -- chunkshop: SQLite has no database/schema concept"},
+    {"in": "ignored", "out": "SELECT 1 -- chunkshop: SQLite has no database/schema concept"}
+  ],
+  "drop_table_sql": [
+    {"in": "\"chunks\"", "out": "DROP TABLE \"chunks\""}
+  ],
+  "add_column_if_not_exists_sql": [
+    {"in": ["\"chunks\"", "source", "TEXT"], "out": "ALTER TABLE \"chunks\" ADD COLUMN \"source\" TEXT"}
+  ]
+}

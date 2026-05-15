@@ -35,8 +35,9 @@ extractor:
   type: none
 
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_sales_chunks
+  database: chunkshop_sales_chunks
   table: notes_from_files
   mode: overwrite
   source_tag: sales_files

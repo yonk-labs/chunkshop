@@ -1,0 +1,79 @@
+# Multi-backend bakeoff against the SCOTUS 772-doc corpus
+# (case overviews + decisions for Supreme Court terms 2018-2022, sourced
+# from pg-raggraph's age-bakeoff extraction data).
+#
+# Each (backend × chunker × embedder) cell ingests all 772 docs into its own
+# table; every cell is queried via its sink's native vector syntax. Results
+# land in `skill-output/bakeoff/scotus_bakeoff/` (results.json + report.md +
+# recommended.yaml). The report shows accuracy + ingest/query latency
+# side-by-side across backends.
+#
+# Usage:
+#   export CHUNKSHOP_DSN=postgresql://postgres:postgres@localhost:5434/age_bakeoff_pgrg
+#   export MARIADB_DSN=mysql://root:rootpw@localhost:3307/mysql
+#   export SCOTUS_SQLITE_PATH=/tmp/chunkshop-bakeoff-scotus.db
+#   chunkshop bakeoff --config docs/samples/bakeoff-scotus/bakeoff-scotus.yaml --yes
+#
+# Matrix size: 7 chunkers × 3 embedders × 3 backends = 63 cells.
+# Expected wall time: 60-90 min on a modern laptop. Drop schemas/files
+# before re-running (the CLI does NOT clean up).
+
+name: scotus_bakeoff
+
+source:
+  type: json_corpus
+  path: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/src/age_bakeoff/extraction/data/scotus.json
+  documents_key: documents
+  id_field: id
+  content_field: content
+  title_field: title
+
+framer:
+  type: identity
+
+gold_queries: docs/samples/bakeoff-scotus/gold-scotus.yaml
+
+matrix:
+  embedders:
+    - { type: fastembed, model_name: "Xenova/bge-small-en-v1.5-int8", dim: 384 }
+    - { type: fastembed, model_name: "Xenova/bge-base-en-v1.5-int8",  dim: 768 }
+    - { type: fastembed, model_name: "nomic-ai/nomic-embed-text-v1.5-Q", dim: 768 }
+  chunkers:
+    - { type: hierarchy }
+    - { type: sentence_aware }
+    - { type: fixed_overlap }
+    - { type: neighbor_expand, base: { type: hierarchy }, window: 1 }
+    - { type: semantic, boundary_model: same }
+    - type: summary_embed
+      base: { type: hierarchy }
+      summarizer:
+        mode: callable
+        module: chunkshop.summarizers.lede
+        function: summarize
+        kwargs: { max_length: 300 }
+    - type: hierarchical_summary
+      base: { type: hierarchy }
+      summarizer:
+        mode: callable
+        module: chunkshop.summarizers.lede
+        function: summarize
+        kwargs: { max_length: 300 }
+
+targets:
+  - type: postgres
+    dsn_env: CHUNKSHOP_DSN
+    database: chunkshop_bakeoff_scotus_pg
+  - type: mariadb
+    dsn_env: MARIADB_DSN
+    database: chunkshop_bakeoff_scotus_md
+  - type: sqlite
+    dsn_env: SCOTUS_SQLITE_PATH
+    database: ignored
+  - type: clickhouse
+    dsn_env: CLICKHOUSE_DSN
+    database: chunkshop_bakeoff_scotus_ch
+
+scoring:
+  k: [1, 3, 5]
+  include_mrr: true
+  top_k: 5

@@ -12,8 +12,12 @@ Install: ``uv sync --extra spacy`` (``pip install "chunkshop[spacy]"``).
 """
 from __future__ import annotations
 
+import logging
+
 from chunkshop.config import SpacyEntitiesExtractor as Cfg
 from chunkshop.extractors.result import ExtractResult
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_spacy_model(name: str):
@@ -23,7 +27,7 @@ def _ensure_spacy_model(name: str):
     try:
         return spacy.load(name)
     except OSError:
-        print(f"[spacy_entities] model {name!r} not found; downloading...")
+        logger.info("model %r not found; downloading...", name)
         from spacy.cli import download
 
         download(name)

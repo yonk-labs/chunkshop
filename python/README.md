@@ -12,24 +12,18 @@ For the high-level shape and mermaid diagram, see the [top-level README](../READ
 
 ## Install
 
-From PyPI (runtime + library):
-
-```bash
-pip install chunkshop                            # base
-pip install 'chunkshop[extractors,lang]'         # with optional NLP extras
-pip install 'chunkshop[nlp]'                     # umbrella: keybert + spacy + lang
-```
-
-The wheel ships the CLI and the library. Sample YAMLs and demo corpora
-(`docs/samples/`) and the test suite live in the source tree — clone the repo
-if you want them.
-
-From source (recommended for development or to get the sample corpora):
+From source — required for the 0.4.x modular backends (also gets the
+sample corpora and dev tooling, which the wheel doesn't ship):
 
 ```bash
 git clone https://github.com/yonk-labs/chunkshop && cd chunkshop/python
-uv sync --extra dev
+uv sync --extra dev --extra all-backends
 ```
+
+> `pip install chunkshop` works, but PyPI currently serves the 0.3.x
+> Postgres-only line. For 0.4.x modular backends until the PyPI publish
+> lands, pin the immutable tag:
+> `pip install 'chunkshop[all-backends] @ git+https://github.com/yonk-labs/chunkshop.git@v0.4.1#subdirectory=python'`
 
 As a path dependency from another project:
 

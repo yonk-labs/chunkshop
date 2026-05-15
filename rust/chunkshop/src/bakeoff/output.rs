@@ -223,6 +223,47 @@ pub fn write_recommended_yaml(
         top.aggregate.get("recall_at_1").copied().unwrap_or(0.0),
     );
 
+    // For multi-target bakeoffs, use the FIRST target as the recommendation's
+    // target shape. For legacy single-PG, use the legacy target. The
+    // recommended.yaml is a starting point — users tweak per-deployment.
+    let targets = cfg.effective_targets()?;
+    let first_target = targets.first().ok_or_else(|| {
+        anyhow::anyhow!("no targets resolved for recommended.yaml")
+    })?;
+    let target_yaml = match first_target {
+        super::config::BakeoffTargetEntry::Postgres(t) => json!({
+            "type": "postgres",
+            "dsn_env": t.dsn_env,
+            "database": t.database_name,
+            "table": format!("{}_production", results.run_name),
+            "mode": "overwrite",
+            "hnsw": true,
+        }),
+        super::config::BakeoffTargetEntry::Mariadb(t) => json!({
+            "type": "mariadb",
+            "dsn_env": t.dsn_env,
+            "database": t.database_name,
+            "table": format!("{}_production", results.run_name),
+            "mode": "overwrite",
+            "hnsw": true,
+        }),
+        super::config::BakeoffTargetEntry::Sqlite(t) => json!({
+            "type": "sqlite",
+            "dsn_env": t.dsn_env,
+            "database": t.database_name,
+            "table": format!("{}_production", results.run_name),
+            "mode": "overwrite",
+        }),
+        super::config::BakeoffTargetEntry::Clickhouse(t) => json!({
+            "type": "clickhouse",
+            "dsn_env": t.dsn_env,
+            "database": t.database_name,
+            "table": format!("{}_production", results.run_name),
+            "mode": "overwrite",
+            "engine": t.engine.clone().unwrap_or_else(|| "ReplacingMergeTree(created_at) ORDER BY (id)".to_string()),
+        }),
+    };
+
     let recommended = json!({
         "# NOTE": note,
         "cell_name": format!("{}_recommended", results.run_name),
@@ -230,15 +271,10 @@ pub fn write_recommended_yaml(
         "framer": framer_yaml,
         "chunker": chunker_yaml,
         "embedder": embedder_yaml,
-        "target": {
-            "dsn_env": cfg.target.dsn_env,
-            "schema": cfg.target.schema_name,
-            "table": format!("{}_production", results.run_name),
-            "mode": "overwrite",
-        },
+        "target": target_yaml,
     });
 
-    let yaml_text = serde_yml::to_string(&recommended)?;
+    let yaml_text = serde_yaml_ng::to_string(&recommended)?;
     let out = out_dir.join("recommended.yaml");
     std::fs::write(&out, yaml_text).with_context(|| format!("write {}", out.display()))?;
     Ok(out)
@@ -323,6 +359,38 @@ fn source_to_yaml_value(s: &crate::config::SourceConfig) -> Value {
             }
             Value::Object(m)
         }
+        S::MariadbTable(p) => {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), json!("mariadb_table"));
+            m.insert("dsn_env".into(), json!(p.dsn_env));
+            m.insert("database".into(), json!(p.database_name));
+            m.insert("table".into(), json!(p.table));
+            m.insert("id_column".into(), json!(p.id_column));
+            m.insert("content_column".into(), json!(p.content_column));
+            if let Some(t) = &p.title_column {
+                m.insert("title_column".into(), json!(t));
+            }
+            if let Some(w) = &p.where_clause {
+                m.insert("where".into(), json!(w));
+            }
+            Value::Object(m)
+        }
+        S::SqliteTable(s) => {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), json!("sqlite_table"));
+            m.insert("dsn_env".into(), json!(s.dsn_env));
+            m.insert("database".into(), json!(s.database_name));
+            m.insert("table".into(), json!(s.table));
+            m.insert("id_column".into(), json!(s.id_column));
+            m.insert("content_column".into(), json!(s.content_column));
+            if let Some(t) = &s.title_column {
+                m.insert("title_column".into(), json!(t));
+            }
+            if let Some(w) = &s.where_clause {
+                m.insert("where".into(), json!(w));
+            }
+            Value::Object(m)
+        }
         S::Http(h) => {
             let mut m = serde_json::Map::new();
             m.insert("type".into(), json!("http"));
@@ -339,6 +407,25 @@ fn source_to_yaml_value(s: &crate::config::SourceConfig) -> Value {
             m.insert("prefix".into(), json!(s3.prefix));
             if let Some(e) = &s3.endpoint_url {
                 m.insert("endpoint_url".into(), json!(e));
+            }
+            Value::Object(m)
+        }
+        S::ClickhouseTable(c) => {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), json!("clickhouse_table"));
+            m.insert("dsn_env".into(), json!(c.dsn_env));
+            m.insert("database".into(), json!(c.database_name));
+            m.insert("table".into(), json!(c.table));
+            m.insert("id_column".into(), json!(c.id_column));
+            m.insert("content_column".into(), json!(c.content_column));
+            if let Some(t) = &c.title_column {
+                m.insert("title_column".into(), json!(t));
+            }
+            if let Some(w) = &c.where_clause {
+                m.insert("where".into(), json!(w));
+            }
+            if !c.metadata_columns.is_empty() {
+                m.insert("metadata_columns".into(), json!(c.metadata_columns));
             }
             Value::Object(m)
         }

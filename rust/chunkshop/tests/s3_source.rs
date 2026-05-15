@@ -7,7 +7,7 @@
 use std::env;
 
 use chunkshop::config::S3SourceConfig;
-use chunkshop::source::S3Source;
+use chunkshop::sources::S3Source;
 
 #[tokio::test]
 async fn s3_source_lists_and_fetches_three_keys() {

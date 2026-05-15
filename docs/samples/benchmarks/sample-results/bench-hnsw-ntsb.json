@@ -1,0 +1,228 @@
+{
+  "hnsw_off": {
+    "ingest": {
+      "cell": "bench_hnsw_ntsb_off",
+      "docs_processed": 20,
+      "chunks_written": 75,
+      "wall_seconds": 4.62,
+      "embed_seconds": 4.251
+    },
+    "mrr": 0.9028,
+    "query_latency_ms_mean": 0.81,
+    "query_latency_ms_min": 0.49,
+    "query_latency_ms_max": 2.86,
+    "query_latency_ms_p50": 0.61,
+    "query_latency_ms_p95": 2.86,
+    "per_query": [
+      {
+        "query": "elderly pilot accident on private grass airstrip with trees and utility wires",
+        "gold_doc_id": "20071229X02007",
+        "top1": "20080116X00055",
+        "rank": 2,
+        "rr": 0.5,
+        "latency_ms": 2.86
+      },
+      {
+        "query": "Piper PA-22 final approach short turf runway tree strike",
+        "gold_doc_id": "20071229X02007",
+        "top1": "20071229X02007",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.93
+      },
+      {
+        "query": "Beech A23 hard landing porpoise nose gear collapse Death Valley",
+        "gold_doc_id": "20071231X02009",
+        "top1": "20071231X02009",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.6
+      },
+      {
+        "query": "nosewheel landing gear failed after bounced touchdown on runway 5",
+        "gold_doc_id": "20071231X02009",
+        "top1": "20071231X02009",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.49
+      },
+      {
+        "query": "loss of directional control on landing rollway runway 21 Belen New Mexico",
+        "gold_doc_id": "20080102X00005",
+        "top1": "20080102X00005",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.68
+      },
+      {
+        "query": "Cessna 172 Skyhawk landing on icy snow-covered runway in Wisconsin",
+        "gold_doc_id": "20080104X00020",
+        "top1": "20080104X00020",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.84
+      },
+      {
+        "query": "pilot completed three takeoffs and full stop landings before runway switch",
+        "gold_doc_id": "20080104X00020",
+        "top1": "20080102X00005",
+        "rank": 3,
+        "rr": 0.333,
+        "latency_ms": 0.65
+      },
+      {
+        "query": "Cessna 210 fatal crash into mountains southeast of Arteaga Mexico",
+        "gold_doc_id": "20080108X00029",
+        "top1": "20080108X00029",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.62
+      },
+      {
+        "query": "private pilot fatal accident XB-GTS Mesa de las Tablas Coahuila",
+        "gold_doc_id": "20080108X00029",
+        "top1": "20080108X00029",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.58
+      },
+      {
+        "query": "Panama-registered Cessna 172 fatal mountain crash near Boquete Chiriqui",
+        "gold_doc_id": "20080108X00031",
+        "top1": "20080108X00031",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.51
+      },
+      {
+        "query": "Islas Secas departing flight three fatalities one serious injury",
+        "gold_doc_id": "20080108X00031",
+        "top1": "20080108X00031",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.5
+      },
+      {
+        "query": "amateur built Vans RV-8 left wing strike after going around at Latrobe",
+        "gold_doc_id": "20080109X00035",
+        "top1": "20080109X00035",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.52
+      }
+    ]
+  },
+  "hnsw_on": {
+    "ingest": {
+      "cell": "bench_hnsw_ntsb_on",
+      "docs_processed": 20,
+      "chunks_written": 75,
+      "wall_seconds": 4.533,
+      "embed_seconds": 4.172
+    },
+    "mrr": 0.9028,
+    "query_latency_ms_mean": 1.32,
+    "query_latency_ms_min": 0.76,
+    "query_latency_ms_max": 2.81,
+    "query_latency_ms_p50": 1.17,
+    "query_latency_ms_p95": 2.81,
+    "per_query": [
+      {
+        "query": "elderly pilot accident on private grass airstrip with trees and utility wires",
+        "gold_doc_id": "20071229X02007",
+        "top1": "20080116X00055",
+        "rank": 2,
+        "rr": 0.5,
+        "latency_ms": 2.81
+      },
+      {
+        "query": "Piper PA-22 final approach short turf runway tree strike",
+        "gold_doc_id": "20071229X02007",
+        "top1": "20071229X02007",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 1.33
+      },
+      {
+        "query": "Beech A23 hard landing porpoise nose gear collapse Death Valley",
+        "gold_doc_id": "20071231X02009",
+        "top1": "20071231X02009",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 1.15
+      },
+      {
+        "query": "nosewheel landing gear failed after bounced touchdown on runway 5",
+        "gold_doc_id": "20071231X02009",
+        "top1": "20071231X02009",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.86
+      },
+      {
+        "query": "loss of directional control on landing rollway runway 21 Belen New Mexico",
+        "gold_doc_id": "20080102X00005",
+        "top1": "20080102X00005",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.76
+      },
+      {
+        "query": "Cessna 172 Skyhawk landing on icy snow-covered runway in Wisconsin",
+        "gold_doc_id": "20080104X00020",
+        "top1": "20080104X00020",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 2.07
+      },
+      {
+        "query": "pilot completed three takeoffs and full stop landings before runway switch",
+        "gold_doc_id": "20080104X00020",
+        "top1": "20080102X00005",
+        "rank": 3,
+        "rr": 0.333,
+        "latency_ms": 1.01
+      },
+      {
+        "query": "Cessna 210 fatal crash into mountains southeast of Arteaga Mexico",
+        "gold_doc_id": "20080108X00029",
+        "top1": "20080108X00029",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 1.16
+      },
+      {
+        "query": "private pilot fatal accident XB-GTS Mesa de las Tablas Coahuila",
+        "gold_doc_id": "20080108X00029",
+        "top1": "20080108X00029",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 1.26
+      },
+      {
+        "query": "Panama-registered Cessna 172 fatal mountain crash near Boquete Chiriqui",
+        "gold_doc_id": "20080108X00031",
+        "top1": "20080108X00031",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 1.24
+      },
+      {
+        "query": "Islas Secas departing flight three fatalities one serious injury",
+        "gold_doc_id": "20080108X00031",
+        "top1": "20080108X00031",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 0.99
+      },
+      {
+        "query": "amateur built Vans RV-8 left wing strike after going around at Latrobe",
+        "gold_doc_id": "20080109X00035",
+        "top1": "20080109X00035",
+        "rank": 1,
+        "rr": 1.0,
+        "latency_ms": 1.17
+      }
+    ]
+  }
+}

@@ -19,13 +19,13 @@ use serde_json::Value;
 use sqlx::Row;
 
 use crate::chunker::{Chunk, ChunkerImpl};
-use crate::config::{CellConfig, EmbedderConfig, SourceConfig};
+use crate::config::{CellConfig, EmbedderConfig, SourceConfig, TargetConfig};
 use crate::embedder::FastembedEmbedder;
 use crate::extractor::{build_extractor, ExtractorImpl};
 use crate::framer::FramerImpl;
 use crate::runner::{build_chunker, build_framer};
-use crate::sink::PgVectorSink;
-use crate::source::Document;
+use crate::sinks::{AnySink, Sink};
+use crate::sources::Document;
 
 pub struct Pipeline {
     cfg: CellConfig,
@@ -33,7 +33,7 @@ pub struct Pipeline {
     chunker: Box<dyn ChunkerImpl + Send + Sync>,
     extractor: Box<dyn ExtractorImpl>,
     embedder: FastembedEmbedder,
-    sink: PgVectorSink,
+    sink: AnySink,
 }
 
 impl Pipeline {
@@ -56,7 +56,9 @@ impl Pipeline {
         let embedder = match cfg.embedder.clone() {
             EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,
         };
-        let sink = PgVectorSink::connect(cfg.target.clone(), embedder.dim()).await?;
+        let backend = crate::backends::load_backend(&cfg.target).context("load backend")?;
+        let sink = crate::sinks::load_sink(&cfg.target, backend, embedder.dim())
+            .context("load sink")?;
         sink.create_table().await?;
         Ok(Self { cfg, framer, chunker, extractor, embedder, sink })
     }
@@ -124,7 +126,7 @@ impl Pipeline {
             }
 
             self.sink
-                .write_document(&chunks_with_meta, &embeddings, &tags_per_chunk)
+                .write_document(&fdoc.id, &chunks_with_meta, &embeddings, &tags_per_chunk)
                 .await
                 .context("write_document")?;
             chunks_written += chunks_with_meta.len();
@@ -136,20 +138,7 @@ impl Pipeline {
     /// Returns the number of rows deleted. Mirrors Python's
     /// `Pipeline.delete_document`.
     pub async fn delete_document(&self, doc_id: &str) -> Result<u64> {
-        let pool = self.sink.pool();
-        let target = &self.cfg.target;
-        let fq = format!("\"{}\".\"{}\"", target.schema_name, target.table);
-        let result = if let Some(tag) = &target.source_tag {
-            let stmt = format!(
-                "DELETE FROM {tbl} WHERE doc_id = $1 AND source = $2",
-                tbl = fq
-            );
-            sqlx::query(&stmt).bind(doc_id).bind(tag).execute(pool).await?
-        } else {
-            let stmt = format!("DELETE FROM {tbl} WHERE doc_id = $1", tbl = fq);
-            sqlx::query(&stmt).bind(doc_id).execute(pool).await?
-        };
-        Ok(result.rows_affected())
+        Ok(self.sink.delete_document(doc_id).await? as u64)
     }
 
     /// Live-progress count. Wraps the sink's COUNT(DISTINCT doc_id).
@@ -157,18 +146,26 @@ impl Pipeline {
         self.sink.count_docs().await
     }
 
-    /// Used by the demo — return one row's text preview for stdout.
+    /// Used by the demo — return one row's text preview for stdout. PG-only
+    /// (uses raw SQL via the underlying pool). MariaDB / SQLite / etc. return
+    /// `Ok(None)` until they add their own sample paths; the demo is a
+    /// PG-flavored convenience, not a Sink trait method.
     pub async fn sample_row(&self, doc_id: &str) -> Result<Option<(i32, String)>> {
-        let target = &self.cfg.target;
-        let fq = format!("\"{}\".\"{}\"", target.schema_name, target.table);
+        let (AnySink::Pg(pg_sink), TargetConfig::Postgres(target)) =
+            (&self.sink, &self.cfg.target)
+        else {
+            return Ok(None);
+        };
+        let fq = format!("\"{}\".\"{}\"", target.database_name, target.table);
         let stmt = format!(
             "SELECT seq_num, left(original_content, 80) FROM {tbl} \
              WHERE doc_id = $1 ORDER BY seq_num LIMIT 1",
             tbl = fq
         );
+        let pool = pg_sink.pool().await?;
         let row = sqlx::query(&stmt)
             .bind(doc_id)
-            .fetch_optional(self.sink.pool())
+            .fetch_optional(pool)
             .await?;
         Ok(row.map(|r| (r.get::<i32, _>(0), r.get::<String, _>(1))))
     }

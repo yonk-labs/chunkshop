@@ -1,0 +1,63 @@
+# ClickHouse SOURCE example. Reads source documents from a CH table and
+# writes vectors to PG. Cross-backend cell — demonstrates the new P1
+# capability (chunkshop reading from ClickHouse).
+#
+# Requires:
+#   - CH 24.10+ (docker compose -f docker-compose.test.yaml up -d clickhouse)
+#   - Postgres + pgvector (docker compose -f docker-compose.test.yaml up -d postgres)
+#   - A pre-existing CH source table populated with documents
+#
+# From the chunkshop repo root:
+#   export CHUNKSHOP_DSN_CH=clickhouse://default:chpw@localhost:8124/default
+#   export CHUNKSHOP_DSN_PG=postgresql://postgres:postgres@localhost:5434/chunkshop
+#   chunkshop ingest --config docs/samples/sample-clickhouse-source.yaml
+#
+# Notes on CH source semantics:
+#   - `where` is trusted operator input — interpolated raw into the SELECT.
+#     CH SQL dialect example below.
+#   - If your source table is ReplacingMergeTree, unmerged duplicates may
+#     surface as separate documents. Use a CH view with `SELECT ... FINAL`
+#     if dedup matters at read time.
+#   - JOIN-via-VIEW pattern works on CH the same as on PG/MariaDB —
+#     define a CREATE VIEW IF NOT EXISTS in your DB, then point
+#     `source.table` at the view name.
+cell_name: samples_clickhouse_source_demo
+
+source:
+  type: clickhouse_table
+  dsn_env: CHUNKSHOP_DSN_CH
+  database: my_app
+  table: documents
+  id_column: id
+  content_column: body
+  title_column: title           # optional
+  metadata_columns: [lang, author]
+  # CH SQL dialect predicate (uncomment to filter):
+  # where: "created_at > toDateTime('2025-01-01 00:00:00')"
+
+chunker:
+  type: hierarchy
+  prefix_heading: true
+  min_section_chars: 100
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 2
+  batch_size: 32
+
+extractor:
+  type: none
+
+target:
+  type: postgres
+  dsn_env: CHUNKSHOP_DSN_PG
+  database: chunkshop_samples
+  table: docs_from_clickhouse
+  mode: overwrite
+  source_tag: ch_source_demo
+  hnsw: true
+
+runtime:
+  omp_num_threads: 2

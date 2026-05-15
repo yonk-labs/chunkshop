@@ -2,6 +2,85 @@
 
 ## Unreleased
 
+## 0.4.1 — 2026-05-12
+
+Polish + perf + ops layer on top of the 0.4.0 modular-backends release.
+Headline is a **~43× speedup on MariaDB `query_top_k`** via a hybrid
+euclidean/cosine path. CLI grows `validate` and `init` subcommands.
+Per-backend docs gain Benefits / Limitations / Gaps / Troubleshooting
+sections. `serde_yml` → `serde_yaml_ng` migration closes a Rust
+dep-staleness gap.
+
+- **MariaDB `query_top_k` hybrid euclidean/cosine path.** ~43× speedup
+  at 8k chunks vs. the naïve cosine query. Cosine semantics preserved
+  by ordering on `VEC_DISTANCE_EUCLIDEAN` against pre-normalized vectors
+  (mathematically equivalent for unit-norm embeddings).
+- **`chunkshop validate` subcommand** — parses a YAML config without
+  running ingest; surfaces pydantic-shaped validation errors
+  (PR-006, PR-008).
+- **`chunkshop init` subcommand** — scaffolds a new YAML against a
+  chosen backend template (PR-010, PR-014).
+- **Multi-target bakeoff in Rust.** Single Rust binary runs the
+  factorial matrix across all four backends (PR-018).
+- **Per-engine docs** gain Benefits / Limitations / Gaps /
+  Troubleshooting sections (Postgres, MariaDB, SQLite, ClickHouse).
+  Architecture + README rewritten around the modular-backend story.
+- **`docs/benchmarks/`** — measured performance + accuracy across all
+  four backends, with raw result JSON frozen in-tree.
+- **Default-install backend extras** + branded `ImportError` messages
+  when a backend's deps aren't on the path (PR-002, PR-003, PR-011).
+  Users on tight budgets opt out via `chunkshop[core]`.
+- **`serde_yml` → `serde_yaml_ng`** migration (Rust). The former is
+  unmaintained; the latter is the actively-developed fork. Public API
+  unchanged (PR-001, PR-004).
+- **Structured CLI logging.** Ad-hoc `print()` calls converted to
+  `logging` (Python); chunker panic paths converted to `assert!` +
+  rustdoc (Rust). No functional change (PR-005, PR-006).
+- **ClickHouse append-mode warn-once on schema mismatch** instead of
+  silent acceptance. Strict test mode for CI parity. Security + upgrade
+  docs added per backend (PR-007, PR-009, PR-012, PR-013).
+
+## 0.4.0 — 2026-05-10
+
+**Modular backends ship.** chunkshop's sink layer is no longer
+Postgres-only. **MariaDB**, **SQLite** (via `sqlite-vec`), and
+**ClickHouse** all ship as first-class backends alongside Postgres —
+same YAML, swap `target.backend`. The Rust port matches Python on every
+backend.
+
+Umbrella release for the R1 / R2 / R3 / R4 sub-projects plus the RT
+cross-backend bakeoff matrix.
+
+- **MariaDB backend (R2).** 11.7+ native `VECTOR` type. Full
+  Sink / Backend / Source trait implementations. `MariadbTableSource`
+  mirrors `PgTableSource`. Cross-language vector parity verified —
+  Rust and Python round-trip through MariaDB produce byte-equivalent
+  embeddings (`tests/parity/mariadb_*`, plus a manual walkthrough in
+  `docs/parity/`).
+- **SQLite backend (R3).** Backed by `sqlite-vec` `vec0` virtual
+  tables. Two-table design (chunks + vec0 shadow) with MATCH JOIN
+  `query_top_k`. Full create / append / overwrite mode support. HNSW
+  once-warning. `SqliteTableSource` with column-projection SELECT
+  and JSON metadata. Cross-language parity verified (R3-SC-007).
+- **ClickHouse backend (R4).** Append-only sink with
+  `ReplacingMergeTree` + `OPTIMIZE FINAL` for dedup. Engine-allowlist
+  regex protects against arbitrary engine injection.
+  `ClickhouseTableSource` mirrors the other backends with column
+  projection.
+- **Rust modular trait skeleton (R1).** `Backend`, `BackendConn`,
+  `BackendDialect` traits with GAT-lifted connection methods. A single
+  `AnyBackend` / `AnySink` / `AnySource` enum dispatches uniformly
+  from YAML — adding a new backend is one trait impl + one enum
+  variant + one factory branch.
+- **RT cross-backend matrix.** 16-cell bakeoff in Rust running every
+  chunker × backend combination on the canonical corpus
+  (RT-SC-001..006).
+- **`target.backend` field.** Selects which backend to ingest into.
+  Default remains Postgres for backwards compatibility — existing
+  Postgres-only YAML configs continue to work unchanged. New backends
+  require their respective extras (`chunkshop[mariadb]`,
+  `chunkshop[sqlite]`, `chunkshop[clickhouse]`).
+
 ## 0.3.2 — 2026-04-30
 
 Adds the `if_oversize` fallback chain across all seven chunker configs

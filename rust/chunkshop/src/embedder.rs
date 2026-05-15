@@ -267,11 +267,9 @@ impl FastembedEmbedder {
 /// allocating owned Strings from the input slice. Owns one allocation per
 /// call; negligible vs. the ORT inference cost.
 ///
-/// Available when both the `chunkers` feature (the trait lives there) and
-/// the `embedder-core` feature (this file's `FastembedEmbedder`) are
-/// enabled. The trait itself in `crate::chunker` is always available with
-/// `chunkers`; this `impl` is what makes fastembed pluggable into
-/// `SemanticChunker::with_embedder`.
+/// Present when `chunkers` is enabled (this module is itself `embedder-core`-
+/// gated, so `FastembedEmbedder` is always available here). The trait lives
+/// in `crate::chunker` and is always available.
 #[cfg(feature = "chunkers")]
 impl crate::chunker::BoundaryEmbedder for FastembedEmbedder {
     fn embed_batch(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {

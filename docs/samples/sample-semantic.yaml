@@ -40,8 +40,9 @@ extractor:
   type: none
 
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_DSN
-  schema: chunkshop_samples
+  database: chunkshop_samples
   table: interview_semantic
   mode: overwrite
   hnsw: false

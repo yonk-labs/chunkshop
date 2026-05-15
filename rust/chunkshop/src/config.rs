@@ -24,6 +24,18 @@ const ALLOWED_PROMOTE_TYPES: &[&str] = &[
     "date",
 ];
 
+/// Allowlist regex for `ClickhouseTargetConfig::engine`. Hardening relative to
+/// Python (which interpolates the engine string raw — see
+/// python/src/chunkshop/config.py:542). Accepts:
+///   - `MergeTree` / `MergeTree()`
+///   - `ReplacingMergeTree(<single_ident>)` (the `created_at` dedup column)
+///   - Any of the above optionally followed by ` ORDER BY <expr>`
+///
+/// Rejects engines outside this whitelist (Replicated*, Distributed, Memory,
+/// engines with embedded SQL, etc.) — those need explicit user request and a
+/// separate brief.
+const CLICKHOUSE_ENGINE_RE: &str = r"^(MergeTree(\(\))?|ReplacingMergeTree\(\w+\))( ORDER BY .+)?$";
+
 /// One promoted jsonb path → typed Postgres column. Mirrors Python's
 /// `chunkshop.config.PromoteColumn`. The `path` is dot-separated; each segment
 /// must match `^[A-Za-z_][A-Za-z0-9_]*$`. The `type_` must be in
@@ -236,8 +248,11 @@ pub enum SourceConfig {
     Files(FilesSourceConfig),
     JsonCorpus(JsonCorpusSourceConfig),
     PgTable(PgTableSourceConfig),
+    MariadbTable(MariadbTableSourceConfig),
+    SqliteTable(SqliteTableSourceConfig),
     Http(HttpSourceConfig),
     S3(S3SourceConfig),
+    ClickhouseTable(ClickhouseTableSourceConfig),
     /// Library/embedded mode — no automatic iteration. The host application
     /// drives ingestion via `chunkshop::Pipeline::from_yaml(...)` and calls
     /// `pipeline.ingest_text(doc_id, text, metadata)` per document.
@@ -288,6 +303,65 @@ pub struct PgTableSourceConfig {
     /// Extra columns to pull alongside id/content/title and put into each
     /// Document's metadata. Pair with `target.promote_metadata` to surface
     /// specific keys as typed columns in the target table.
+    #[serde(default)]
+    pub metadata_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MariadbTableSourceConfig {
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    pub id_column: String,
+    pub content_column: String,
+    #[serde(default)]
+    pub title_column: Option<String>,
+    /// Trusted operator-supplied SQL fragment appended after `WHERE`. Same
+    /// contract as PgTableSourceConfig.where_clause — NOT validated.
+    #[serde(default, rename = "where")]
+    pub where_clause: Option<String>,
+    #[serde(default)]
+    pub metadata_columns: Vec<String>,
+}
+
+/// SQLite source. Mirrors `python/src/chunkshop/sources/sqlite_table.py`.
+/// `database` is validated as a non-empty ident at config-load (loose parity
+/// with Postgres) but ignored at runtime — SQLite has no schema namespace.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SqliteTableSourceConfig {
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    pub id_column: String,
+    pub content_column: String,
+    #[serde(default)]
+    pub title_column: Option<String>,
+    /// Trusted operator-supplied SQL fragment appended after `WHERE`. Same
+    /// contract as PgTableSourceConfig.where_clause — NOT validated.
+    #[serde(default, rename = "where")]
+    pub where_clause: Option<String>,
+    #[serde(default)]
+    pub metadata_columns: Vec<String>,
+}
+
+/// ClickHouse source. Mirrors `python/src/chunkshop/sources/clickhouse_table.py`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickhouseTableSourceConfig {
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    pub id_column: String,
+    pub content_column: String,
+    #[serde(default)]
+    pub title_column: Option<String>,
+    /// Trusted operator-supplied SQL fragment appended after `WHERE`. Mirrors
+    /// Python's `clickhouse_table.py` which interpolates this verbatim. NOT
+    /// validated; don't expose this field to untrusted YAML authors.
+    #[serde(default, rename = "where")]
+    pub where_clause: Option<String>,
     #[serde(default)]
     pub metadata_columns: Vec<String>,
 }
@@ -710,12 +784,37 @@ impl FastembedEmbedderConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct TargetConfig {
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TargetConfig {
+    Postgres(PostgresTargetConfig),
+    Mariadb(MariadbTargetConfig),
+    Sqlite(SqliteTargetConfig),
+    Clickhouse(ClickhouseTargetConfig),
+}
+
+impl TargetConfig {
+    /// Post-deserialize validation that crosses field boundaries. Delegates to
+    /// the active variant's `validate()`.
+    fn validate(&self) -> Result<()> {
+        match self {
+            TargetConfig::Postgres(t) => t.validate(),
+            TargetConfig::Mariadb(t) => t.validate(),
+            TargetConfig::Sqlite(t) => t.validate(),
+            TargetConfig::Clickhouse(t) => t.validate(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PostgresTargetConfig {
     #[serde(default = "default_dsn_env")]
     pub dsn_env: String,
-    #[serde(rename = "schema")]
-    pub schema_name: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
     pub table: String,
+    /// Legacy bool field from 0.3.x — accepted but never preferred. New configs
+    /// should use `mode`. Top-level `target.overwrite: true` is still rejected
+    /// at config-load by the legacy-form check (Task 13).
     #[serde(default)]
     pub overwrite: bool,
     #[serde(default = "default_hnsw")]
@@ -739,11 +838,142 @@ pub struct TargetConfig {
     pub delete_orphans: bool,
 }
 
-impl TargetConfig {
+impl PostgresTargetConfig {
     /// Post-deserialize validation that crosses field boundaries (e.g.
     /// mode/source_tag coupling). Identifier safety is enforced separately in
     /// `load_config` via `validate_ident`.
     fn validate(&self) -> Result<()> {
+        if self.mode == "append" && self.source_tag.is_none() {
+            return Err(anyhow!(
+                "target.mode='append' requires target.source_tag to identify this cell"
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MariadbTargetConfig {
+    #[serde(default = "default_dsn_env")]
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    /// Legacy bool field from 0.3.x — accepted but never preferred. Same shape
+    /// as PostgresTargetConfig.
+    #[serde(default)]
+    pub overwrite: bool,
+    #[serde(default = "default_hnsw")]
+    pub hnsw: bool,
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub source_tag: Option<String>,
+    #[serde(default)]
+    pub promote_metadata: Vec<PromoteColumn>,
+    #[serde(default)]
+    pub force_overwrite: bool,
+    #[serde(default)]
+    pub delete_orphans: bool,
+}
+
+impl MariadbTargetConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.mode == "append" && self.source_tag.is_none() {
+            return Err(anyhow!(
+                "target.mode='append' requires target.source_tag to identify this cell"
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClickhouseTargetConfig {
+    #[serde(default = "default_dsn_env")]
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    #[serde(default = "default_hnsw")]
+    pub hnsw: bool,
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub source_tag: Option<String>,
+    #[serde(default)]
+    pub promote_metadata: Vec<PromoteColumn>,
+    #[serde(default)]
+    pub force_overwrite: bool,
+    /// On ClickHouse, `delete_orphans: true` is a NO-OP that emits a single
+    /// `tracing::warn!` per process. CH's `ALTER TABLE ... DELETE` is async
+    /// and breaks chunkshop's per-document atomic write contract.
+    #[serde(default)]
+    pub delete_orphans: bool,
+    /// Optional engine override. When `None`, the sink emits
+    /// `MergeTree() ORDER BY (id)`. To opt into lazy dedup, set
+    /// `"ReplacingMergeTree(created_at) ORDER BY (id)"`. Validated against
+    /// `CLICKHOUSE_ENGINE_RE` at config-load — a Rust-only hardening relative
+    /// to Python which interpolates the field raw.
+    #[serde(default)]
+    pub engine: Option<String>,
+}
+
+impl ClickhouseTargetConfig {
+    fn validate(&self) -> Result<()> {
+        if self.mode == "append" && self.source_tag.is_none() {
+            return Err(anyhow!(
+                "target.mode='append' requires target.source_tag to identify this cell"
+            ));
+        }
+        if let Some(e) = &self.engine {
+            let re = Regex::new(CLICKHOUSE_ENGINE_RE).unwrap();
+            if !re.is_match(e) {
+                return Err(anyhow!(
+                    "target.engine {e:?} not in allowlist. Accepted shapes: \
+                     'MergeTree', 'MergeTree()', 'ReplacingMergeTree(<col>)', \
+                     each optionally followed by ' ORDER BY <expr>'. Custom engines \
+                     are not supported in v0.4 — file an issue if you need one."
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// SQLite target. Mirrors Python's `chunkshop.config.SqliteTarget`.
+/// `database` is validated as a non-empty ident at config-load (loose parity
+/// with Postgres) but ignored at runtime — SQLite has no schema namespace.
+/// `target.hnsw=true` is a no-op on SQLite (sqlite-vec is brute-force KNN);
+/// the sink emits a one-time process-level warning when set.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SqliteTargetConfig {
+    /// Env var holding the path to the SQLite file (or `:memory:`).
+    pub dsn_env: String,
+    #[serde(rename = "database")]
+    pub database_name: String,
+    pub table: String,
+    /// Legacy bool from 0.3.x — accepted but never preferred. New configs use `mode`.
+    #[serde(default)]
+    pub overwrite: bool,
+    #[serde(default = "default_hnsw")]
+    pub hnsw: bool,
+    /// `overwrite` (default), `append`, or `create_if_missing`.
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub source_tag: Option<String>,
+    #[serde(default)]
+    pub promote_metadata: Vec<PromoteColumn>,
+    #[serde(default)]
+    pub force_overwrite: bool,
+    /// Mirror PostgresTargetConfig.delete_orphans. Same per-doc-shrink semantics.
+    #[serde(default)]
+    pub delete_orphans: bool,
+}
+
+impl SqliteTargetConfig {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.mode == "append" && self.source_tag.is_none() {
             return Err(anyhow!(
                 "target.mode='append' requires target.source_tag to identify this cell"
@@ -773,6 +1003,14 @@ pub struct RuntimeConfig {
     pub log_path: Option<String>,
     #[serde(default)]
     pub heartbeat_every: Option<usize>,
+    /// "text" (default) or "json" — controls the CLI's tracing-subscriber
+    /// formatter. JSON emits one structured event per line for log aggregators.
+    #[serde(default = "default_log_format")]
+    pub log_format: String,
+}
+
+fn default_log_format() -> String {
+    "text".to_string()
 }
 
 /// Validate identifier against Python's regex: `^[a-z_][a-z0-9_]*$`.
@@ -786,15 +1024,82 @@ fn validate_ident(name: &str, field: &str) -> Result<()> {
     Ok(())
 }
 
+/// Pre-deserialize legacy-form rejection (V4-SC-006).
+///
+/// Walks the raw YAML for known 0.3.x field/value patterns and emits a
+/// migration-friendly error when found. Without this pass, serde's default
+/// errors are cryptic ("unknown variant `pgvector`") or absent (silently
+/// accepted legacy fields).
+fn reject_legacy_forms(yaml: &serde_yaml_ng::Value) -> Result<()> {
+    let target = yaml.get("target").and_then(|v| v.as_mapping());
+    let Some(target) = target else {
+        return Ok(()); // No target block; nothing to validate.
+    };
+
+    if let Some(t) = target.get("type").and_then(|v| v.as_str()) {
+        if t == "pgvector" {
+            return Err(anyhow!(
+                "target.type 'pgvector' was renamed to 'postgres' in v0.4.0. Update your YAML."
+            ));
+        }
+    }
+    if target.get("schema").is_some() {
+        return Err(anyhow!(
+            "target.schema was renamed to target.database in v0.4.0. Update your YAML."
+        ));
+    }
+    if let Some(o) = target.get("overwrite") {
+        if matches!(o.as_bool(), Some(true)) {
+            return Err(anyhow!(
+                "target.overwrite: true was replaced by target.mode: 'overwrite' in v0.4.0. \
+                 Update your YAML."
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn load_config(path: &Path) -> Result<CellConfig> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading config {}", path.display()))?;
-    let cfg: CellConfig = serde_yml::from_str(&text)
+
+    // V4-SC-006: reject 0.3.x legacy YAML shapes with friendly errors before
+    // typed deserialization (which would emit cryptic "unknown variant" errors).
+    let raw_value: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
+        .with_context(|| format!("parsing YAML at {}", path.display()))?;
+    reject_legacy_forms(&raw_value)?;
+
+    let cfg: CellConfig = serde_yaml_ng::from_str(&text)
         .with_context(|| format!("parsing YAML {}", path.display()))?;
-    validate_ident(&cfg.target.schema_name, "target.schema")?;
-    validate_ident(&cfg.target.table, "target.table")?;
-    if let Some(tag) = &cfg.target.source_tag {
-        validate_ident(tag, "target.source_tag")?;
+    match &cfg.target {
+        TargetConfig::Postgres(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
+        TargetConfig::Mariadb(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
+        TargetConfig::Sqlite(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
+        TargetConfig::Clickhouse(t) => {
+            validate_ident(&t.database_name, "target.database")?;
+            validate_ident(&t.table, "target.table")?;
+            if let Some(tag) = &t.source_tag {
+                validate_ident(tag, "target.source_tag")?;
+            }
+        }
     }
     if let SourceConfig::PgTable(p) = &cfg.source {
         validate_ident(&p.schema_name, "source.schema")?;
@@ -805,6 +1110,39 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
             validate_ident(tc, "source.title_column")?;
         }
         // `where_clause` is intentionally NOT validated — see PgTableSourceConfig docstring.
+    }
+    if let SourceConfig::MariadbTable(p) = &cfg.source {
+        validate_ident(&p.database_name, "source.database")?;
+        validate_ident(&p.table, "source.table")?;
+        validate_ident(&p.id_column, "source.id_column")?;
+        validate_ident(&p.content_column, "source.content_column")?;
+        if let Some(tc) = &p.title_column {
+            validate_ident(tc, "source.title_column")?;
+        }
+        // `where_clause` intentionally NOT validated — same contract as PgTableSourceConfig.
+    }
+    if let SourceConfig::SqliteTable(s) = &cfg.source {
+        validate_ident(&s.database_name, "source.database")?;
+        validate_ident(&s.table, "source.table")?;
+        validate_ident(&s.id_column, "source.id_column")?;
+        validate_ident(&s.content_column, "source.content_column")?;
+        if let Some(tc) = &s.title_column {
+            validate_ident(tc, "source.title_column")?;
+        }
+        // `where_clause` intentionally NOT validated — same contract as PgTableSourceConfig.
+    }
+    if let SourceConfig::ClickhouseTable(p) = &cfg.source {
+        validate_ident(&p.database_name, "source.database")?;
+        validate_ident(&p.table, "source.table")?;
+        validate_ident(&p.id_column, "source.id_column")?;
+        validate_ident(&p.content_column, "source.content_column")?;
+        if let Some(tc) = &p.title_column {
+            validate_ident(tc, "source.title_column")?;
+        }
+        for mc in &p.metadata_columns {
+            validate_ident(mc, "source.metadata_columns")?;
+        }
+        // `where_clause` is intentionally NOT validated — see ClickhouseTableSourceConfig docstring.
     }
     cfg.target.validate()?;
     validate_chunker_config(&cfg.chunker)?;
@@ -879,7 +1217,7 @@ cell_name: t
 source: { type: files, glob: "x", id_from: stem }
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: append, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: append, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let err = format!("{:#}", load_config(&path).unwrap_err());
@@ -897,8 +1235,9 @@ source: { type: files, glob: "x", id_from: stem }
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target:
+  type: postgres
   dsn_env: D
-  schema: s
+  database: s
   table: t
   mode: overwrite
   hnsw: false
@@ -921,8 +1260,9 @@ source: { type: files, glob: "x", id_from: stem }
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target:
+  type: postgres
   dsn_env: D
-  schema: s
+  database: s
   table: t
   mode: overwrite
   hnsw: false
@@ -940,7 +1280,7 @@ target:
     #[test]
     fn promote_column_name_lowercases_and_double_underscores() {
         let pc: PromoteColumn =
-            serde_yml::from_str("{ path: entities.ORG, type: \"text[]\" }").unwrap();
+            serde_yaml_ng::from_str("{ path: entities.ORG, type: \"text[]\" }").unwrap();
         assert_eq!(pc.column_name(), "entities__org");
     }
 
@@ -952,8 +1292,9 @@ source: { type: files, glob: "x", id_from: stem }
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target:
+  type: postgres
   dsn_env: D
-  schema: s
+  database: s
   table: t
   mode: overwrite
   hnsw: false
@@ -963,10 +1304,13 @@ target:
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("load");
-        assert_eq!(cfg.target.promote_metadata.len(), 2);
-        assert_eq!(cfg.target.promote_metadata[0].path, "heading");
-        assert_eq!(cfg.target.promote_metadata[0].type_, "text");
-        assert_eq!(cfg.target.promote_metadata[1].column_name(), "entities__org");
+        let TargetConfig::Postgres(t) = &cfg.target else {
+            panic!("expected Postgres target");
+        };
+        assert_eq!(t.promote_metadata.len(), 2);
+        assert_eq!(t.promote_metadata[0].path, "heading");
+        assert_eq!(t.promote_metadata[0].type_, "text");
+        assert_eq!(t.promote_metadata[1].column_name(), "entities__org");
     }
 
     #[test]
@@ -980,7 +1324,7 @@ chunker:
   summarizer: { mode: passthrough }
   grouping: { strategy: section_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let err = format!("{:#}", load_config(&path).unwrap_err());
@@ -1029,7 +1373,7 @@ chunker:
     step_words: 100
     max_chars: 500
 embedder: {{ type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }}
-target: {{ dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }}
+target: {{ type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }}
 "#,
                 kind = kind,
                 extra = match kind {
@@ -1073,7 +1417,7 @@ chunker:
     step_words: 50
     max_chars: 500
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let err = format!("{:#}", load_config(&path).unwrap_err());
@@ -1096,7 +1440,7 @@ chunker:
     type: hierarchy
     max_chars: 1234
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("load");
@@ -1112,7 +1456,7 @@ cell_name: t
 source: { type: files, glob: "x", id_from: stem }
 chunker: { type: fixed_overlap, window_words: 200, step_words: 100 }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("load");
@@ -1130,9 +1474,163 @@ chunker:
   summarizer: { mode: passthrough }
   grouping: { strategy: section_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
-target: { dsn_env: D, schema: s, table: t, mode: overwrite, hnsw: false }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
         load_config(&path).expect("should accept section_aware over hierarchy base");
+    }
+
+    #[test]
+    fn parses_sqlite_target_config() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        match &cfg.target {
+            TargetConfig::Sqlite(t) => {
+                assert_eq!(t.dsn_env, "SQLITE_PATH");
+                assert_eq!(t.database_name, "ignored");
+                assert_eq!(t.table, "chunks");
+                assert_eq!(t.mode, "overwrite");
+            }
+            _ => panic!("expected Sqlite target"),
+        }
+    }
+
+    #[test]
+    fn rejects_sqlite_append_without_source_tag() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, mode: append, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(err.contains("source_tag"), "expected source_tag mention, got: {err}");
+    }
+
+    #[test]
+    fn parses_sqlite_table_source_config() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: sqlite_table
+  dsn_env: SQLITE_PATH
+  database: ignored
+  table: docs
+  id_column: id
+  content_column: body
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        match &cfg.source {
+            SourceConfig::SqliteTable(s) => {
+                assert_eq!(s.dsn_env, "SQLITE_PATH");
+                assert_eq!(s.table, "docs");
+                assert_eq!(s.id_column, "id");
+            }
+            _ => panic!("expected SqliteTable source"),
+        }
+    }
+
+    #[test]
+    fn parses_clickhouse_target() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: CHUNKSHOP_DSN_CH
+  database: my_db
+  table: chunks
+  mode: overwrite
+  hnsw: true
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        let TargetConfig::Clickhouse(t) = &cfg.target else {
+            panic!("expected Clickhouse variant");
+        };
+        assert_eq!(t.database_name, "my_db");
+        assert_eq!(t.table, "chunks");
+        assert!(t.engine.is_none());
+    }
+
+    #[test]
+    fn accepts_replacing_merge_tree_engine() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: D
+  database: db
+  table: t
+  mode: overwrite
+  hnsw: false
+  engine: "ReplacingMergeTree(created_at) ORDER BY (id)"
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("ReplacingMergeTree should be accepted");
+        let TargetConfig::Clickhouse(t) = &cfg.target else { unreachable!() };
+        assert_eq!(t.engine.as_deref(), Some("ReplacingMergeTree(created_at) ORDER BY (id)"));
+    }
+
+    #[test]
+    fn rejects_arbitrary_engine_string() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: D
+  database: db
+  table: t
+  mode: overwrite
+  hnsw: false
+  engine: "Memory"
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(err.contains("allowlist") && err.contains("Memory"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_engine_with_drop_table_injection() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: clickhouse
+  dsn_env: D
+  database: db
+  table: t
+  mode: overwrite
+  hnsw: false
+  engine: "MergeTree(); DROP TABLE other"
+"#;
+        let path = write_yaml(yaml);
+        assert!(
+            load_config(&path).is_err(),
+            "engine with embedded DROP must be rejected"
+        );
     }
 }

@@ -20,25 +20,20 @@ jobs:
       matrix:
         python-version: ["3.12"]
 
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=5s
-          --health-timeout=3s
-          --health-retries=10
+    # Databases are brought up from docker-compose.test.yaml (a "Start test
+    # databases" step below) rather than GHA `services:` blocks. That file is
+    # the single source of truth for service images, ports, healthchecks, and
+    # — critically — the ClickHouse users.d mount that enables the
+    # experimental vector_similarity index. Re-deriving these as `services:`
+    # blocks would drift from the canonical local-dev definitions.
 
     env:
-      # The CI Postgres lives on the default port; override the sink default
-      # so both the pytest fixtures and the run-all.sh scripts find it.
-      CHUNKSHOP_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      # Ports/credentials match docker-compose.test.yaml. All three DSNs are
+      # set so the modular-backend integration tests (MariaDB / SQLite /
+      # ClickHouse) and the cross-backend matrix run instead of skipping.
+      CHUNKSHOP_TEST_DSN: postgresql://postgres:postgres@localhost:5434/chunkshop_test
+      CHUNKSHOP_TEST_DSN_MARIADB: mysql://root:rootpw@localhost:3307/chunkshop_test
+      CHUNKSHOP_TEST_DSN_CH: clickhouse://default:chpw@localhost:8124/chunkshop_test
       # Pin fastembed cache to a path we can persist across runs.
       FASTEMBED_CACHE_DIR: ${{ github.workspace }}/.cache/fastembed
 
@@ -64,16 +59,23 @@ jobs:
           restore-keys: |
             fastembed-${{ runner.os }}-
 
-      - name: Install project + dev + nlp extras
+      - name: Start test databases (Postgres + MariaDB + ClickHouse)
+        # Reuses the canonical compose file so service config can't drift from
+        # local dev. --wait blocks until every service's healthcheck passes.
+        run: docker compose -f docker-compose.test.yaml up -d --wait
+
+      - name: Install project + dev + nlp + all backend extras
         working-directory: python
         # --frozen installs strictly from the committed lockfile and refuses
         # to update it. Catches "I forgot to commit uv.lock after adding a
-        # dep" before it merges.
-        run: uv sync --frozen --extra dev --extra extractors --extra nlp
+        # dep" before it merges. all-backends pulls pymysql /
+        # clickhouse-connect / sqlite-vec so the modular-backend test modules
+        # import (they fail at *collection* otherwise).
+        run: uv sync --frozen --extra dev --extra extractors --extra nlp --extra all-backends
 
       - name: Verify pgvector extension available
         run: |
-          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres \
+          PGPASSWORD=postgres psql -h localhost -p 5434 -U postgres -d chunkshop_test \
             -c "CREATE EXTENSION IF NOT EXISTS vector; SELECT extversion FROM pg_extension WHERE extname='vector';"
 
       - name: pytest (unit + integration)
@@ -91,3 +93,7 @@ jobs:
 
       - name: Assert use-case scenario row counts
         run: uv run --project python python tests/use-cases/assert-row-counts.py
+
+      - name: Tear down test databases
+        if: always()
+        run: docker compose -f docker-compose.test.yaml down -v

@@ -20,7 +20,7 @@ cell_name: sales_crm_from_pg
 source:
   type: pg_table
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_sales_demo
+  database: chunkshop_sales_demo
   table: sales_notes_enriched     # the JOINed view, not the raw notes table
   id_column: note_id
   content_column: note_text
@@ -60,8 +60,9 @@ extractor:
   type: none
 
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_sales_chunks
+  database: chunkshop_sales_chunks
   table: notes_from_pg
   mode: overwrite
   source_tag: sales_pg

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use chunkshop::config::JsonCorpusSourceConfig;
-use chunkshop::source::JsonCorpusSource;
+use chunkshop::sources::JsonCorpusSource;
 
 fn fixtures_dir() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

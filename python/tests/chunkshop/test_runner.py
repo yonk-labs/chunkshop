@@ -55,10 +55,11 @@ def test_run_cell_end_to_end(ensure_pg, tmp_path):
           model_name: BAAI/bge-small-en-v1.5
           dim: 384
         target:
+          type: postgres
           dsn_env: CHUNKSHOP_TEST_DSN
-          schema: chunkshop_runner_test
+          database: chunkshop_runner_test
           table: runner_smoke
-          overwrite: true
+          mode: overwrite
           hnsw: false
         runtime:
           doc_limit: 2
@@ -101,10 +102,11 @@ def test_run_cell_reports_error_without_raising(ensure_pg, tmp_path):
           model_name: BAAI/bge-small-en-v1.5
           dim: 384
         target:
+          type: postgres
           dsn_env: CHUNKSHOP_TEST_DSN
-          schema: chunkshop_runner_test
+          database: chunkshop_runner_test
           table: runner_err
-          overwrite: true
+          mode: overwrite
           hnsw: false
     """))
     cfg = load_config(yaml_path)

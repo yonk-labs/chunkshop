@@ -13,10 +13,11 @@ embedder:
   dim: 768
   threads: 4
 target:
+  type: postgres
   dsn_env: AGE_BAKEOFF_PGRG_DSN
-  schema: factorial
+  database: factorial
   table: d_nomic
-  overwrite: true
+  mode: overwrite
   hnsw: true
 runtime:
   omp_num_threads: 4

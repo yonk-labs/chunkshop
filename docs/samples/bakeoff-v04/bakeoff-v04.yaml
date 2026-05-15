@@ -1,0 +1,60 @@
+# v0.4.0 release validation bakeoff — small matrix demonstrating that
+# ingest + query land successfully on all 4 backends.
+#
+# 20 NTSB aviation accident reports (reused from bakeoff-ntsb), 12 gold
+# queries. 2 chunkers × 1 embedder × 4 backends = 8 cells. Runs in under
+# a minute on a developer laptop.
+#
+# Smaller than `bakeoff-ntsb.yaml` (84 cells); larger than the matrix
+# integration tests (which embed 1 doc per cell). Intended as the "does
+# bakeoff actually work across all four backends" smoke check.
+#
+# Usage (Python — multi-backend native):
+#   export CHUNKSHOP_TEST_DSN=postgresql://postgres:postgres@localhost:5434/chunkshop_test
+#   export CHUNKSHOP_TEST_DSN_MARIADB=mysql://root:rootpw@localhost:3307/chunkshop_test
+#   export CHUNKSHOP_TEST_DSN_CH=clickhouse://default:chpw@localhost:8124/chunkshop_test
+#   export SQLITE_BAKEOFF_PATH=/tmp/chunkshop-bakeoff-v04.db
+#   chunkshop bakeoff --config docs/samples/bakeoff-v04/bakeoff-v04.yaml --yes
+#
+# Rust bakeoff is single-PG-only as of v0.4.0 (see Wave-2 follow-up #7);
+# use the Python bakeoff for cross-backend comparison. The Rust matrix
+# test (`cargo test --test cross_backend_matrix`) is the analogous Rust
+# proof for round-tripping vectors across backends.
+
+name: v04_validation
+
+source:
+  type: files
+  glob: docs/samples/bakeoff-ntsb/corpus/*.md
+  id_from: stem
+
+framer:
+  type: identity
+
+gold_queries: docs/samples/bakeoff-ntsb/gold-ntsb.yaml
+
+matrix:
+  embedders:
+    - { type: fastembed, model_name: "Xenova/bge-small-en-v1.5-int8", dim: 384, threads: 2, batch_size: 8 }
+  chunkers:
+    - { type: hierarchy }
+    - { type: sentence_aware }
+
+targets:
+  - type: postgres
+    dsn_env: CHUNKSHOP_TEST_DSN
+    database: chunkshop_bakeoff_v04_pg
+  - type: mariadb
+    dsn_env: CHUNKSHOP_TEST_DSN_MARIADB
+    database: chunkshop_bakeoff_v04_md
+  - type: sqlite
+    dsn_env: SQLITE_BAKEOFF_PATH
+    database: ignored
+  - type: clickhouse
+    dsn_env: CHUNKSHOP_TEST_DSN_CH
+    database: chunkshop_bakeoff_v04_ch
+
+scoring:
+  k: [1, 3, 5]
+  include_mrr: true
+  top_k: 5

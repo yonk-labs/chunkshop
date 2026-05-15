@@ -33,8 +33,9 @@ extractor:
                  # or rake_keywords once you `uv sync --extra lang --extra extractors`.
 
 target:
+  type: postgres
   dsn_env: VECTORS_DB_DSN
-  schema: rag
+  database: rag
   table: inline_chunks
   mode: create_if_missing
   source_tag: inline_demo

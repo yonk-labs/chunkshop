@@ -32,7 +32,7 @@ class JsonCorpusSource(_Base):
 class PgTableSource(_Base):
     type: Literal["pg_table"]
     dsn_env: str
-    schema_name: str = Field(alias="schema")
+    database_name: str = Field(alias="database")
     table: str
     id_column: str
     content_column: str
@@ -42,6 +42,46 @@ class PgTableSource(_Base):
     # Document's metadata dict (key = column name, value = psycopg return).
     # Pair with `target.promote_metadata` to surface specific keys as typed
     # columns in the target table for fast filtered queries.
+    metadata_columns: list[str] = Field(default_factory=list)
+
+
+class SqliteTableSource(_Base):
+    type: Literal["sqlite_table"]
+    dsn_env: str
+    database_name: str = Field(alias="database")   # ignored at runtime; loose parity
+    table: str
+    id_column: str
+    content_column: str
+    title_column: Optional[str] = None
+    where: Optional[str] = None
+    metadata_columns: list[str] = Field(default_factory=list)
+
+
+class MariaDbTableSource(_Base):
+    type: Literal["mariadb_table"]
+    dsn_env: str
+    database_name: str = Field(alias="database")
+    table: str
+    id_column: str
+    content_column: str
+    title_column: Optional[str] = None
+    where: Optional[str] = None
+    metadata_columns: list[str] = Field(default_factory=list)
+
+
+class ClickhouseTableSource(_Base):
+    type: Literal["clickhouse_table"]
+    dsn_env: str
+    database_name: str = Field(alias="database")
+    table: str
+    id_column: str
+    content_column: str
+    title_column: Optional[str] = None
+    # `where` is documented as TRUSTED OPERATOR INPUT — raw passthrough into
+    # SQL, no parameterization. Same contract as PgTableSource /
+    # MariaDbTableSource / SqliteTableSource. CH SQL dialect example:
+    #   where: "created_at > toDateTime('2025-01-01 00:00:00')"
+    where: Optional[str] = None
     metadata_columns: list[str] = Field(default_factory=list)
 
 
@@ -74,7 +114,8 @@ class InlineSource(_Base):
 
 
 SourceConfig = Annotated[
-    Union[FilesSource, JsonCorpusSource, PgTableSource, HttpSource, S3Source, InlineSource],
+    Union[FilesSource, JsonCorpusSource, PgTableSource, SqliteTableSource,
+          MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource],
     Field(discriminator="type"),
 ]
 
@@ -485,25 +526,29 @@ class PromoteColumn(_Base):
 
 
 class TargetConfig(_Base):
-    dsn_env: str = "AGE_BAKEOFF_PGRG_DSN"
-    schema_name: str = Field(alias="schema")
+    type: Literal["postgres", "sqlite", "mariadb", "clickhouse"]
+    dsn_env: str
+    database_name: str = Field(alias="database")
     table: str
-    overwrite: bool = False  # legacy; see `mode` for the new path
     hnsw: bool = True
     mode: Literal["overwrite", "append", "create_if_missing"] = "overwrite"
     source_tag: Optional[str] = None
     promote_metadata: list[PromoteColumn] = Field(default_factory=list)
     force_overwrite: bool = False
     delete_orphans: bool = False
+    # ClickHouse-specific: override the default MergeTree() ORDER BY (id) engine
+    # spec. Set to "ReplacingMergeTree(created_at) ORDER BY (id)" to opt into
+    # lazy dedup at merge time. Ignored on non-CH backends.
+    engine: Optional[str] = None
 
-    @field_validator("table", "schema_name", "source_tag")
+    @field_validator("table", "database_name", "source_tag")
     @classmethod
     def _safe_ident(cls, v):
         if v is None:
             return v
         if not re.match(r"^[a-z_][a-z0-9_]*$", v):
             raise ValueError(
-                f"table/schema/source_tag must match ^[a-z_][a-z0-9_]*$, got {v!r}"
+                f"table/database/source_tag must match ^[a-z_][a-z0-9_]*$, got {v!r}"
             )
         return v
 
@@ -519,6 +564,10 @@ class RuntimeConfig(_Base):
     doc_limit: Optional[int] = None
     log_path: Optional[str] = None
     heartbeat_every: int = 25
+    # "text" (default) or "json" — controls the CLI's stdout log handler format.
+    # JSON format emits one structured event per line; useful for log aggregators
+    # (Datadog, Loki, CloudWatch, Cloud Logging).
+    log_format: Literal["text", "json"] = "text"
 
 
 class CellConfig(_Base):

@@ -16,9 +16,9 @@ import yaml
 
 from chunkshop.bakeoff.config import (
     BakeoffConfig,
-    BakeoffTargetConfig,
     GoldQuery,
     MatrixConfig,
+    PostgresBakeoffTarget,
 )
 from chunkshop.bakeoff.output import (
     write_recommended_yaml,
@@ -51,6 +51,9 @@ def ensure_pg():
     except Exception as exc:
         pytest.skip(f"PG at {dsn} not reachable: {exc}")
     os.environ[DSN_ENV] = dsn
+    # Drop the schema before AND after — the runner no longer cleans up.
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("DROP SCHEMA IF EXISTS chunkshop_bakeoff_e2e CASCADE")
     yield dsn
     with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS chunkshop_bakeoff_e2e CASCADE")
@@ -86,7 +89,11 @@ def test_bakeoff_e2e_2x2_samples(ensure_pg, tmp_path):
                 SentenceAwareChunker(type="sentence_aware"),
             ],
         ),
-        target=BakeoffTargetConfig(dsn_env=DSN_ENV, **{"schema": "chunkshop_bakeoff_e2e"}),
+        targets=[PostgresBakeoffTarget(
+            type="postgres",
+            dsn_env=DSN_ENV,
+            **{"database": "chunkshop_bakeoff_e2e"},
+        )],
     )
 
     results = run_bakeoff(cfg)
@@ -110,7 +117,7 @@ def test_bakeoff_e2e_2x2_samples(ensure_pg, tmp_path):
     yaml_path = write_recommended_yaml(cfg, results, tmp_path)
 
     assert json_path.exists()
-    assert "Leaderboard" in md_path.read_text()
+    assert "Cross-backend comparison" in md_path.read_text()
     assert "Statistical power" in md_path.read_text()
 
     # recommended.yaml round-trips through CellConfig.

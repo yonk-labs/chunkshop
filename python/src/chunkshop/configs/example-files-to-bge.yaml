@@ -32,10 +32,11 @@ embedder:
 extractor:
   type: none                      # or: rake_keywords (local, no LLM)
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_DSN
-  schema: chunkshop               # any schema; created if missing
+  database: chunkshop               # any schema; created if missing
   table: my_docs
-  overwrite: false                # true to drop+recreate
+  mode: create_if_missing
   hnsw: true                      # false for tiny test tables
 runtime:
   omp_num_threads: 4              # match embedder.threads

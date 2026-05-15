@@ -27,8 +27,9 @@ extractor:
   type: none
 
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_DSN
-  schema: chunkshop_samples
+  database: chunkshop_samples
   table: handbook_sentence_aware
   mode: overwrite
   hnsw: false

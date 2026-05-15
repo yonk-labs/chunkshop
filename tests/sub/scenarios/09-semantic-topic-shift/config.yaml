@@ -19,7 +19,8 @@ embedder:
   threads: 2
 target:
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_sub_scenarios
+  type: postgres
+  database: chunkshop_sub_scenarios
   table: semantic_topic_shift
   mode: overwrite
   hnsw: false

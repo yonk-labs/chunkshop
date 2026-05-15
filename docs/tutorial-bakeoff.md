@@ -31,7 +31,7 @@ docs.
 
 ## Prereqs
 
-- chunkshop installed. `uv sync --extra dev` in `python/`.
+- chunkshop installed. `uv sync --extra dev --extra all-backends` in `python/`.
 - A Postgres with pgvector extension reachable. The test DSN the repo uses is
   `postgresql://postgres:postgres@localhost:5434/age_bakeoff_pgrg`. Export it:
   ```bash

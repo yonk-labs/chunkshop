@@ -32,7 +32,8 @@ extractor:
 
 target:
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_use_cases
+  type: postgres
+  database: chunkshop_use_cases
   table: dev_api_docs_rag
   mode: overwrite
   hnsw: false

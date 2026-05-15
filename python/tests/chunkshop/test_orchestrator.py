@@ -46,10 +46,11 @@ def _mini_yaml(tmp_path: Path, name: str, corpus: Path) -> Path:
           model_name: BAAI/bge-small-en-v1.5
           dim: 384
         target:
+          type: postgres
           dsn_env: CHUNKSHOP_TEST_DSN
-          schema: chunkshop_orch_test
+          database: chunkshop_orch_test
           table: {name}
-          overwrite: true
+          mode: overwrite
           hnsw: false
         runtime:
           doc_limit: 1
@@ -92,10 +93,11 @@ def test_orchestrate_reports_failure_without_raising(ensure_pg, tmp_path):
           model_name: BAAI/bge-small-en-v1.5
           dim: 384
         target:
+          type: postgres
           dsn_env: CHUNKSHOP_TEST_DSN
-          schema: chunkshop_orch_test
+          database: chunkshop_orch_test
           table: bad_cell
-          overwrite: true
+          mode: overwrite
           hnsw: false
     """))
     result = orchestrate(

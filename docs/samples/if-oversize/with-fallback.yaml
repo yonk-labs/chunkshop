@@ -23,8 +23,9 @@ embedder:
   model_name: Xenova/bge-base-en-v1.5-int8
   dim: 768
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_DSN
-  schema: chunkshop_if_oversize_demo
+  database: chunkshop_if_oversize_demo
   table: with_fallback
   mode: overwrite
 runtime:

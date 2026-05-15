@@ -20,20 +20,18 @@ use crate::config::{
     ChunkerConfig, FixedOverlapChunkerConfig, GroupingConfig, HierarchyChunkerConfig,
     SentenceAwareChunkerConfig,
 };
-// `FastembedEmbedderConfig` and `FastembedEmbedder` are only consumed by
-// `SemanticChunker::new()` — the convenience constructor that builds a
-// fastembed-backed embedder. They need the `embedder-hub` feature (since
-// `FastembedEmbedder::new` requires hf-hub for runtime model fetch).
-//
-// `SemanticChunkerConfig` is always available — `with_embedder` accepts it
-// without needing fastembed at all.
+// `SemanticChunkerConfig` is consumed by `SemanticChunker`, whose
+// `with_embedder` constructor is always available (only `chunkers`).
+// `FastembedEmbedderConfig` + `FastembedEmbedder` are only used by the
+// `new()` convenience constructor, which builds a `FastembedEmbedder` at
+// runtime and so requires the `embedder-hub` feature (hf-hub model fetch).
+use crate::config::SemanticChunkerConfig;
 #[cfg(feature = "embedder-hub")]
 use crate::config::FastembedEmbedderConfig;
-use crate::config::SemanticChunkerConfig;
 #[cfg(feature = "embedder-hub")]
 use crate::embedder::FastembedEmbedder;
 use crate::sentence_split::naive_sentences;
-use crate::source::Document;
+use crate::sources::Document;
 use crate::summarizer::build_summarizer;
 
 /// Boundary-detection embedder hook for [`SemanticChunker`].
@@ -396,10 +394,14 @@ fn split_prose(text: &str, max_chars: usize, min_chars: usize) -> Vec<String> {
 ///
 /// The trailing "\n" flush-marker is kept byte-for-byte with Python so chunks
 /// concatenate back into something close to the input.
+///
+/// # Panics
+///
+/// Panics if `max_chars == 0`. Validation is expected at the caller — config
+/// loaders enforce `max_chars > 0` at YAML parse time, so this assertion is
+/// reachable only via programmatic API misuse.
 pub fn split_to_max_chars(text: &str, max_chars: usize) -> Vec<String> {
-    if max_chars == 0 {
-        panic!("max_chars must be positive");
-    }
+    assert!(max_chars > 0, "max_chars must be positive");
     if text.chars().count() <= max_chars {
         return vec![text.to_string()];
     }
@@ -862,7 +864,8 @@ impl ChunkerImpl for NeighborExpandChunker {
 /// can plug in their own embedder via [`SemanticChunker::with_embedder`]
 /// without pulling `fastembed`/`ort` into the dep tree. The convenience
 /// constructor [`SemanticChunker::new`] uses [`FastembedEmbedder`] under
-/// the hood and requires the `embedder-hub` Cargo feature.
+/// the hood and requires the `embedder-hub` Cargo feature (fastembed + ORT
+/// + hf-hub for runtime boundary-model fetch).
 pub struct SemanticChunker {
     cfg: SemanticChunkerConfig,
     boundary: std::sync::Mutex<Box<dyn BoundaryEmbedder>>,
@@ -925,9 +928,9 @@ impl SemanticChunker {
 
     /// Convenience constructor: builds a [`FastembedEmbedder`] from
     /// `cfg.boundary_model` and wraps it. Requires the `embedder-hub` Cargo
-    /// feature (fastembed + ORT + hf-hub for runtime model fetch). Existing
-    /// chunkshop CLI / YAML-config callers continue to use this entry point
-    /// unchanged.
+    /// feature (FastembedEmbedder::new fetches the boundary model via
+    /// hf-hub). Existing chunkshop CLI / YAML-config callers continue to use
+    /// this entry point unchanged.
     #[cfg(feature = "embedder-hub")]
     pub fn new(cfg: SemanticChunkerConfig) -> anyhow::Result<Self> {
         validate_semantic_cfg(&cfg)?;
@@ -1704,9 +1707,6 @@ mod tests {
     }
 
     // --- Semantic chunker algorithm helpers ---
-    // (always compile under `chunkers`; the helpers were ungated when the
-    // BoundaryEmbedder trait moved SemanticChunker out of the embedder
-    // feature gate.)
 
     #[test]
     fn percentile_linear_matches_numpy() {

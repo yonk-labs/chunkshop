@@ -49,8 +49,9 @@ def test_two_cells_append_into_one_table(ensure_pg, tmp_path):
     corpus_b = _json_corpus_fixture(tmp_path, "cell_b")
 
     common_target = {
+        "type": "postgres",
         "dsn_env": DSN_ENV,
-        "schema": "chunkshop_test_multi",
+        "database": "chunkshop_test_multi",
         "table": "unified",
         "hnsw": False,
     }

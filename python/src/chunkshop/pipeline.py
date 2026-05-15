@@ -21,15 +21,13 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from psycopg import sql
-import psycopg
 
 from chunkshop.chunkers import load_chunker
 from chunkshop.config import CellConfig, InlineSource
 from chunkshop.embedders import load_embedder
 from chunkshop.extractors import load_extractor
 from chunkshop.framers import load_framer
-from chunkshop.sink import PgVectorSink
+from chunkshop.sinks import load_sink
 from chunkshop.sources.base import Document
 
 
@@ -58,7 +56,7 @@ class Pipeline:
             shared_boundary_model=shared_boundary_model,
         )
         self._extractor = load_extractor(cfg.extractor)
-        self._sink = PgVectorSink(cfg.target, embed_dim=cfg.embedder.dim)
+        self._sink = load_sink(cfg.target, embed_dim=cfg.embedder.dim)
         self._sink.create_table()
 
     @classmethod
@@ -105,26 +103,11 @@ class Pipeline:
 
         Returns the number of rows deleted. Scoping by source_tag matches the
         write-once provenance contract: a Pipeline configured for source_tag X
-        cannot delete rows owned by source_tag Y.
+        cannot delete rows owned by source_tag Y. Backend-specific behavior
+        (SQLite: deletes from both chunks + chunks_vec; PG/MariaDB: single
+        table DELETE) lives in the Sink implementation.
         """
-        cfg = self.cfg.target
-        dsn = os.environ[cfg.dsn_env]
-        fq = sql.SQL(".").join(
-            [sql.Identifier(cfg.schema_name), sql.Identifier(cfg.table)]
-        )
-        if cfg.source_tag:
-            stmt = sql.SQL(
-                "DELETE FROM {tbl} WHERE doc_id = %s AND source = %s"
-            ).format(tbl=fq)
-            params = (doc_id, cfg.source_tag)
-        else:
-            stmt = sql.SQL("DELETE FROM {tbl} WHERE doc_id = %s").format(tbl=fq)
-            params = (doc_id,)
-        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-            cur.execute(stmt, params)
-            deleted = cur.rowcount
-            conn.commit()
-        return deleted
+        return self._sink.delete_document(doc_id)
 
     def count_docs(self) -> int:
         return self._sink.count_docs()

@@ -5,7 +5,7 @@ import numpy as np
 
 from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
-from chunkshop.sink import PgVectorSink
+from chunkshop.sinks import load_sink
 
 
 DSN_ENV = "CHUNKSHOP_TEST_DSN"
@@ -29,8 +29,9 @@ def ensure_pg():
 
 def _mk_target(**overrides) -> TargetConfig:
     kwargs = {
+        "type": "postgres",
         "dsn_env": DSN_ENV,
-        "schema": "chunkshop_test_append",
+        "database": "chunkshop_test_append",
         "table": "target_a",
         "hnsw": False,
     }
@@ -40,7 +41,7 @@ def _mk_target(**overrides) -> TargetConfig:
 
 def test_append_fails_when_table_missing(ensure_pg):
     cfg = _mk_target(mode="append", source_tag="pdfs")
-    sink = PgVectorSink(cfg, embed_dim=4)
+    sink = load_sink(cfg, embed_dim=4)
     with pytest.raises(RuntimeError, match="does not exist"):
         sink.create_table()
 
@@ -48,18 +49,18 @@ def test_append_fails_when_table_missing(ensure_pg):
 def test_append_fails_on_dim_mismatch(ensure_pg):
     # Create the table with dim=4
     cfg_create = _mk_target(mode="create_if_missing", source_tag="pdfs")
-    PgVectorSink(cfg_create, embed_dim=4).create_table()
+    load_sink(cfg_create, embed_dim=4).create_table()
 
     # Try to append with dim=8 — should fail pre-flight
     cfg_bad = _mk_target(mode="append", source_tag="pdfs")
     with pytest.raises(RuntimeError, match="dim"):
-        PgVectorSink(cfg_bad, embed_dim=8).create_table()
+        load_sink(cfg_bad, embed_dim=8).create_table()
 
 
 def test_append_preflight_adds_missing_source_column(ensure_pg):
     # Create the table in overwrite mode (no source_tag set — simulating pre-v0.3.0 table).
     cfg_old = _mk_target(mode="overwrite")
-    PgVectorSink(cfg_old, embed_dim=4).create_table()
+    load_sink(cfg_old, embed_dim=4).create_table()
 
     # Manually drop the source column to simulate a pre-existing table missing it
     with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
@@ -68,7 +69,7 @@ def test_append_preflight_adds_missing_source_column(ensure_pg):
 
     # Now append — should auto-add `source` column.
     cfg_append = _mk_target(mode="append", source_tag="pdfs")
-    PgVectorSink(cfg_append, embed_dim=4).create_table()
+    load_sink(cfg_append, embed_dim=4).create_table()
 
     with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
         cur.execute(
@@ -82,7 +83,7 @@ def test_append_preflight_adds_missing_source_column(ensure_pg):
 
 def test_append_adds_promote_columns(ensure_pg):
     cfg_create = _mk_target(mode="create_if_missing", source_tag="pdfs")
-    PgVectorSink(cfg_create, embed_dim=4).create_table()
+    load_sink(cfg_create, embed_dim=4).create_table()
 
     cfg_append = _mk_target(
         mode="append",
@@ -92,7 +93,7 @@ def test_append_adds_promote_columns(ensure_pg):
             {"path": "entities.ORG", "type": "text[]"},
         ],
     )
-    PgVectorSink(cfg_append, embed_dim=4).create_table()
+    load_sink(cfg_append, embed_dim=4).create_table()
 
     with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
         cur.execute(
@@ -109,7 +110,7 @@ def test_append_adds_promote_columns(ensure_pg):
 def test_append_dim_check_works_on_empty_table(ensure_pg):
     # Create dim=4 table, don't write any rows, then append with matching dim — must succeed.
     cfg_create = _mk_target(mode="create_if_missing", source_tag="pdfs")
-    PgVectorSink(cfg_create, embed_dim=4).create_table()
+    load_sink(cfg_create, embed_dim=4).create_table()
 
     # Verify table is empty (no rows for vector_dims to see).
     with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
@@ -118,12 +119,12 @@ def test_append_dim_check_works_on_empty_table(ensure_pg):
 
     # Append with matching dim should not raise.
     cfg_append_match = _mk_target(mode="append", source_tag="pdfs")
-    PgVectorSink(cfg_append_match, embed_dim=4).create_table()
+    load_sink(cfg_append_match, embed_dim=4).create_table()
 
     # Append with mismatched dim on empty table must still raise.
     cfg_append_mismatch = _mk_target(mode="append", source_tag="pdfs")
     with pytest.raises(RuntimeError, match="dim"):
-        PgVectorSink(cfg_append_mismatch, embed_dim=16).create_table()
+        load_sink(cfg_append_mismatch, embed_dim=16).create_table()
 
 
 def test_append_fails_on_malformed_table(ensure_pg):
@@ -137,13 +138,13 @@ def test_append_fails_on_malformed_table(ensure_pg):
 
     cfg = _mk_target(mode="append", source_tag="pdfs")
     with pytest.raises(RuntimeError, match="does not appear to be a chunkshop target"):
-        PgVectorSink(cfg, embed_dim=4).create_table()
+        load_sink(cfg, embed_dim=4).create_table()
 
 
 def test_overwrite_refuses_foreign_source_tag(ensure_pg):
     # First cell populates the table with source_tag=pdfs
     cfg_a = _mk_target(mode="create_if_missing", source_tag="pdfs")
-    PgVectorSink(cfg_a, embed_dim=4).create_table()
+    load_sink(cfg_a, embed_dim=4).create_table()
     # Insert one row with source='pdfs' to make the foreign tag detectable
     with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
         cur.execute(
@@ -157,12 +158,12 @@ def test_overwrite_refuses_foreign_source_tag(ensure_pg):
     # Second cell in overwrite mode with a different source_tag — should refuse.
     cfg_b = _mk_target(mode="overwrite", source_tag="web_scrape")
     with pytest.raises(RuntimeError, match="source_tag"):
-        PgVectorSink(cfg_b, embed_dim=4).create_table()
+        load_sink(cfg_b, embed_dim=4).create_table()
 
 
 def test_overwrite_force_bypasses_check(ensure_pg):
     cfg_a = _mk_target(mode="create_if_missing", source_tag="pdfs")
-    PgVectorSink(cfg_a, embed_dim=4).create_table()
+    load_sink(cfg_a, embed_dim=4).create_table()
     with psycopg.connect(os.environ[DSN_ENV]) as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO chunkshop_test_append.target_a "
@@ -174,7 +175,7 @@ def test_overwrite_force_bypasses_check(ensure_pg):
 
     cfg_force = _mk_target(mode="overwrite", source_tag="web_scrape", force_overwrite=True)
     # Should not raise
-    PgVectorSink(cfg_force, embed_dim=4).create_table()
+    load_sink(cfg_force, embed_dim=4).create_table()
 
 
 def test_write_populates_source_and_promoted(ensure_pg):
@@ -186,7 +187,7 @@ def test_write_populates_source_and_promoted(ensure_pg):
             {"path": "entities.ORG", "type": "text[]"},
         ],
     )
-    sink = PgVectorSink(cfg, embed_dim=4)
+    sink = load_sink(cfg, embed_dim=4)
     sink.create_table()
     chunks = [
         Chunk(
@@ -216,7 +217,7 @@ def test_write_conflict_preserves_source(ensure_pg):
     """
     # Cell A writes d1::0 with source_tag='cell_a'
     cfg_a = _mk_target(mode="create_if_missing", source_tag="cell_a")
-    sink_a = PgVectorSink(cfg_a, embed_dim=4)
+    sink_a = load_sink(cfg_a, embed_dim=4)
     sink_a.create_table()
     chunks = [Chunk(doc_id="d1", seq_num=0, original_content="from A",
                     embedded_content="from A", metadata={})]
@@ -224,7 +225,7 @@ def test_write_conflict_preserves_source(ensure_pg):
 
     # Cell B writes d1::0 with source_tag='cell_b' — colliding PK
     cfg_b = _mk_target(mode="append", source_tag="cell_b")
-    sink_b = PgVectorSink(cfg_b, embed_dim=4)
+    sink_b = load_sink(cfg_b, embed_dim=4)
     sink_b.create_table()
     chunks = [Chunk(doc_id="d1", seq_num=0, original_content="from B",
                     embedded_content="from B", metadata={})]

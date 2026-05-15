@@ -51,7 +51,7 @@ pub fn load_gold_queries_with_base(
                 .as_deref()
             {
                 Some("json") => serde_json::from_str(&text)?,
-                _ => serde_yml::from_str(&text)?,
+                _ => serde_yaml_ng::from_str(&text)?,
             };
             let arr = raw.as_array().ok_or_else(|| {
                 anyhow!(

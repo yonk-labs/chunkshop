@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use chunkshop::chunker::HierarchyChunker;
 use chunkshop::config::HierarchyChunkerConfig;
-use chunkshop::source::Document;
+use chunkshop::sources::Document;
 use serde::Deserialize;
 use serde_json::json;
 

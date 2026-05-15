@@ -1,8 +1,10 @@
 """chunkshop CLI — ingest, orchestrate, bakeoff."""
 from __future__ import annotations
 import json
+import logging
 import os
 import sys
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
 import click
@@ -11,8 +13,41 @@ from chunkshop.config import load_config
 from chunkshop.runner import run_cell
 
 
+def _setup_cli_logging(json_format: bool = False) -> None:
+    """Configure stdout logging for CLI subcommands.
+
+    Library users importing chunkshop see no log output by default — they
+    configure their own root logger. CLI users see chunkshop's progress lines
+    on stdout. Idempotent: safe to call multiple times in one process.
+    """
+    chunkshop_logger = logging.getLogger("chunkshop")
+    # If a handler is already attached (e.g. the orchestrator-spawned subprocess
+    # also configures stdout), don't double it up.
+    if chunkshop_logger.handlers:
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    if json_format:
+        # Minimal hand-rolled JSON formatter — avoids pulling python-json-logger
+        # into the base install. Library users wanting richer JSON can wire
+        # their own handler.
+        class _JsonFormatter(logging.Formatter):
+            def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+                return json.dumps({
+                    "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "msg": record.getMessage(),
+                })
+        handler.setFormatter(_JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("[%(name)s] %(message)s"))
+    chunkshop_logger.addHandler(handler)
+    chunkshop_logger.setLevel(logging.INFO)
+    chunkshop_logger.propagate = False  # don't double-print via root logger
+
+
 @click.group()
-@click.version_option(version="0.1.0", prog_name="chunkshop")
+@click.version_option(version=_pkg_version("chunkshop"), prog_name="chunkshop")
 def cli():
     """Reusable ingestion tool: source -> chunker -> embedder -> extractor -> pgvector table.
 
@@ -25,6 +60,144 @@ def cli():
     Rank a chunker x embedder matrix against your corpus:
         chunkshop bakeoff --config bakeoff.yaml
     """
+
+
+_INIT_BACKEND_TEMPLATES = {
+    "postgres": """target:
+  type: postgres
+  dsn_env: CHUNKSHOP_DSN
+  database: {db}        # mapped to PG SCHEMA at the sink
+  table: chunks
+  mode: overwrite
+  hnsw: true
+  source_tag: {tag}""",
+    "mariadb": """target:
+  type: mariadb
+  dsn_env: CHUNKSHOP_DSN_MARIADB
+  database: {db}        # MariaDB DATABASE (not just the connection default)
+  table: chunks
+  mode: overwrite
+  source_tag: {tag}""",
+    "sqlite": """target:
+  type: sqlite
+  dsn_env: SQLITE_PATH  # env var holds the .db file path (or :memory:)
+  database: ignored     # SQLite has no schema namespace; field required but ignored at runtime
+  table: chunks
+  mode: overwrite
+  source_tag: {tag}""",
+    "clickhouse": """target:
+  type: clickhouse
+  dsn_env: CHUNKSHOP_DSN_CH
+  database: {db}
+  table: chunks
+  mode: overwrite
+  source_tag: {tag}
+  # For re-ingest deduplication, uncomment the next line:
+  # engine: "ReplacingMergeTree(created_at) ORDER BY (id)"
+""",
+}
+
+
+@cli.command()
+@click.option(
+    "--out", "out_path",
+    type=click.Path(path_type=Path), default=Path("cell.yaml"),
+    help="Output path for the generated cell YAML (default: cell.yaml).",
+)
+@click.option(
+    "--force", is_flag=True,
+    help="Overwrite the output file if it already exists.",
+)
+def init(out_path: Path, force: bool):
+    """Interactive scaffold for a new chunkshop cell YAML.
+
+    Prompts for the backend, corpus glob, chunker, embedder, and emits a
+    runnable cell config. Pair with `chunkshop validate` to dry-run the
+    config without opening DB connections.
+    """
+    if out_path.exists() and not force:
+        click.echo(f"[init] {out_path} already exists — pass --force to overwrite", err=True)
+        sys.exit(1)
+
+    cell_name = click.prompt("Cell name", default="my_cell")
+    backend = click.prompt(
+        "Backend",
+        type=click.Choice(list(_INIT_BACKEND_TEMPLATES.keys())),
+        default="postgres",
+    )
+    corpus = click.prompt("Corpus path (glob, e.g. ./docs/*.md)", default="./docs/*.md")
+    chunker = click.prompt(
+        "Chunker",
+        type=click.Choice(["hierarchy", "sentence_aware", "fixed_overlap"]),
+        default="hierarchy",
+    )
+    model = click.prompt(
+        "Embedder model",
+        default="Xenova/bge-small-en-v1.5-int8",
+    )
+    dim = click.prompt("Embedder dim", type=int, default=384)
+    database = click.prompt(
+        "Target database/schema name",
+        default=f"chunkshop_{cell_name}",
+    )
+    source_tag = click.prompt("source_tag", default=cell_name)
+
+    target_block = _INIT_BACKEND_TEMPLATES[backend].format(db=database, tag=source_tag)
+
+    yaml_text = f"""cell_name: {cell_name}
+
+source:
+  type: files
+  glob: "{corpus}"
+  id_from: stem
+
+framer:
+  type: identity
+
+chunker:
+  type: {chunker}
+
+embedder:
+  type: fastembed
+  model_name: {model}
+  dim: {dim}
+  batch_size: 64
+
+{target_block}
+"""
+    out_path.write_text(yaml_text)
+    click.echo(f"[init] wrote {out_path}")
+    click.echo(f"[init] next steps:")
+    click.echo(f"  1. Set the DSN env var for {backend} (see docs/engines/{backend}.md)")
+    click.echo(f"  2. chunkshop validate --config {out_path}")
+    click.echo(f"  3. chunkshop ingest --config {out_path}")
+
+
+@cli.command()
+@click.option(
+    "--config", "-c", required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to the YAML/JSON cell config.",
+)
+def validate(config: Path):
+    """Validate a YAML config without running it. Exits 0 if valid, non-zero otherwise.
+
+    Loads the config, runs pydantic validation, and reports the resolved
+    source/chunker/embedder/target shape. Does NOT open DB connections or
+    create tables — useful for fast iteration on config edits.
+    """
+    try:
+        cfg = load_config(config)
+    except Exception as e:
+        click.echo(f"[validate] FAIL: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"[validate] OK — cell {cfg.cell_name!r}")
+    click.echo(f"  source:   {cfg.source.type}")
+    click.echo(f"  framer:   {cfg.framer.type}")
+    click.echo(f"  chunker:  {cfg.chunker.type}")
+    click.echo(f"  embedder: {cfg.embedder.model_name} (dim={cfg.embedder.dim})")
+    click.echo(f"  extractor:{cfg.extractor.type}")
+    click.echo(f"  target:   {cfg.target.type} -> {cfg.target.database_name}.{cfg.target.table} (mode={cfg.target.mode})")
 
 
 @cli.command()
@@ -49,6 +222,7 @@ def cli():
 def ingest(config: Path, doc_limit, log_path, omp_threads):
     """Run one cell end-to-end: read source -> chunk -> embed -> extract tags -> write to pgvector table."""
     cfg = load_config(config)
+    _setup_cli_logging(json_format=(getattr(cfg.runtime, "log_format", "text") == "json"))
     if doc_limit is not None:
         cfg.runtime.doc_limit = doc_limit
     if log_path is not None:
@@ -95,6 +269,7 @@ def ingest(config: Path, doc_limit, log_path, omp_threads):
 )
 def orchestrate(config_dir, config, concurrency, checkpoints, timeout, smoke):
     """Run N cells in parallel, emit checkpoint reports at t=60/120/300/600s by default."""
+    _setup_cli_logging()
     from chunkshop.orchestrator import orchestrate as _orch
 
     if config_dir and config:
@@ -150,35 +325,29 @@ def orchestrate(config_dir, config, concurrency, checkpoints, timeout, smoke):
     help="Path to the bakeoff YAML config (see docs/samples/bakeoff.yaml).",
 )
 @click.option(
-    "--dsn", envvar="CHUNKSHOP_DSN", required=True,
-    help="Postgres DSN (or set $CHUNKSHOP_DSN). Bakeoff tables land under target.schema.",
-)
-@click.option(
     "--yes", is_flag=True,
     help="Bypass the >50-cell matrix confirmation prompt.",
 )
-@click.option(
-    "--keep-schema", is_flag=True,
-    help="Keep the bakeoff schema after run (default: DROP SCHEMA CASCADE on exit).",
-)
-def bakeoff(config_path: Path, dsn: str, yes: bool, keep_schema: bool):
-    """Run a chunker x embedder matrix bakeoff against a corpus.
+def bakeoff(config_path: Path, yes: bool):
+    """Run a multi-backend chunker x embedder matrix bakeoff against a corpus.
 
-    The config file names the corpus, the gold queries, the combo matrix, and
-    the target DB. chunkshop ingests every combo into its own table, embeds
-    each gold query with each embedder, scores recall@k + MRR per combo, and
-    writes a leaderboard + recommended cell YAML to the output dir.
+    Each entry under `targets:` in the YAML produces one full pass of the
+    chunker x embedder matrix into that backend. Every cell is queried via
+    its sink's native vector syntax; the report shows MRR + ingest/query
+    wall time side by side per backend so accuracy parity (or divergence)
+    and performance differences are directly comparable.
+
+    The DSN env vars named in each `targets[].dsn_env` must be exported
+    before running. The bakeoff does NOT clean up databases / schemas /
+    files after the run — that's the user's responsibility.
 
     Outputs (under output_dir, default `skill-output/bakeoff/{name}/`):
       - results.json      — raw scored data
-      - report.md         — leaderboard + per-query detail + honesty note
+      - report.md         — multi-backend leaderboard + per-query detail
       - recommended.yaml  — runnable `chunkshop ingest` cell for the top combo
     """
-    # Keep bakeoff imports inside the command so the `chunkshop` CLI stays fast
-    # to load for users who only run `ingest` / `orchestrate`.
+    _setup_cli_logging()
     import yaml
-    import psycopg
-    from psycopg import sql
 
     from chunkshop.bakeoff.config import BakeoffConfig
     from chunkshop.bakeoff.output import (
@@ -192,20 +361,31 @@ def bakeoff(config_path: Path, dsn: str, yes: bool, keep_schema: bool):
 
     n_embedders = len(cfg.matrix.embedders)
     n_chunkers = len(cfg.matrix.chunkers)
-    n_combos = n_embedders * n_chunkers
+    n_targets = len(cfg.targets)
+    n_combos = n_embedders * n_chunkers * n_targets
     if n_combos > 50 and not yes:
         click.echo(
-            f"WARNING: {n_combos} combos is large "
-            f"({n_embedders} embedders x {n_chunkers} chunkers). "
-            "Each combo ingests the full corpus into its own table."
+            f"WARNING: {n_combos} cells is large "
+            f"({n_embedders} embedders x {n_chunkers} chunkers x {n_targets} backends). "
+            "Each cell ingests the full corpus into its own table."
         )
         if not click.confirm("Proceed?", default=False):
             click.echo("Aborted.")
             raise click.Abort()
 
-    os.environ[cfg.target.dsn_env] = dsn
+    # Verify every DSN env var is set before doing any work.
+    for tgt in cfg.targets:
+        if tgt.dsn_env not in os.environ:
+            raise click.UsageError(
+                f"DSN env var {tgt.dsn_env!r} for target type={tgt.type!r} "
+                "is not set. Export it before running `chunkshop bakeoff`."
+            )
 
-    click.echo(f"Running bakeoff '{cfg.name}' — {n_combos} combos")
+    backend_summary = ", ".join(t.type for t in cfg.targets)
+    click.echo(
+        f"Running bakeoff '{cfg.name}' — {n_combos} cells "
+        f"({n_embedders}×{n_chunkers} matrix × {n_targets} backends: {backend_summary})"
+    )
     results = run_bakeoff(cfg)
 
     out_dir = Path(cfg.output_dir or f"skill-output/bakeoff/{cfg.name}")
@@ -215,20 +395,12 @@ def bakeoff(config_path: Path, dsn: str, yes: bool, keep_schema: bool):
     md_path = write_report_md(cfg, results, out_dir)
     yaml_path = write_recommended_yaml(cfg, results, out_dir)
 
-    if not keep_schema:
-        with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
-            cur.execute(
-                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
-                    sql.Identifier(cfg.target.schema_name)
-                )
-            )
-
     # Top-line summary: rank-1 combo + output paths.
     ranked = sorted(results.combos, key=lambda c: -c.aggregate.get("mrr", 0))
     top = ranked[0]
     click.echo("")
     click.echo(
-        f"Winner: {top.chunker_label} + {top.embedder_label} "
+        f"Winner: [{top.backend}] {top.chunker_label} + {top.embedder_label} "
         f"(MRR={top.aggregate.get('mrr', 0):.3f}, "
         f"r@1={top.aggregate.get('recall_at_1', 0):.3f})"
     )

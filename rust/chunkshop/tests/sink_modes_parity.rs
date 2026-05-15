@@ -73,8 +73,9 @@ embedder:
   threads: 1
 
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_rust_sink_parity
+  database: chunkshop_rust_sink_parity
   table: rows
   mode: overwrite
   source_tag: py_a
@@ -164,8 +165,9 @@ embedder:
   threads: 1
 
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_rust_sink_parity
+  database: chunkshop_rust_sink_parity
   table: rows
   mode: append
   source_tag: rs_b

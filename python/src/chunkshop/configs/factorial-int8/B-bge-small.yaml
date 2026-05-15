@@ -12,10 +12,11 @@ embedder:
   dim: 384
   threads: 4
 target:
+  type: postgres
   dsn_env: AGE_BAKEOFF_PGRG_DSN
-  schema: factorial_int8
+  database: factorial_int8
   table: b_bge_small
-  overwrite: true
+  mode: overwrite
   hnsw: true
 runtime:
   omp_num_threads: 4

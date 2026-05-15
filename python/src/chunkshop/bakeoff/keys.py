@@ -13,9 +13,12 @@ from chunkshop.config import (
     ChunkerConfig,
     FastembedEmbedder,
     FixedOverlapChunker,
+    HierarchicalSummaryChunker,
     HierarchyChunker,
     NeighborExpandChunker,
+    SemanticChunker,
     SentenceAwareChunker,
+    SummaryEmbedChunker,
 )
 
 _ID_SAFE = re.compile(r"[^a-z0-9]+")
@@ -45,6 +48,12 @@ def chunker_key(cfg: ChunkerConfig) -> str:
         return f"fixed_overlap_w{cfg.window_words}_s{cfg.step_words}"
     if isinstance(cfg, NeighborExpandChunker):
         return f"neighbor_expand_w{cfg.window}_over_{chunker_key(cfg.base)}"
+    if isinstance(cfg, SemanticChunker):
+        return "semantic"
+    if isinstance(cfg, SummaryEmbedChunker):
+        return f"summary_embed_over_{chunker_key(cfg.base)}"
+    if isinstance(cfg, HierarchicalSummaryChunker):
+        return f"hierarchical_summary_over_{chunker_key(cfg.base)}"
     raise ValueError(f"unknown chunker type for key derivation: {type(cfg).__name__}")
 
 

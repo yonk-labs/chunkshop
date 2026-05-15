@@ -30,8 +30,9 @@ embedder:
   pooling: cls
 
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_byo_large
+  database: chunkshop_byo_large
   table: chunks
   mode: overwrite
   source_tag: byo_large

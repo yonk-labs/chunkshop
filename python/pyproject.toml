@@ -1,6 +1,6 @@
 [project]
 name = "chunkshop"
-version = "0.3.2"
+version = "0.4.1"
 description = "Standalone ingest-to-pgvector: source → chunker → embedder → extractor → table. int8 by default."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -8,7 +8,7 @@ license = { text = "MIT" }
 authors = [{ name = "The Yonk", email = "matt@theyonk.com" }]
 keywords = ["rag", "pgvector", "embeddings", "chunking", "ingest"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -35,6 +35,10 @@ lede = ["lede>=0.3"]
 sumy = ["sumy>=0.11"]
 summarize = []  # umbrella — users pick [lede] and/or [sumy] explicitly
 s3 = ["boto3>=1.28"]
+sqlite = ["sqlite-vec>=0.1.6"]
+mariadb = ["PyMySQL>=1.1"]
+clickhouse = ["clickhouse-connect>=0.7"]
+all-backends = ["chunkshop[sqlite,mariadb,clickhouse]"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 
 [project.scripts]

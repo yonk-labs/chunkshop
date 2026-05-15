@@ -7,7 +7,7 @@ use chunkshop::config::{
     NeighborExpandChunkerConfig,
 };
 use chunkshop::runner::build_chunker;
-use chunkshop::source::Document;
+use chunkshop::sources::Document;
 use serde_json::json;
 use tracing_test::traced_test;
 

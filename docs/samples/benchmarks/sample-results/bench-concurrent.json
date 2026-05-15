@@ -1,0 +1,82 @@
+{
+  "concurrency_1": {
+    "total_wall_seconds": 42.28,
+    "succeeded": 8,
+    "failed": 0,
+    "per_cell_walls": [
+      5.0,
+      5.25,
+      5.0,
+      5.0,
+      5.0,
+      5.0,
+      5.0,
+      5.25
+    ],
+    "mean_per_cell_wall": 5.06,
+    "max_per_cell_wall": 5.25,
+    "throughput_cells_per_sec": 0.189,
+    "speedup": 1.0,
+    "scaling_efficiency_pct": 100.0
+  },
+  "concurrency_2": {
+    "total_wall_seconds": 24.77,
+    "succeeded": 8,
+    "failed": 0,
+    "per_cell_walls": [
+      6.0,
+      6.0,
+      6.0,
+      6.0,
+      6.01,
+      6.0,
+      6.01,
+      6.0
+    ],
+    "mean_per_cell_wall": 6.0,
+    "max_per_cell_wall": 6.01,
+    "throughput_cells_per_sec": 0.323,
+    "speedup": 1.71,
+    "scaling_efficiency_pct": 85.3
+  },
+  "concurrency_4": {
+    "total_wall_seconds": 17.27,
+    "succeeded": 8,
+    "failed": 0,
+    "per_cell_walls": [
+      8.26,
+      8.51,
+      8.51,
+      8.51,
+      8.26,
+      8.26,
+      8.51,
+      8.51
+    ],
+    "mean_per_cell_wall": 8.42,
+    "max_per_cell_wall": 8.51,
+    "throughput_cells_per_sec": 0.463,
+    "speedup": 2.45,
+    "scaling_efficiency_pct": 61.2
+  },
+  "concurrency_8": {
+    "total_wall_seconds": 15.03,
+    "succeeded": 8,
+    "failed": 0,
+    "per_cell_walls": [
+      14.78,
+      14.78,
+      14.78,
+      14.77,
+      14.77,
+      14.77,
+      14.77,
+      15.02
+    ],
+    "mean_per_cell_wall": 14.8,
+    "max_per_cell_wall": 15.02,
+    "throughput_cells_per_sec": 0.532,
+    "speedup": 2.81,
+    "scaling_efficiency_pct": 35.2
+  }
+}

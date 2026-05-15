@@ -1,9 +1,9 @@
-//! chunkshop-rs — minimal Rust port of chunkshop.
+//! chunkshop-rs — Rust port of chunkshop.
 //!
-//! Implements one source (files), one chunker (sentence_aware), one embedder
-//! (fastembed), and one pgvector sink. The YAML config schema and target table
-//! shape match the Python reference so vectors are interchangeable across
-//! implementations.
+//! Implements sources (files / HTTP / S3 / DB tables), chunkers, a fastembed
+//! embedder, and a modular sink/backend layer (PG / MariaDB / SQLite /
+//! ClickHouse). The YAML config schema and target table shape match the
+//! Python reference so vectors are interchangeable across implementations.
 //!
 //! ## Cargo features
 //!
@@ -13,7 +13,7 @@
 //! Postgres extension) can opt into the slim build:
 //!
 //! ```toml
-//! chunkshop = { version = "0.3", default-features = false, features = ["chunkers"] }
+//! chunkshop = { version = "0.4", default-features = false, features = ["chunkers"] }
 //! ```
 //!
 //! Available features:
@@ -28,11 +28,16 @@
 //!   Existing consumers see no change.
 //! - `extractor` — language detection + entity extractor.
 //! - `source` — files / HTTP / S3 source loaders.
-//! - `sink` — pgvector sink.
+//! - `sink` — the full modular sink/backend layer (PG/MariaDB/SQLite/ClickHouse).
 //! - `pipeline` — high-level Pipeline + run_cell glue.
 //! - `bakeoff` — chunker × embedder matrix evaluator.
 //! - `full` — all of the above (default).
 
+// The entire modular sink/backend layer is folded under the `sink` feature
+// (deliberate v4 design decision — no per-backend features). DB-table sources
+// reuse this backend layer, so their fetchers are additionally gated.
+#[cfg(feature = "sink")]
+pub mod backends;
 #[cfg(feature = "bakeoff")]
 pub mod bakeoff;
 #[cfg(feature = "chunkers")]
@@ -55,14 +60,20 @@ pub mod runner;
 #[cfg(feature = "chunkers")]
 pub mod sentence_split;
 #[cfg(feature = "sink")]
-pub mod sink;
-// `source` is always declared so the `Document` struct is always available
+pub mod sinks;
+// `sources` is always declared so the `Document` struct is always available
 // (chunkers consume `&Document`). The heavy fetcher impls inside this module
-// are themselves cfg-gated behind the `source` feature.
-pub mod source;
+// are themselves cfg-gated behind the `source` (and, for DB-table sources,
+// `sink`) features.
+pub mod sources;
 #[cfg(feature = "chunkers")]
 pub mod summarizer;
 
+#[cfg(feature = "sink")]
+pub use backends::{
+    AnyBackend, Backend, BackendConn, BackendDialect, ClickhouseBackend, ColSpec, MariadbBackend,
+    PostgresBackend, SQLiteBackend,
+};
 #[cfg(feature = "bakeoff")]
 pub use bakeoff::{run_bakeoff, run_bakeoff_with_base, BakeoffConfig, BakeoffResults};
 #[cfg(feature = "chunkers")]
@@ -75,7 +86,12 @@ pub use pipeline::Pipeline;
 #[cfg(feature = "pipeline")]
 pub use runner::{run_cell, CellResult};
 #[cfg(feature = "sink")]
-pub use sink::PgVectorSink;
-pub use source::Document;
+pub use sinks::{AnySink, ClickhouseSink, MariadbSink, PgSink, Sink, SqliteSink};
+// `Document` is always available; the fetcher sources are gated.
+pub use sources::Document;
 #[cfg(feature = "source")]
-pub use source::FilesSource;
+pub use sources::{FilesSource, HttpSource, JsonCorpusSource, S3Source};
+#[cfg(all(feature = "source", feature = "sink"))]
+pub use sources::{
+    AnySource, ClickhouseTableSource, MariadbTableSource, PgTableSource, SqliteTableSource,
+};
