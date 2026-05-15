@@ -37,7 +37,8 @@ extractor:
 
 target:
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_use_cases
+  type: postgres
+  database: chunkshop_use_cases
   table: legal_clause_review
   mode: overwrite
   source_tag: contracts_archive

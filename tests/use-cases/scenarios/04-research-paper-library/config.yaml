@@ -36,7 +36,8 @@ extractor:
 
 target:
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_use_cases
+  type: postgres
+  database: chunkshop_use_cases
   table: research_paper_library
   mode: overwrite
   source_tag: arxiv_library

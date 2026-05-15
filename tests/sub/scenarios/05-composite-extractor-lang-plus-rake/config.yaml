@@ -31,7 +31,8 @@ extractor:
 
 target:
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_sub_scenarios
+  type: postgres
+  database: chunkshop_sub_scenarios
   table: extractor_composite
   mode: overwrite
   source_tag: multilingual_notes

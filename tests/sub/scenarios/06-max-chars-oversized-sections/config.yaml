@@ -24,7 +24,8 @@ embedder:
 
 target:
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_sub_scenarios
+  type: postgres
+  database: chunkshop_sub_scenarios
   table: max_chars_split
   mode: overwrite
   hnsw: false

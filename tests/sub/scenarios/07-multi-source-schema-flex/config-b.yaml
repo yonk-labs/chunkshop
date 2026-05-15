@@ -23,7 +23,8 @@ embedder:
 
 target:
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_sub_scenarios
+  type: postgres
+  database: chunkshop_sub_scenarios
   table: unified_multi_source
   mode: append
   source_tag: api_items

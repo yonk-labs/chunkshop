@@ -30,7 +30,8 @@ embedder:
 
 target:
   dsn_env: CHUNKSHOP_TEST_DSN
-  schema: chunkshop_sub_scenarios
+  type: postgres
+  database: chunkshop_sub_scenarios
   table: framer_jsonpath
   mode: overwrite
   hnsw: false
