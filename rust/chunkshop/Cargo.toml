@@ -25,45 +25,67 @@ path = "src/lib.rs"
 [[bin]]
 name = "chunkshop-rs"
 path = "src/main.rs"
+# The CLI consumes load_config + run_cell + run_bakeoff_with_base, which
+# transitively need every module. Gating to `full` ensures the binary only
+# builds when the consumer opted into the heavy dep stack.
+required-features = ["full"]
 
 [dependencies]
+# --- Always-on core (small, used by the chunker module) ---
 anyhow = "1"
-blake2 = { version = "0.10", default-features = false }
-clap = { version = "4", features = ["derive"] }
-clickhouse = "0.15"
-# Pinned to >= 5.13.1 — earlier 5.x bumps (5.0.x..5.10.x) require an older
-# `ort` (=2.0.0-rc.10 / =2.0.0-rc.11) and conflict with chunkshop's
-# `ort = "=2.0.0-rc.12"` pin below. fastembed 5.13.1+ aligns on rc.12.
-fastembed = "5.13.1"
-glob = "0.3"
-hf-hub = { version = "0.5", default-features = false, features = ["ureq"] }
-ndarray = { version = "0.17.2", default-features = false }
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "std", "api-24"] }
-tokenizers = { version = "0.22.2", default-features = false, features = ["onig"] }
-pgvector = { version = "0.4", features = ["sqlx"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
-sha1 = "0.10"
-# default-features=false drops sqlx's `any` feature, which would otherwise
-# pull sqlx-sqlite — and sqlx-sqlite's libsqlite3-sys version conflicts with
-# rusqlite's libsqlite3-sys on the `links = "sqlite3"` declaration. R3's SQLite
-# path is rusqlite + sqlite-vec; we only need postgres + mysql drivers from
-# sqlx for R1's PgSink and R2's MariadbSink.
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "mysql", "json", "chrono"] }
-rusqlite = { version = "0.32", features = ["bundled", "load_extension"] }
-sqlite-vec = "=0.1.6"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 thiserror = "1"
-url = "2"
-urlencoding = "2"
-whatlang = "0.16"
-object_store = { version = "0.11", default-features = false, features = ["aws"] }
-futures = "0.3"
+tracing = "0.1"
+
+# --- Bin-only (kept always-on for diff minimality; clap + tracing-subscriber
+# are tiny relative to the heavy deps below) ---
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# --- `embedder` feature: ML inference stack ---
+# fastembed pinned to >= 5.13.1 — earlier 5.x bumps (5.0.x..5.10.x) require an
+# older `ort` (=2.0.0-rc.10 / =2.0.0-rc.11) and conflict with chunkshop's
+# `ort = "=2.0.0-rc.12"` pin below. fastembed 5.13.1+ aligns on rc.12.
+fastembed = { version = "5.13.1", optional = true }
+hf-hub = { version = "0.5", default-features = false, features = ["ureq"], optional = true }
+ndarray = { version = "0.17.2", default-features = false, optional = true }
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "std", "api-24"], optional = true }
+tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
+
+# --- `extractor` feature ---
+whatlang = { version = "0.16", optional = true }
+
+# --- `source` feature: files (glob) / HTTP / S3 ---
+futures = { version = "0.3", optional = true }
+glob = { version = "0.3", optional = true }
+object_store = { version = "0.11", default-features = false, features = ["aws"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+sha1 = { version = "0.10", optional = true }
+
+# --- `sink` feature: the full modular sink/backend layer ---
+# The v4 modular-backends line moved every backend (PG/MariaDB/SQLite/
+# ClickHouse) under the `sink` feature. So `sink` pulls the union of every
+# crate `src/sinks/` + `src/backends/` use: blake2 (PG content hash), pgvector
+# + sqlx (PG/MariaDB drivers), clickhouse, rusqlite + sqlite-vec (SQLite path),
+# and url/urlencoding (used only by backends/clickhouse.rs to build the
+# ClickHouse HTTP URL). default-features=false on sqlx is preserved from the
+# v4 line so sqlx-sqlite's libsqlite3-sys does not clash with rusqlite's.
+blake2 = { version = "0.10", default-features = false, optional = true }
+pgvector = { version = "0.4", features = ["sqlx"], optional = true }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "mysql", "json", "chrono"], optional = true }
+clickhouse = { version = "0.15", optional = true }
+rusqlite = { version = "0.32", features = ["bundled", "load_extension"], optional = true }
+sqlite-vec = { version = "=0.1.6", optional = true }
+url = { version = "2", optional = true }
+urlencoding = { version = "2", optional = true }
+
+# --- Shared runtime (gated by source + sink) ---
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+
+# --- Optional callable summarizer integration ---
 lede = { version = "0.3", optional = true }
 
 [dev-dependencies]
@@ -75,7 +97,54 @@ tracing-test = { version = "0.2", features = ["no-env-filter"] }
 tempfile = "3"
 
 [features]
-default = []
+# Default = full feature set for backward compatibility. Existing consumers
+# of `chunkshop = "0.3"` (and the `chunkshop-rs` binary) see no change.
+default = ["full"]
+
+# Everything — the historical compile target. Required by the CLI binary.
+full = ["chunkers", "embedder", "extractor", "source", "sink", "pipeline", "bakeoff"]
+
+# Just the chunker module + its config types and supporting modules
+# (sentence_split, summarizer, the `Document` struct). Pulls only the
+# small always-on core deps. The `SemanticChunker` requires `embedder` in
+# addition; without that feature the semantic chunker is excluded.
+chunkers = []
+
+# ML inference stack (fastembed + ORT). Required for `FastembedEmbedder`
+# and the `SemanticChunker`'s boundary embedder.
+embedder = ["dep:fastembed", "dep:hf-hub", "dep:ndarray", "dep:ort", "dep:tokenizers"]
+
+# Language-detection extractor (whatlang).
+extractor = ["dep:whatlang"]
+
+# Source loaders: files (glob), HTTP, S3. DB-table sources (PG/MariaDB/
+# SQLite/ClickHouse) additionally require `sink` since they reuse the
+# backend connection layer — they are gated on `all(source, sink)` in code.
+source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:sha1", "dep:tokio"]
+
+# The full modular sink/backend layer: PG (pgvector), MariaDB (sqlx mysql),
+# SQLite (rusqlite + sqlite-vec), ClickHouse (clickhouse + url/urlencoding).
+# The v4 modular-backends line folded every backend under this one feature
+# (no per-backend features — deliberate design decision).
+sink = [
+    "dep:blake2",
+    "dep:pgvector",
+    "dep:sqlx",
+    "dep:clickhouse",
+    "dep:rusqlite",
+    "dep:sqlite-vec",
+    "dep:url",
+    "dep:urlencoding",
+    "dep:tokio",
+]
+
+# High-level Pipeline + run_cell glue. Composes chunker + embedder +
+# extractor + source + sink.
+pipeline = ["chunkers", "embedder", "extractor", "source", "sink"]
+
+# Matrix evaluator (chunkers x embedders → leaderboard).
+bakeoff = ["pipeline"]
+
 # Enables the `chunkshop.summarizers.lede` callable summarizer module by
 # pulling the `lede` crate from crates.io. Build with: cargo build --features lede
 lede = ["dep:lede"]

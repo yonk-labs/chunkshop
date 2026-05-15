@@ -17,12 +17,19 @@ use regex::Regex;
 use serde_json::json;
 
 use crate::config::{
-    ChunkerConfig, FastembedEmbedderConfig, FixedOverlapChunkerConfig, HierarchyChunkerConfig,
-    SemanticChunkerConfig, SentenceAwareChunkerConfig,
+    ChunkerConfig, FixedOverlapChunkerConfig, GroupingConfig, HierarchyChunkerConfig,
+    SentenceAwareChunkerConfig,
 };
+// `FastembedEmbedderConfig` and `SemanticChunkerConfig` are only consumed by
+// `SemanticChunker` below, which itself requires the `embedder` feature.
+#[cfg(feature = "embedder")]
+use crate::config::{FastembedEmbedderConfig, SemanticChunkerConfig};
+#[cfg(feature = "embedder")]
 use crate::embedder::FastembedEmbedder;
+#[cfg(feature = "embedder")]
 use crate::sentence_split::naive_sentences;
 use crate::sources::Document;
+use crate::summarizer::build_summarizer;
 
 pub mod oversize {
     //! Shared if_oversize fallback machinery (mirrors Python chunkers/_oversize.py).
@@ -163,7 +170,7 @@ pub fn apply_if_oversize(
             title: document.title.clone(),
             metadata: document.metadata.clone(),
         };
-        let fallback = crate::runner::build_chunker(if_cfg.clone()).map_err(|_| {
+        let fallback = build_chunker(if_cfg.clone()).map_err(|_| {
             oversize::OversizeError::Recursion {
                 chunker: chunker_name.to_string(),
             }
@@ -796,12 +803,16 @@ impl ChunkerImpl for NeighborExpandChunker {
 /// document this trade-off in the README. Cross-language byte-identical
 /// chunks are NOT promised: the percentile threshold over embedder distances
 /// can shift breakpoints under MB-1's documented ORT-binary drift.
+///
+/// Requires the `embedder` Cargo feature (transitively pulls fastembed + ORT).
+#[cfg(feature = "embedder")]
 pub struct SemanticChunker {
     cfg: SemanticChunkerConfig,
     boundary: std::sync::Mutex<FastembedEmbedder>,
     warner: Option<oversize::DedupedWarner>,
 }
 
+#[cfg(feature = "embedder")]
 impl SemanticChunker {
     pub fn new(cfg: SemanticChunkerConfig) -> anyhow::Result<Self> {
         if cfg.sentence_splitter != "naive" {
@@ -1019,6 +1030,7 @@ impl SemanticChunker {
     }
 }
 
+#[cfg(feature = "embedder")]
 impl ChunkerImpl for SemanticChunker {
     fn chunk(&self, doc: &Document) -> Vec<Chunk> {
         Self::chunk(self, doc)
@@ -1324,7 +1336,8 @@ impl ChunkerImpl for HierarchicalSummaryChunker {
 }
 
 /// numpy.percentile with linear interpolation. Mirrors numpy default.
-/// Returns the percentile **value** (not the index).
+/// Returns the percentile **value** (not the index). Used by `SemanticChunker`.
+#[cfg(feature = "embedder")]
 fn percentile_linear(values: &[f32], p: u32) -> f32 {
     if values.is_empty() {
         return 0.0;
@@ -1347,7 +1360,8 @@ fn percentile_linear(values: &[f32], p: u32) -> f32 {
 
 /// Merge spans smaller than `min` into neighbors. Forward-merge first;
 /// pull the next span into the first if the first is too small; back-merge the
-/// last span if needed. Mirrors Python's `_merge_small`.
+/// last span if needed. Mirrors Python's `_merge_small`. Used by `SemanticChunker`.
+#[cfg(feature = "embedder")]
 fn merge_small_spans(spans: Vec<(usize, usize)>, min: usize) -> Vec<(usize, usize)> {
     if spans.is_empty() {
         return spans;
@@ -1375,6 +1389,84 @@ fn merge_small_spans(spans: Vec<(usize, usize)>, min: usize) -> Vec<(usize, usiz
         merged.pop();
     }
     merged
+}
+
+/// Recursively materialize a `ChunkerConfig` into a boxed trait object.
+/// `NeighborExpand` calls back into this fn to construct its `base`. Adding a
+/// new chunker = one new arm here + one new variant on `ChunkerConfig`.
+///
+/// Each wrapper chunker resolves its `effective_max_chars` (Brief SC-003) and
+/// passes the optional `if_oversize` config through to the chunker
+/// constructor — `apply_if_oversize` runs at the tail of every `chunk()`
+/// call.
+///
+/// The `Semantic` variant is only available when the `embedder` feature is
+/// enabled; without it, attempting to build a semantic chunker returns an
+/// `Err`. This lets the chunker module work standalone (without fastembed)
+/// while preserving runtime behavior when the full stack is compiled.
+pub fn build_chunker(cfg: ChunkerConfig) -> anyhow::Result<Box<dyn ChunkerImpl + Send + Sync>> {
+    Ok(match cfg {
+        ChunkerConfig::SentenceAware(c) => Box::new(SentenceAwareChunker::new(c)),
+        ChunkerConfig::Hierarchy(c) => Box::new(HierarchyChunker::new(c)),
+        ChunkerConfig::FixedOverlap(c) => Box::new(FixedOverlapChunker::new(c)?),
+        ChunkerConfig::NeighborExpand(c) => {
+            let window = c.window;
+            // Resolve effective ceiling: explicit override on wrapper else
+            // base.effective_max_chars().
+            let effective_ceiling = c.max_chars.or_else(|| c.base.effective_max_chars());
+            let if_oversize_cfg = c.if_oversize.as_deref().cloned();
+            let base = build_chunker(*c.base)?;
+            Box::new(NeighborExpandChunker::new(
+                window,
+                base,
+                effective_ceiling,
+                if_oversize_cfg,
+            ))
+        }
+        #[cfg(feature = "embedder")]
+        ChunkerConfig::Semantic(c) => Box::new(SemanticChunker::new(c)?),
+        #[cfg(not(feature = "embedder"))]
+        ChunkerConfig::Semantic(_) => {
+            return Err(anyhow::anyhow!(
+                "semantic chunker requires the `embedder` Cargo feature \
+                 (rebuild with --features embedder or --features full)"
+            ));
+        }
+        ChunkerConfig::SummaryEmbed(c) => {
+            let mode = c.summarizer.mode_str();
+            let effective_ceiling = c.max_chars.or_else(|| c.base.effective_max_chars());
+            let if_oversize_cfg = c.if_oversize.as_deref().cloned();
+            let base = build_chunker(*c.base)?;
+            let summarizer = build_summarizer(&c.summarizer)?;
+            Box::new(SummaryEmbedChunker::new(
+                base,
+                summarizer,
+                mode,
+                effective_ceiling,
+                if_oversize_cfg,
+            ))
+        }
+        ChunkerConfig::HierarchicalSummary(c) => {
+            let mode = c.summarizer.mode_str();
+            let effective_ceiling = c.max_chars.or_else(|| c.base.effective_max_chars());
+            let if_oversize_cfg = c.if_oversize.as_deref().cloned();
+            let base = build_chunker(*c.base)?;
+            let summarizer = build_summarizer(&c.summarizer)?;
+            let grouping = match c.grouping {
+                GroupingConfig::FixedN(g) => HierarchicalGrouping::FixedN(g.n),
+                GroupingConfig::WordBudget(g) => HierarchicalGrouping::WordBudget(g.max_words),
+                GroupingConfig::SectionAware(_) => HierarchicalGrouping::SectionAware,
+            };
+            Box::new(HierarchicalSummaryChunker::new(
+                base,
+                summarizer,
+                mode,
+                grouping,
+                effective_ceiling,
+                if_oversize_cfg,
+            ))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -1424,8 +1516,10 @@ mod tests {
         assert!(chunks[2].original_content.starts_with("## Section B"));
     }
 
-    // --- Semantic chunker algorithm helpers ---
+    // --- Semantic chunker algorithm helpers (only compile when the
+    //     `embedder` feature is on, since the helpers themselves are gated). ---
 
+    #[cfg(feature = "embedder")]
     #[test]
     fn percentile_linear_matches_numpy() {
         // numpy.percentile([1,2,3,4,5], 95) -> 4.8 (linear interp default)
@@ -1440,6 +1534,7 @@ mod tests {
         assert_eq!(percentile_linear(&[], 95), 0.0);
     }
 
+    #[cfg(feature = "embedder")]
     #[test]
     fn merge_small_spans_forward() {
         // [0..5)=5, [5..6)=1 (too small), [6..10)=4. The small span forward-merges
@@ -1448,18 +1543,21 @@ mod tests {
         assert_eq!(m, vec![(0, 6), (6, 10)]);
     }
 
+    #[cfg(feature = "embedder")]
     #[test]
     fn merge_small_spans_backward_last() {
         let m = merge_small_spans(vec![(0, 5), (5, 10), (10, 11)], 3);
         assert_eq!(m, vec![(0, 5), (5, 11)]);
     }
 
+    #[cfg(feature = "embedder")]
     #[test]
     fn merge_small_spans_first_too_small_pulls_next() {
         let m = merge_small_spans(vec![(0, 1), (1, 5), (5, 10)], 3);
         assert_eq!(m, vec![(0, 5), (5, 10)]);
     }
 
+    #[cfg(feature = "embedder")]
     #[test]
     fn merge_small_spans_empty_returns_empty() {
         let m: Vec<(usize, usize)> = merge_small_spans(Vec::new(), 3);
