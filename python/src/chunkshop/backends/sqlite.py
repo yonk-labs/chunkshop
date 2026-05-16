@@ -1,8 +1,8 @@
 """SQLite backend (with sqlite-vec extension for vector storage).
 
 SQLite has no schema/database namespace concept — chunkshop's YAML `database`
-field is required by config (loose parity) but ignored at runtime. The DSN env
-var holds the file path or `:memory:`.
+field is required by config (loose parity) but ignored at runtime. The resolved
+DSN holds the file path or `:memory:`.
 """
 from __future__ import annotations
 import json
@@ -21,12 +21,15 @@ class SQLiteBackend:
     name: Literal["sqlite"] = "sqlite"
     supports_upsert: bool = True
 
-    def __init__(self, dsn_env: str):
+    def __init__(self, dsn: str | None = None, *, dsn_env: str | None = None):
+        # `dsn` = resolved file path/`:memory:` (preferred). `dsn_env` = legacy
+        # env-var-name path, kept for backward compat (lazy read at connect()).
+        self._dsn = dsn
         self._dsn_env = dsn_env
 
     @contextmanager
     def connect(self) -> Iterator[Any]:
-        path = os.environ[self._dsn_env]
+        path = self._dsn if self._dsn is not None else os.environ[self._dsn_env]
         conn = sqlite3.connect(path)
         conn.enable_load_extension(True)
         try:

@@ -26,7 +26,10 @@ class ClickHouseBackend:
     name: Literal["clickhouse"] = "clickhouse"
     supports_upsert: bool = False  # CH is append-only — no ON CONFLICT / ON DUPLICATE
 
-    def __init__(self, dsn_env: str):
+    def __init__(self, dsn: str | None = None, *, dsn_env: str | None = None):
+        # `dsn` = resolved connection string (preferred). `dsn_env` = legacy
+        # env-var-name path, kept for backward compat (lazy read at connect()).
+        self._dsn = dsn
         self._dsn_env = dsn_env
 
     @contextmanager
@@ -39,7 +42,7 @@ class ClickHouseBackend:
                 "Install with: pip install 'chunkshop[clickhouse]' "
                 "(or 'chunkshop[all-backends]' for all 4 backends)."
             ) from e
-        dsn = os.environ[self._dsn_env]
+        dsn = self._dsn if self._dsn is not None else os.environ[self._dsn_env]
         kwargs = _parse_clickhouse_dsn(dsn)
         client = clickhouse_connect.get_client(**kwargs)
         try:

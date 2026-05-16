@@ -1,7 +1,6 @@
 """Postgres sink — pgvector chunks-table writer using the PostgresBackend dialect."""
 from __future__ import annotations
 import json
-import os
 from typing import Any
 
 import numpy as np
@@ -57,7 +56,7 @@ class PgSink:
         self.cfg = cfg
         self.backend = backend
         self.embed_dim = embed_dim
-        self._dsn = os.environ[cfg.dsn_env]
+        self._dsn = cfg.resolve_dsn()
 
     def _fq(self) -> str:
         return self.backend.fq_table(self.cfg.database_name, self.cfg.table)

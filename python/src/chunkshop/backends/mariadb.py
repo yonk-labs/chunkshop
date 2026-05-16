@@ -23,12 +23,15 @@ class MariaDBBackend:
     name: Literal["mariadb"] = "mariadb"
     supports_upsert: bool = True
 
-    def __init__(self, dsn_env: str):
+    def __init__(self, dsn: str | None = None, *, dsn_env: str | None = None):
+        # `dsn` = resolved connection string (preferred). `dsn_env` = legacy
+        # env-var-name path, kept for backward compat (lazy read at connect()).
+        self._dsn = dsn
         self._dsn_env = dsn_env
 
     @contextmanager
     def connect(self) -> Iterator[Any]:
-        dsn = os.environ[self._dsn_env]
+        dsn = self._dsn if self._dsn is not None else os.environ[self._dsn_env]
         kwargs = _parse_mysql_dsn(dsn)
         conn = pymysql.connect(**kwargs)
         try:

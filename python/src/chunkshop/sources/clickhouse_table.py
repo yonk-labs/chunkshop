@@ -56,7 +56,7 @@ def _json_safe(v: Any) -> Any:
 class ClickhouseTableSource:
     def __init__(self, cfg: Cfg):
         self.cfg = cfg
-        self.backend = ClickHouseBackend(dsn_env=cfg.dsn_env)
+        self.backend = ClickHouseBackend(**cfg.backend_dsn_kwargs())
 
     def iter_documents(self) -> Iterator[Document]:
         cols = [self.cfg.id_column, self.cfg.content_column]

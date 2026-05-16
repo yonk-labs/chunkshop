@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.4.3 — 2026-05-16
+
+Batteries-included ergonomics for embedding chunkshop as a library and
+for first-run installs. Two additive, fully backward-compatible changes
+— existing YAML configs and `dsn_env`-based code keep working unchanged.
+
+- **Direct `dsn` field on the target and `*_table` sources.** Accepts a
+  literal connection string or `${VAR}` references expanded from the
+  environment at connect time (only the exact `${NAME}` form — a bare
+  `$` in a DSN password is left untouched). Takes precedence over
+  `dsn_env`; if `dsn` is unset the legacy `os.environ[dsn_env]` lookup
+  is used exactly as before. Lets library callers (e.g. a wrapper that
+  builds `CellConfig` in code) pass a connection string without mutating
+  `os.environ`. Security: a literal secret in `dsn` lands in the config
+  file — prefer `${VAR}` or `dsn_env` for credentials.
+- **`chunkshop prefetch --config X` command.** Downloads the embedder
+  model named in a config up front so the multi-second fastembed ONNX
+  fetch happens in an explicit setup step (Dockerfile / CI / install
+  script) instead of silently inside the first ingest or library
+  `store()`. Honors `HF_HUB_OFFLINE=1` to fail fast when uncached.
+- Backward compatibility: backend constructors and `load_backend()`
+  still accept the legacy `dsn_env=` keyword; the `dsn_env` path stays
+  lazily resolved at `connect()`. `bakeoff` is unchanged (it keeps its
+  own `dsn_env`-only target models by design).
+
 ## 0.4.2 — 2026-05-15
 
 First release cut from `main` after the v4 modular-backend line was

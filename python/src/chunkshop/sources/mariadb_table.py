@@ -22,7 +22,7 @@ def _json_safe(v: Any) -> Any:
 class MariaDbTableSource:
     def __init__(self, cfg: Cfg):
         self.cfg = cfg
-        self.backend = MariaDBBackend(dsn_env=cfg.dsn_env)
+        self.backend = MariaDBBackend(**cfg.backend_dsn_kwargs())
 
     def iter_documents(self) -> Iterator[Document]:
         cols = [self.cfg.id_column, self.cfg.content_column]

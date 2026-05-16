@@ -1,4 +1,4 @@
-"""chunkshop CLI — ingest, orchestrate, bakeoff."""
+"""chunkshop CLI — ingest, orchestrate, bakeoff, prefetch."""
 from __future__ import annotations
 import json
 import logging
@@ -59,6 +59,9 @@ def cli():
 
     Rank a chunker x embedder matrix against your corpus:
         chunkshop bakeoff --config bakeoff.yaml
+
+    Pre-download the embedder model so the first ingest never blocks:
+        chunkshop prefetch --config cell.yaml
     """
 
 
@@ -238,6 +241,33 @@ def ingest(config: Path, doc_limit, log_path, omp_threads):
         "error": result.error,
     }, indent=2))
     sys.exit(1 if result.error else 0)
+
+
+@cli.command()
+@click.option(
+    "--config", "-c", required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to the YAML/JSON cell config whose embedder model is fetched.",
+)
+def prefetch(config: Path):
+    """Download the embedder model named in a config so first ingest never blocks.
+
+    fastembed lazily fetches the ONNX model from HuggingFace on first embed().
+    Run this once (in a Dockerfile, CI step, or setup script) to make installs
+    batteries-included — the multi-second download happens here, explicitly,
+    instead of silently inside the first ingest / library store() call.
+
+    Offline: export HF_HUB_OFFLINE=1 to fail fast if the model is not already
+    cached, rather than attempting a network fetch.
+    """
+    from chunkshop.embedders import load_embedder
+
+    cfg = load_config(config)
+    _setup_cli_logging(json_format=(getattr(cfg.runtime, "log_format", "text") == "json"))
+    model_name = getattr(cfg.embedder, "model_name", "<unknown>")
+    click.echo(f"[prefetch] fetching embedder model {model_name!r} ...")
+    load_embedder(cfg.embedder)  # constructs the provider → fastembed caches the ONNX model
+    click.echo(f"[prefetch] model {model_name!r} is cached and ready.")
 
 
 @cli.command()

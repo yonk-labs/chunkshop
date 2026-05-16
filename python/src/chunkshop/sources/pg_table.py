@@ -26,7 +26,7 @@ def _json_safe(v: Any) -> Any:
 class PgTableSource:
     def __init__(self, cfg: Cfg):
         self.cfg = cfg
-        self.backend = PostgresBackend(dsn_env=cfg.dsn_env)
+        self.backend = PostgresBackend(**cfg.backend_dsn_kwargs())
 
     def iter_documents(self) -> Iterator[Document]:
         cols = [self.cfg.id_column, self.cfg.content_column]

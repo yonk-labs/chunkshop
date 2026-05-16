@@ -17,13 +17,21 @@ class PostgresBackend:
     name: Literal["postgres"] = "postgres"
     supports_upsert: bool = True
 
-    def __init__(self, dsn_env: str):
+    def __init__(self, dsn: str | None = None, *, dsn_env: str | None = None):
+        # `dsn` is the resolved connection string (preferred, set by config
+        # layer). `dsn_env` is the legacy env-var-name path. Pre-0.4.3 callers
+        # rely on `._dsn` being an eager os.environ snapshot of `dsn_env`, so
+        # that contract is preserved exactly; connect() still re-reads the env
+        # var lazily on the legacy path (authoritative, as before).
         self._dsn_env = dsn_env
-        self._dsn = os.environ.get(dsn_env, "")
+        if dsn is not None:
+            self._dsn = dsn
+        else:
+            self._dsn = os.environ.get(dsn_env, "") if dsn_env is not None else None
 
     @contextmanager
     def connect(self) -> Iterator[Any]:
-        dsn = os.environ[self._dsn_env]
+        dsn = os.environ[self._dsn_env] if self._dsn_env is not None else self._dsn
         with psycopg.connect(dsn) as conn:
             yield conn
 

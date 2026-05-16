@@ -9,7 +9,7 @@ from chunkshop.sources.base import Document
 class SqliteTableSource:
     def __init__(self, cfg: Cfg):
         self.cfg = cfg
-        self.backend = SQLiteBackend(dsn_env=cfg.dsn_env)
+        self.backend = SQLiteBackend(**cfg.backend_dsn_kwargs())
 
     def iter_documents(self) -> Iterator[Document]:
         cols = [self.cfg.id_column, self.cfg.content_column]

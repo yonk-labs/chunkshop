@@ -1,6 +1,7 @@
 """Pydantic config models for chunkshop cells."""
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Union
@@ -11,6 +12,59 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 class _Base(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+_DSN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+class _DsnResolvable(_Base):
+    """A connection target: direct `dsn` taking precedence over legacy `dsn_env`.
+
+    `dsn` accepts a literal connection string OR `${VAR}` references expanded
+    from the environment at connect time. Only the exact ``${NAME}`` form is
+    substituted — a bare ``$`` (common in DSN passwords) is left untouched.
+    When `dsn` is unset the legacy `os.environ[dsn_env]` lookup is used, so
+    existing configs keep working unchanged.
+
+    Security: putting a literal secret in `dsn` writes it into the config file.
+    Prefer `${VAR}` or `dsn_env` when the DSN carries credentials.
+    """
+
+    dsn: Optional[str] = None
+    dsn_env: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _require_dsn_or_dsn_env(self):
+        if not self.dsn and not self.dsn_env:
+            raise ValueError("one of `dsn` or `dsn_env` is required")
+        return self
+
+    def resolve_dsn(self) -> str:
+        """Return the effective connection string (dsn > dsn_env)."""
+        if self.dsn:
+            def _sub(m: re.Match[str]) -> str:
+                name = m.group(1)
+                try:
+                    return os.environ[name]
+                except KeyError:
+                    raise ValueError(
+                        f"dsn references ${{{name}}} but env var {name!r} is not set"
+                    ) from None
+
+            return _DSN_VAR.sub(_sub, self.dsn)
+        return os.environ[self.dsn_env]  # KeyError if unset — preserves prior behavior
+
+    def backend_dsn_kwargs(self) -> dict[str, str]:
+        """Backend constructor kwargs for this target.
+
+        New `dsn` path resolves (and ${VAR}-interpolates) eagerly. Legacy
+        `dsn_env` path is passed through untouched so the backend keeps reading
+        the env var lazily at connect() — preserving pre-0.4.3 behavior for
+        callers that never set `dsn`.
+        """
+        if self.dsn:
+            return {"dsn": self.resolve_dsn()}
+        return {"dsn_env": self.dsn_env}
 
 
 class FilesSource(_Base):
@@ -29,9 +83,8 @@ class JsonCorpusSource(_Base):
     title_field: Optional[str] = "title"
 
 
-class PgTableSource(_Base):
+class PgTableSource(_DsnResolvable):
     type: Literal["pg_table"]
-    dsn_env: str
     database_name: str = Field(alias="database")
     table: str
     id_column: str
@@ -45,9 +98,8 @@ class PgTableSource(_Base):
     metadata_columns: list[str] = Field(default_factory=list)
 
 
-class SqliteTableSource(_Base):
+class SqliteTableSource(_DsnResolvable):
     type: Literal["sqlite_table"]
-    dsn_env: str
     database_name: str = Field(alias="database")   # ignored at runtime; loose parity
     table: str
     id_column: str
@@ -57,9 +109,8 @@ class SqliteTableSource(_Base):
     metadata_columns: list[str] = Field(default_factory=list)
 
 
-class MariaDbTableSource(_Base):
+class MariaDbTableSource(_DsnResolvable):
     type: Literal["mariadb_table"]
-    dsn_env: str
     database_name: str = Field(alias="database")
     table: str
     id_column: str
@@ -69,9 +120,8 @@ class MariaDbTableSource(_Base):
     metadata_columns: list[str] = Field(default_factory=list)
 
 
-class ClickhouseTableSource(_Base):
+class ClickhouseTableSource(_DsnResolvable):
     type: Literal["clickhouse_table"]
-    dsn_env: str
     database_name: str = Field(alias="database")
     table: str
     id_column: str
@@ -525,9 +575,8 @@ class PromoteColumn(_Base):
         return self.path.replace(".", "__").lower()
 
 
-class TargetConfig(_Base):
+class TargetConfig(_DsnResolvable):
     type: Literal["postgres", "sqlite", "mariadb", "clickhouse"]
-    dsn_env: str
     database_name: str = Field(alias="database")
     table: str
     hnsw: bool = True
