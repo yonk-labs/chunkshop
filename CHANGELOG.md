@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+## 0.4.2 — 2026-05-15
+
+First release cut from `main` after the v4 modular-backend line was
+merged back (PR #6). Brings main's five parallel Rust feature PRs onto
+the modular-backend codebase and makes `main` the source of truth.
+No Python API or schema changes vs 0.4.1 — the Python package is
+functionally identical; this release is Rust features + repo/CI health.
+
+- **`chunker-only` Cargo feature gate.** Library consumers can depend
+  on `chunkshop-rs` for just the chunker structs without the
+  embedder/source/sink/ML stack. `default = ["full"]` preserves
+  backward compatibility. The whole modular sink/backend layer sits
+  under the `sink` feature; `embedder` splits into `embedder-core`
+  (BYO) and `embedder-hub` (hf-hub-backed). Re-applied from main PR #2.
+- **`HierarchyChunker` custom heading regex** — `heading_pattern`
+  config field overrides the default markdown heading detector.
+  Re-applied from main PR #3.
+- **`embedder-hub` feature split** — `hf-hub` is now opt-in separately
+  from the core embedder. Re-applied from main PR #4.
+- **Custom `BoundaryEmbedder` injection into `SemanticChunker`** —
+  inject a boundary embedder without the fastembed/hf-hub path.
+  Re-applied from main PR #5.
+- **`fastembed` pinned `>= 5.13.1`** to align `ort` on `=2.0.0-rc.12`
+  and prevent dep-resolution regressions under restrictive lockfiles.
+  Re-applied from main PR #1.
+- **CI now exercises the modular backends.** The workflow brought up
+  only Postgres and installed no backend extras (it predated v4 and
+  had never run against the modular code). Now brings up Postgres +
+  MariaDB + ClickHouse from `docker-compose.test.yaml` and installs
+  `all-backends`, so the full cross-backend matrix runs in CI.
+- **Scenario fixtures migrated to the v4 target schema.** The 18
+  `tests/sub` + `tests/use-cases` configs used the legacy 0.3.x
+  `schema:` target shape; migrated to `type:` + `database:`.
+
 ## 0.4.1 — 2026-05-12
 
 Polish + perf + ops layer on top of the 0.4.0 modular-backends release.
