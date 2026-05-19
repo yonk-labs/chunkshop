@@ -83,6 +83,22 @@ class JsonCorpusSource(_Base):
     title_field: Optional[str] = "title"
 
 
+class SessionStagingSource(_DsnResolvable):
+    type: Literal["session_staging"]
+    staging_table: str
+    staging_schema: str = "public"
+    mode: Literal["realtime", "consolidate"]
+    min_age_seconds: int = 3600
+    max_sessions: Optional[int] = None
+
+    @field_validator("staging_table", "staging_schema")
+    @classmethod
+    def _safe_ident(cls, v):
+        if not re.match(r"^[a-z_][a-z0-9_]*$", v):
+            raise ValueError(f"staging_table/staging_schema must match ^[a-z_][a-z0-9_]*$, got {v!r}")
+        return v
+
+
 class PgTableSource(_DsnResolvable):
     type: Literal["pg_table"]
     database_name: str = Field(alias="database")
@@ -164,7 +180,7 @@ class InlineSource(_Base):
 
 
 SourceConfig = Annotated[
-    Union[FilesSource, JsonCorpusSource, PgTableSource, SqliteTableSource,
+    Union[FilesSource, JsonCorpusSource, SessionStagingSource, PgTableSource, SqliteTableSource,
           MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource],
     Field(discriminator="type"),
 ]
