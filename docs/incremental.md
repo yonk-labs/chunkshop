@@ -597,3 +597,27 @@ Plus:
 - the wrapper script: [`scripts/run_incremental_watermark.py`](../scripts/run_incremental_watermark.py)
 - the pg_table sample (with runnable demo): [`docs/samples/incremental-pg-table/`](samples/incremental-pg-table/)
 - the inline-mode samples (Python + Rust): [`docs/samples/inline-mode/`](samples/inline-mode/)
+
+## Agent memory (SP-A)
+
+Two-cell incremental pattern for agent conversation memory. Your agent writes raw
+turns to a staging table, then two scheduled chunkshop cells consume them:
+
+```python
+from chunkshop.memory import ensure_staging_table, stage_event
+ensure_staging_table(dsn, table="chunkshop_staging")
+stage_event(dsn, session_id="s1", seq=1, role="user", content="...",
+            table="chunkshop_staging")
+```
+
+- **realtime** — run frequently (e.g. every minute) so new turns are searchable fast:
+  `chunkshop ingest --config src/chunkshop/configs/memory/realtime.yaml`
+  writes `tier=provisional` rows.
+- **consolidate** — run nightly via external cron; segments quiet sessions into
+  episodes, extracts facts, and supersedes the provisional rows:
+  `chunkshop ingest --config src/chunkshop/configs/memory/consolidate.yaml`
+
+Both presets read the DSN from `${CHUNKSHOP_MEMORY_DSN}`. There is no daemon —
+schedule the two `ingest` invocations externally, same as every other pattern above.
+Design rationale and the pg-raggraph fact contract:
+[`docs/superpowers/specs/2026-05-19-chunkshop-memory-primitives-sp-a-design.md`](superpowers/specs/2026-05-19-chunkshop-memory-primitives-sp-a-design.md).

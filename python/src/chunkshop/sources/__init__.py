@@ -9,6 +9,7 @@ from chunkshop.config import (
     ClickhouseTableSource as ChCfg,
     HttpSource as HttpCfg,
     S3Source as S3Cfg,
+    SessionStagingSource as SessionStagingCfg,
     SourceConfig,
 )
 from chunkshop.sources.base import Document, Source
@@ -20,6 +21,7 @@ from chunkshop.sources.mariadb_table import MariaDbTableSource
 from chunkshop.sources.clickhouse_table import ClickhouseTableSource
 from chunkshop.sources.http import HttpSource
 from chunkshop.sources.s3 import S3Source
+from chunkshop.sources.session_staging import SessionStagingSource
 
 
 def load_source(cfg: SourceConfig) -> Source:
@@ -39,6 +41,8 @@ def load_source(cfg: SourceConfig) -> Source:
         return HttpSource(cfg)
     if isinstance(cfg, S3Cfg):
         return S3Source(cfg)
+    if isinstance(cfg, SessionStagingCfg):
+        return SessionStagingSource(cfg)
     if isinstance(cfg, InlineCfg):
         raise RuntimeError(
             "inline source has no auto-iterator: drive ingest from your app "
@@ -48,4 +52,4 @@ def load_source(cfg: SourceConfig) -> Source:
     raise ValueError(f"unknown source type: {type(cfg).__name__}")
 
 
-__all__ = ["Document", "Source", "load_source"]
+__all__ = ["Document", "Source", "load_source", "SessionStagingSource"]

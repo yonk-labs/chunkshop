@@ -61,6 +61,9 @@ class PgSink:
     def _fq(self) -> str:
         return self.backend.fq_table(self.cfg.database_name, self.cfg.table)
 
+    def _row_id(self, doc_id: str, seq_num: int) -> str:
+        return f"{doc_id}::{seq_num}"
+
     # -- create_table dispatch ----------------------------------------------
     def create_table(self) -> None:
         with self.backend.connect() as conn, conn.cursor() as cur:
@@ -175,7 +178,7 @@ class PgSink:
         rows = []
         for c, emb, tags in zip(chunks, embeddings, tags_per_chunk):
             base_values = [
-                f"{c.doc_id}::{c.seq_num}",
+                self._row_id(c.doc_id, c.seq_num),
                 c.doc_id,
                 c.seq_num,
                 c.original_content,

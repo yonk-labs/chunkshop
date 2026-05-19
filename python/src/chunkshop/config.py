@@ -83,6 +83,22 @@ class JsonCorpusSource(_Base):
     title_field: Optional[str] = "title"
 
 
+class SessionStagingSource(_DsnResolvable):
+    type: Literal["session_staging"]
+    staging_table: str
+    staging_schema: str = "public"
+    mode: Literal["realtime", "consolidate"]
+    min_age_seconds: int = Field(default=3600, ge=0)
+    max_sessions: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("staging_table", "staging_schema")
+    @classmethod
+    def _safe_ident(cls, v):
+        if not re.match(r"^[a-z_][a-z0-9_]*$", v):
+            raise ValueError(f"staging_table/staging_schema must match ^[a-z_][a-z0-9_]*$, got {v!r}")
+        return v
+
+
 class PgTableSource(_DsnResolvable):
     type: Literal["pg_table"]
     database_name: str = Field(alias="database")
@@ -164,7 +180,7 @@ class InlineSource(_Base):
 
 
 SourceConfig = Annotated[
-    Union[FilesSource, JsonCorpusSource, PgTableSource, SqliteTableSource,
+    Union[FilesSource, JsonCorpusSource, SessionStagingSource, PgTableSource, SqliteTableSource,
           MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource],
     Field(discriminator="type"),
 ]
@@ -285,6 +301,32 @@ SummarizerConfig = Annotated[
 ]
 
 
+# --- Consolidator config (origin-agnostic) ---
+
+
+class CallableConsolidator(_Base):
+    """Import a module lazily; call ``function(text, **kwargs) -> dict``.
+
+    The dict must be ``{"summary": str, "facts": [ {subject,predicate,object,
+    support_span,confidence}, ... ]}``. Mirrors CallableSummarizer.
+    """
+    mode: Literal["callable"]
+    module: str
+    function: str = "consolidate"
+    kwargs: dict = Field(default_factory=dict)
+
+
+class PassthroughConsolidator(_Base):
+    """Baseline: summary = episode text, facts = []. For A/B + no-LLM default off."""
+    mode: Literal["passthrough"]
+
+
+ConsolidatorConfig = Annotated[
+    Union[CallableConsolidator, PassthroughConsolidator],
+    Field(discriminator="mode"),
+]
+
+
 # --- Grouping strategies for HierarchicalSummaryChunker (SC-004) ---
 
 
@@ -331,6 +373,33 @@ class SummaryEmbedChunker(_Base):
         return self
 
 
+class ConsolidationChunker(_Base):
+    """Wrap a base chunker; emit episode chunks (summary-enriched embedded_content)
+    + atomic fact chunks (kind='fact') via a user-wired consolidator callable."""
+    type: Literal["consolidation"]
+    base: "ChunkerConfig"
+    consolidator: ConsolidatorConfig
+    fact_max_chars: int = Field(default=1200, ge=1)
+    max_chars: Optional[int] = None
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        if self.max_chars is not None:
+            return self.max_chars
+        getter = getattr(self.base, "effective_max_chars", None)
+        return getter() if getter else None
+
+    @model_validator(mode="after")
+    def _if_oversize_unsupported(self):
+        if self.if_oversize is not None:
+            raise ValueError(
+                "if_oversize is not supported on the consolidation chunker: "
+                "episode embedded_content is a bounded summary and facts are "
+                "length-capped via fact_max_chars. Remove if_oversize."
+            )
+        return self
+
+
 class HierarchicalSummaryChunker(_Base):
     """Emit base (fine) chunks plus coarse summary chunks linked by group_id."""
     type: Literal["hierarchical_summary"]
@@ -373,6 +442,7 @@ ChunkerConfig = Annotated[
         HierarchyChunker,
         NeighborExpandChunker,
         SummaryEmbedChunker,
+        ConsolidationChunker,
         HierarchicalSummaryChunker,
         SemanticChunker,
     ],
@@ -384,6 +454,7 @@ HierarchyChunker.model_rebuild()
 NeighborExpandChunker.model_rebuild()
 SemanticChunker.model_rebuild()
 SummaryEmbedChunker.model_rebuild()
+ConsolidationChunker.model_rebuild()
 HierarchicalSummaryChunker.model_rebuild()
 
 
@@ -434,12 +505,21 @@ class JSONPathFramerConfig(_Base):
         return v
 
 
+class SessionEpisodeFramerConfig(_Base):
+    type: Literal["session_episode"] = "session_episode"
+    max_gap_seconds: int = Field(default=1800, ge=1)
+    max_turns: int = Field(default=40, ge=1)
+    max_words: int = Field(default=1200, ge=50)
+    boundary_on_tool: bool = True
+
+
 FramerConfig = Annotated[
     Union[
         IdentityFramerConfig,
         HeadingBoundaryFramerConfig,
         RegexBoundaryFramerConfig,
         JSONPathFramerConfig,
+        SessionEpisodeFramerConfig,
     ],
     Field(discriminator="type"),
 ]
@@ -538,6 +618,21 @@ _ALLOWED_PROMOTE_TYPES = {"text", "text[]", "int", "bigint", "boolean", "jsonb",
 _PATH_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+class MemoryConfig(_Base):
+    tier: Literal["provisional", "consolidated"]
+    supersede: bool = False
+    namespace: Optional[str] = None
+
+    @field_validator("namespace")
+    @classmethod
+    def _safe_ns(cls, v):
+        if v is None:
+            return v
+        if not re.match(r"^[a-z_][a-z0-9_]*$", v):
+            raise ValueError(f"namespace must match ^[a-z_][a-z0-9_]*$, got {v!r}")
+        return v
+
+
 class PromoteColumn(_Base):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -583,6 +678,7 @@ class TargetConfig(_DsnResolvable):
     mode: Literal["overwrite", "append", "create_if_missing"] = "overwrite"
     source_tag: Optional[str] = None
     promote_metadata: list[PromoteColumn] = Field(default_factory=list)
+    memory: Optional[MemoryConfig] = None
     force_overwrite: bool = False
     delete_orphans: bool = False
     # ClickHouse-specific: override the default MergeTree() ORDER BY (id) engine
