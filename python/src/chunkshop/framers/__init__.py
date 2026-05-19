@@ -3,6 +3,7 @@ from chunkshop.framers.identity import IdentityFramer
 from chunkshop.framers.heading_boundary import HeadingBoundaryFramer
 from chunkshop.framers.regex_boundary import RegexBoundaryFramer
 from chunkshop.framers.jsonpath import JSONPathFramer
+from chunkshop.framers.session_episode import SessionEpisodeFramer
 
 
 def load_framer(cfg) -> DocFramer:
@@ -11,6 +12,7 @@ def load_framer(cfg) -> DocFramer:
         HeadingBoundaryFramerConfig,
         RegexBoundaryFramerConfig,
         JSONPathFramerConfig,
+        SessionEpisodeFramerConfig,
     )
 
     if isinstance(cfg, IdentityFramerConfig):
@@ -21,6 +23,8 @@ def load_framer(cfg) -> DocFramer:
         return RegexBoundaryFramer(cfg)
     if isinstance(cfg, JSONPathFramerConfig):
         return JSONPathFramer(cfg)
+    if isinstance(cfg, SessionEpisodeFramerConfig):
+        return SessionEpisodeFramer(cfg)
     raise ValueError(f"unknown framer type: {type(cfg).__name__}")
 
 
@@ -30,5 +34,6 @@ __all__ = [
     "HeadingBoundaryFramer",
     "RegexBoundaryFramer",
     "JSONPathFramer",
+    "SessionEpisodeFramer",
     "load_framer",
 ]
