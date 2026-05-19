@@ -70,10 +70,20 @@ class SessionStagingSource:
                      "OR staged_at > (consumed->>'realtime')::timestamptz")
             wm = "realtime"
         else:
-            where = ("WHERE coalesce(event_ts, staged_at) "
-                     f"< now() - interval '{int(self.cfg.min_age_seconds)} seconds' "
-                     "AND (coalesce(consumed->>'consolidated','') = '' "
-                     "OR staged_at > (consumed->>'consolidated')::timestamptz)")
+            # O1: session-level eligibility, not row-level. A session is
+            # consolidated when it is *quiet* (its newest event is older than
+            # min_age_seconds) AND has at least one not-yet-consolidated event.
+            # When eligible, ALL of the session's rows are emitted so
+            # MemorySink's destructive supersede rebuilds from full staging
+            # (a late turn must extend the session's memory, not erase it).
+            fq = f"{self.cfg.staging_schema}.{self.cfg.staging_table}"
+            where = (
+                f"WHERE session_id IN (SELECT session_id FROM {fq} "
+                f"GROUP BY session_id HAVING max(coalesce(event_ts, staged_at)) "
+                f"< now() - interval '{int(self.cfg.min_age_seconds)} seconds' "
+                f"AND (bool_or(coalesce(consumed->>'consolidated','') = '') "
+                f"OR max(staged_at) > "
+                f"min(nullif(consumed->>'consolidated','')::timestamptz)))")
             wm = "consolidated"
         q = _SELECT.format(schema=self.cfg.staging_schema,
                            table=self.cfg.staging_table, where=where)
