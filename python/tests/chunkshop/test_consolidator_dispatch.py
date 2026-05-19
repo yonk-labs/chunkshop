@@ -30,3 +30,11 @@ def test_callable_bad_module_raises_actionable():
     fn_cfg = CallableConsolidator(mode="callable", module="nope.not.here")
     with pytest.raises(RuntimeError, match="could not import"):
         build_consolidator(fn_cfg)
+
+
+def test_callable_bad_function_raises_actionable():
+    fn_cfg = CallableConsolidator(
+        mode="callable", module="json", function="this_does_not_exist"
+    )
+    with pytest.raises(RuntimeError, match="has no attribute"):
+        build_consolidator(fn_cfg)
