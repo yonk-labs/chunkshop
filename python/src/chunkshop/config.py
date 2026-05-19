@@ -301,6 +301,32 @@ SummarizerConfig = Annotated[
 ]
 
 
+# --- Consolidator config (origin-agnostic) ---
+
+
+class CallableConsolidator(_Base):
+    """Import a module lazily; call ``function(text, **kwargs) -> dict``.
+
+    The dict must be ``{"summary": str, "facts": [ {subject,predicate,object,
+    support_span,confidence}, ... ]}``. Mirrors CallableSummarizer.
+    """
+    mode: Literal["callable"]
+    module: str
+    function: str = "consolidate"
+    kwargs: dict = Field(default_factory=dict)
+
+
+class PassthroughConsolidator(_Base):
+    """Baseline: summary = episode text, facts = []. For A/B + no-LLM default off."""
+    mode: Literal["passthrough"]
+
+
+ConsolidatorConfig = Annotated[
+    Union[CallableConsolidator, PassthroughConsolidator],
+    Field(discriminator="mode"),
+]
+
+
 # --- Grouping strategies for HierarchicalSummaryChunker (SC-004) ---
 
 
@@ -347,6 +373,23 @@ class SummaryEmbedChunker(_Base):
         return self
 
 
+class ConsolidationChunker(_Base):
+    """Wrap a base chunker; emit episode chunks (summary-enriched embedded_content)
+    + atomic fact chunks (kind='fact') via a user-wired consolidator callable."""
+    type: Literal["consolidation"]
+    base: "ChunkerConfig"
+    consolidator: ConsolidatorConfig
+    fact_max_chars: int = Field(default=1200, ge=1)
+    max_chars: Optional[int] = None
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        if self.max_chars is not None:
+            return self.max_chars
+        getter = getattr(self.base, "effective_max_chars", None)
+        return getter() if getter else None
+
+
 class HierarchicalSummaryChunker(_Base):
     """Emit base (fine) chunks plus coarse summary chunks linked by group_id."""
     type: Literal["hierarchical_summary"]
@@ -389,6 +432,7 @@ ChunkerConfig = Annotated[
         HierarchyChunker,
         NeighborExpandChunker,
         SummaryEmbedChunker,
+        ConsolidationChunker,
         HierarchicalSummaryChunker,
         SemanticChunker,
     ],
@@ -400,6 +444,7 @@ HierarchyChunker.model_rebuild()
 NeighborExpandChunker.model_rebuild()
 SemanticChunker.model_rebuild()
 SummaryEmbedChunker.model_rebuild()
+ConsolidationChunker.model_rebuild()
 HierarchicalSummaryChunker.model_rebuild()
 
 

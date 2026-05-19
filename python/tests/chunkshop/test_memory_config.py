@@ -61,3 +61,28 @@ def test_memory_config_numeric_lower_bounds():
     cell3 = _min_cell()
     cell3["source"]["min_age_seconds"] = 0
     assert CellConfig(**cell3).source.min_age_seconds == 0
+
+
+def test_consolidation_chunker_parses():
+    cell = _min_cell()
+    cell["chunker"] = {
+        "type": "consolidation",
+        "base": {"type": "sentence_aware", "doc_type": "prose"},
+        "consolidator": {"mode": "callable", "module": "chunkshop.consolidators.extractive"},
+    }
+    c = CellConfig(**cell)
+    assert c.chunker.type == "consolidation"
+    assert c.chunker.consolidator.mode == "callable"
+    assert c.chunker.consolidator.function == "consolidate"
+    assert c.chunker.fact_max_chars == 1200
+
+
+def test_consolidation_passthrough_consolidator():
+    cell = _min_cell()
+    cell["chunker"] = {
+        "type": "consolidation",
+        "base": {"type": "sentence_aware", "doc_type": "prose"},
+        "consolidator": {"mode": "passthrough"},
+    }
+    c = CellConfig(**cell)
+    assert c.chunker.consolidator.mode == "passthrough"
