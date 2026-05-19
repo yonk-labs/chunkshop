@@ -101,3 +101,15 @@ def test_consolidation_if_oversize_requires_ceiling():
     # with an explicit max_chars ceiling it is accepted
     cell["chunker"]["max_chars"] = 5000
     assert CellConfig(**cell).chunker.max_chars == 5000
+
+
+def test_target_memory_block():
+    c = CellConfig(**_min_cell(memory={"tier": "consolidated", "supersede": True}))
+    assert c.target.memory.tier == "consolidated"
+    assert c.target.memory.supersede is True
+    assert c.target.memory.namespace is None
+
+
+def test_target_without_memory_block_is_none():
+    c = CellConfig(**_min_cell())
+    assert c.target.memory is None

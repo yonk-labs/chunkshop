@@ -616,6 +616,21 @@ _ALLOWED_PROMOTE_TYPES = {"text", "text[]", "int", "bigint", "boolean", "jsonb",
 _PATH_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+class MemoryConfig(_Base):
+    tier: Literal["provisional", "consolidated"]
+    supersede: bool = False
+    namespace: Optional[str] = None
+
+    @field_validator("namespace")
+    @classmethod
+    def _safe_ns(cls, v):
+        if v is None:
+            return v
+        if not re.match(r"^[a-z_][a-z0-9_]*$", v):
+            raise ValueError(f"namespace must match ^[a-z_][a-z0-9_]*$, got {v!r}")
+        return v
+
+
 class PromoteColumn(_Base):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -661,6 +676,7 @@ class TargetConfig(_DsnResolvable):
     mode: Literal["overwrite", "append", "create_if_missing"] = "overwrite"
     source_tag: Optional[str] = None
     promote_metadata: list[PromoteColumn] = Field(default_factory=list)
+    memory: Optional[MemoryConfig] = None
     force_overwrite: bool = False
     delete_orphans: bool = False
     # ClickHouse-specific: override the default MergeTree() ORDER BY (id) engine
