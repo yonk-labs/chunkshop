@@ -86,3 +86,18 @@ def test_consolidation_passthrough_consolidator():
     }
     c = CellConfig(**cell)
     assert c.chunker.consolidator.mode == "passthrough"
+
+
+def test_consolidation_if_oversize_requires_ceiling():
+    cell = _min_cell()
+    cell["chunker"] = {
+        "type": "consolidation",
+        "base": {"type": "fixed_overlap"},  # no max_chars, so effective_max_chars() is None
+        "consolidator": {"mode": "passthrough"},
+        "if_oversize": {"type": "fixed_overlap"},
+    }
+    with pytest.raises(ValidationError, match="effective ceiling"):
+        CellConfig(**cell)
+    # with an explicit max_chars ceiling it is accepted
+    cell["chunker"]["max_chars"] = 5000
+    assert CellConfig(**cell).chunker.max_chars == 5000

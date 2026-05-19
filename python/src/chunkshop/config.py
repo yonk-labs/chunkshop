@@ -389,6 +389,14 @@ class ConsolidationChunker(_Base):
         getter = getattr(self.base, "effective_max_chars", None)
         return getter() if getter else None
 
+    @model_validator(mode="after")
+    def _if_oversize_requires_ceiling(self):
+        if self.if_oversize is not None and self.effective_max_chars() is None:
+            raise ValueError(
+                "consolidation with if_oversize set must have an effective ceiling"
+            )
+        return self
+
 
 class HierarchicalSummaryChunker(_Base):
     """Emit base (fine) chunks plus coarse summary chunks linked by group_id."""
