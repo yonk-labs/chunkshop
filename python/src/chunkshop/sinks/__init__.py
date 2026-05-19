@@ -8,6 +8,10 @@ def load_sink(cfg, embed_dim: int) -> Sink:
     dsn_kwargs = cfg.backend_dsn_kwargs()
     if cfg.type == "postgres":
         backend = load_backend(name="postgres", **dsn_kwargs)
+        from chunkshop.config import MemoryConfig
+        if isinstance(getattr(cfg, "memory", None), MemoryConfig):
+            from chunkshop.sinks.memory_pg import MemorySink
+            return MemorySink(cfg=cfg, backend=backend, embed_dim=embed_dim)
         return PgSink(cfg=cfg, backend=backend, embed_dim=embed_dim)
     if cfg.type == "sqlite":
         from chunkshop.sinks.sqlite import SqliteSink
@@ -24,4 +28,4 @@ def load_sink(cfg, embed_dim: int) -> Sink:
     raise ValueError(f"unknown target type: {cfg.type!r}")
 
 
-__all__ = ["Sink", "PgSink", "load_sink"]
+__all__ = ["Sink", "PgSink", "MemorySink", "load_sink"]
