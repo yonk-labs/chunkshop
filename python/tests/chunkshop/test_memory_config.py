@@ -46,3 +46,18 @@ def test_session_episode_framer_defaults():
     assert c.framer.max_gap_seconds == 1800
     assert c.framer.max_turns == 40
     assert c.framer.boundary_on_tool is True
+
+
+def test_memory_config_numeric_lower_bounds():
+    cell = _min_cell()
+    cell["framer"] = {"type": "session_episode", "max_turns": 0}
+    with pytest.raises(ValidationError):
+        CellConfig(**cell)
+    cell2 = _min_cell()
+    cell2["source"]["min_age_seconds"] = -1
+    with pytest.raises(ValidationError):
+        CellConfig(**cell2)
+    # min_age_seconds == 0 is allowed
+    cell3 = _min_cell()
+    cell3["source"]["min_age_seconds"] = 0
+    assert CellConfig(**cell3).source.min_age_seconds == 0

@@ -88,8 +88,8 @@ class SessionStagingSource(_DsnResolvable):
     staging_table: str
     staging_schema: str = "public"
     mode: Literal["realtime", "consolidate"]
-    min_age_seconds: int = 3600
-    max_sessions: Optional[int] = None
+    min_age_seconds: int = Field(default=3600, ge=0)
+    max_sessions: Optional[int] = Field(default=None, ge=1)
 
     @field_validator("staging_table", "staging_schema")
     @classmethod
@@ -452,9 +452,9 @@ class JSONPathFramerConfig(_Base):
 
 class SessionEpisodeFramerConfig(_Base):
     type: Literal["session_episode"] = "session_episode"
-    max_gap_seconds: int = 1800
-    max_turns: int = 40
-    max_words: int = 1200
+    max_gap_seconds: int = Field(default=1800, ge=1)
+    max_turns: int = Field(default=40, ge=1)
+    max_words: int = Field(default=1200, ge=50)
     boundary_on_tool: bool = True
 
 
