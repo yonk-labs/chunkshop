@@ -22,11 +22,15 @@ class MemorySink(PgSink):
         self._superseded: set[str] = set()
         self._seq_base: dict[str, int] = {}
 
+    def _row_id(self, doc_id: str, seq_num: int) -> str:
+        return f"{self._namespace}::{doc_id}::{seq_num}"
+
     def _stamp(self, chunks: list[Chunk]) -> list[Chunk]:
         out = []
         for c in chunks:
             m = {k: v for k, v in c.metadata.items() if not k.startswith("_")}
             m.setdefault("kind", "episode")
+            m.setdefault("retracted", False)
             m["tier"] = self._mem.tier
             m["namespace"] = self._namespace
             m["recorded_at"] = self._recorded_at

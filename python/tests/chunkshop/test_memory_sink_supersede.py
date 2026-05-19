@@ -44,19 +44,6 @@ def _tc(tier, supersede, source_tag="ns1"):
 def _emb(n): return np.array([[0.1, 0.2, 0.3]] * n)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "cross-namespace id collision: PgSink builds id = f'{doc_id}::{seq_num}' "
-        "which is identical across source_tags for the same doc_id+seq_num. "
-        "The second write (ns2) upserts over ns1's row; source is write-once so "
-        "ns2 row is lost. Fix: MemorySink should namespace-qualify the primary key "
-        "(e.g. id = f'{source_tag}::{doc_id}::{seq_num}') or the table unique "
-        "constraint should be (source, doc_id, seq_num) with id as a separate "
-        "surrogate. Least-invasive fix: override id construction in MemorySink. "
-        "Pending schema decision — tracked as Task 12 concern."
-    ),
-    strict=True,
-)
 def test_consolidated_supersedes_provisional_scoped_by_source(ensure_pg):
     prov = load_sink(_tc("provisional", False), embed_dim=3)
     prov.create_table()
@@ -87,20 +74,6 @@ def test_double_consolidate_is_idempotent(ensure_pg):
         assert cur.fetchone()[0] == 1
 
 
-@pytest.mark.xfail(
-    reason=(
-        "MemorySink._stamp() never initialises retracted=False in chunk metadata "
-        "for fact-kind chunks. The promoted 'retracted' column gets NULL on insert "
-        "because _jsonb_path_get(metadata, 'retracted') returns None when the key "
-        "is absent. Fix: _stamp() should set m.setdefault('retracted', False) for "
-        "fact chunks (or unconditionally for all chunks). The _invalidate UPDATE "
-        "correctly uses COALESCE(retracted, false)=false so the guard still fires, "
-        "but the newly-inserted fact row's promoted column reads NULL instead of "
-        "False, breaking the post-condition check. Pending fix — tracked as "
-        "Task 12 concern (defect #2)."
-    ),
-    strict=True,
-)
 def test_soft_invalidate_retracts_older_contradicting_fact(ensure_pg):
     cons = load_sink(_tc("consolidated", True), embed_dim=3)
     cons.create_table()
