@@ -90,6 +90,8 @@ The pipeline is `Source → Chunker → Embedder → Extractor → Sink`. Every 
 
 No in-flight implementation plans. The seven plans for v0.2.0 features (metadata extractors, semantic chunker, summary-embed, DocFramer, schema-flexibility, chunker `max_chars` hotfix, bakeoff CLI) all shipped and were moved to `archive/docs/superpowers/plans/` for historical reference. Mission briefs in `skill-output/mission-brief/` (gitignored) sit alongside the now-archived plans.
 
+**Agent-memory SP-A** (staging API, `SessionStagingSource`, `SessionEpisodeFramer`, `ConsolidationChunker`, `MemorySink`) shipped 2026-05-19 and was merged into `main` (`--no-ff`, 15/15 tasks, 365 tests). Its plan is archived; the design spec is retained at `docs/superpowers/specs/2026-05-19-chunkshop-memory-primitives-sp-a-design.md`. Per that spec the remaining sub-projects are **out of chunkshop scope**: SP-B (realtime reader / graph) is pg-raggraph's job, SP-C (orchestrator) assumes an external scheduler, SP-D (eval harness) is separate. Do not start SP-B here without an explicit decision to override the spec's scoping.
+
 When new work starts, run `/mission-brief` then `superpowers:writing-plans` to produce the next plan into `docs/superpowers/plans/`. Check `git worktree list` for any in-flight feature branches before assuming the working state is `main`.
 
 ## Sibling repos this one interacts with
