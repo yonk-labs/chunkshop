@@ -13,6 +13,21 @@ from chunkshop.chunkers.base import Chunk
 from chunkshop.sinks.pg import PgSink
 
 
+def _iso(ts):
+    """Coerce an epoch (int/float, as emitted by SessionStagingSource) to an
+    ISO-8601 UTC string for the timestamptz promote columns. The framer needs
+    `ts` numeric for gap arithmetic, but `effective_from`/`effective_to` are
+    timestamptz; ISO strings adapt to timestamptz (same path as recorded_at)
+    and stay JSON-serializable for the metadata jsonb column."""
+    if ts is None or isinstance(ts, str):
+        return ts
+    if isinstance(ts, (int, float)):
+        return _dt.datetime.fromtimestamp(ts, tz=_dt.timezone.utc).isoformat()
+    if isinstance(ts, _dt.datetime):
+        return ts.isoformat()
+    return ts
+
+
 class MemorySink(PgSink):
     def __init__(self, cfg, backend, embed_dim: int):
         super().__init__(cfg=cfg, backend=backend, embed_dim=embed_dim)
@@ -34,7 +49,7 @@ class MemorySink(PgSink):
             m["tier"] = self._mem.tier
             m["namespace"] = self._namespace
             m["recorded_at"] = self._recorded_at
-            m.setdefault("effective_from", m.get("episode_end_ts"))
+            m.setdefault("effective_from", _iso(m.get("episode_end_ts")))
             out.append(replace(c, metadata=m))
         return out
 
@@ -68,9 +83,9 @@ class MemorySink(PgSink):
                 m = c.metadata
                 cur.execute(
                     f"UPDATE {self._fq()} SET retracted = true, "
-                    f"retracted_at = now(), effective_to = %s "
+                    f"retracted_at = now(), effective_to = %s::timestamptz "
                     f"WHERE source = %s AND subject = %s AND predicate = %s "
-                    f"AND effective_from < %s "
+                    f"AND effective_from < %s::timestamptz "
                     f"AND coalesce(retracted, false) = false",
                     (m.get("effective_from"), self.cfg.source_tag,
                      m.get("subject"), m.get("predicate"),

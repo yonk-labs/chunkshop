@@ -1,0 +1,4 @@
+{"session_id": "s1", "seq": 1, "role": "user", "content": "We use Redis for the job queue.", "ts": "2026-01-01T10:00:00+00:00"}
+{"session_id": "s1", "seq": 2, "role": "assistant", "content": "Understood, Redis backs the queue.", "ts": "2026-01-01T10:00:05+00:00"}
+{"session_id": "s2", "seq": 1, "role": "user", "content": "We migrated the queue from Redis to Postgres.", "ts": "2026-03-01T09:00:00+00:00"}
+{"session_id": "s2", "seq": 2, "role": "assistant", "content": "Confirmed, Postgres LISTEN/NOTIFY now backs the queue.", "ts": "2026-03-01T09:00:04+00:00"}

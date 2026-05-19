@@ -7,7 +7,7 @@ from chunkshop.sources.base import Document
 
 _SELECT = (
     "SELECT event_id, session_id, seq, role, content, tool, outcome,"
-    " extract(epoch FROM coalesce(event_ts, staged_at)) "
+    " extract(epoch FROM coalesce(event_ts, staged_at))::double precision "
     "FROM {schema}.{table} {where} ORDER BY session_id, seq NULLS LAST"
 )
 
@@ -88,7 +88,7 @@ class SessionStagingSource:
             if sessions:
                 cur.execute(
                     f"UPDATE {self.cfg.staging_schema}.{self.cfg.staging_table} "
-                    f"SET consumed = consumed || jsonb_build_object(%s, %s::text) "
+                    f"SET consumed = consumed || jsonb_build_object(%s::text, %s::text) "
                     f"WHERE session_id = ANY(%s)",
                     (wm, watermark.isoformat(), list(sessions)))
                 conn.commit()
