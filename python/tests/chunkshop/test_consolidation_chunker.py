@@ -66,3 +66,12 @@ def test_fact_support_span_length_capped():
     ch = load_chunker(cfg)
     fa = next(c for c in ch.chunk(_episode_doc()) if c.metadata["kind"] == "fact")
     assert len(fa.embedded_content) <= 50 and fa.metadata["truncated"] is True
+
+
+def test_passthrough_consolidator_emits_episode_only():
+    ch = load_chunker(_cfg(PassthroughConsolidator(mode="passthrough")))
+    chunks = ch.chunk(_episode_doc())
+    assert [c.metadata["kind"] for c in chunks] == ["episode"]
+    ep = chunks[0]
+    assert ep.embedded_content == ep.original_content  # summary == episode text
+    assert ep.metadata["consolidator"] == "passthrough"

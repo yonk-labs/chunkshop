@@ -390,10 +390,12 @@ class ConsolidationChunker(_Base):
         return getter() if getter else None
 
     @model_validator(mode="after")
-    def _if_oversize_requires_ceiling(self):
-        if self.if_oversize is not None and self.effective_max_chars() is None:
+    def _if_oversize_unsupported(self):
+        if self.if_oversize is not None:
             raise ValueError(
-                "consolidation with if_oversize set must have an effective ceiling"
+                "if_oversize is not supported on the consolidation chunker: "
+                "episode embedded_content is a bounded summary and facts are "
+                "length-capped via fact_max_chars. Remove if_oversize."
             )
         return self
 

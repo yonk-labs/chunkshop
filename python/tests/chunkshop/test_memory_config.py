@@ -88,19 +88,24 @@ def test_consolidation_passthrough_consolidator():
     assert c.chunker.consolidator.mode == "passthrough"
 
 
-def test_consolidation_if_oversize_requires_ceiling():
+def test_consolidation_rejects_if_oversize():
+    from pydantic import ValidationError
     cell = _min_cell()
     cell["chunker"] = {
         "type": "consolidation",
-        "base": {"type": "fixed_overlap"},  # no max_chars, so effective_max_chars() is None
+        "base": {"type": "sentence_aware", "doc_type": "prose"},
         "consolidator": {"mode": "passthrough"},
-        "if_oversize": {"type": "fixed_overlap"},
+        "if_oversize": {"type": "fixed_overlap", "window_words": 100, "step_words": 10},
     }
-    with pytest.raises(ValidationError, match="effective ceiling"):
+    with pytest.raises(ValidationError, match="if_oversize is not supported"):
         CellConfig(**cell)
-    # with an explicit max_chars ceiling it is accepted
+    # even WITH a max_chars ceiling, if_oversize is still rejected
     cell["chunker"]["max_chars"] = 5000
-    assert CellConfig(**cell).chunker.max_chars == 5000
+    with pytest.raises(ValidationError, match="if_oversize is not supported"):
+        CellConfig(**cell)
+    # without if_oversize it parses fine
+    del cell["chunker"]["if_oversize"]
+    assert CellConfig(**cell).chunker.type == "consolidation"
 
 
 def test_target_memory_block():

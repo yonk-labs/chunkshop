@@ -28,6 +28,10 @@ class ConsolidationChunker:
         self._mode = cfg.consolidator.mode
 
     def chunk(self, doc: Document) -> list[Chunk]:
+        # base.chunk() is intentionally OUTSIDE the O4 try below: a base-chunker
+        # failure is a config error (wrong model/doc_type) the user must see,
+        # not a degradable per-session consolidator failure. O4 covers only the
+        # user-wired consolidator callable.
         base_chunks = self.base.chunk(doc)
         episode_text = "\n".join(c.original_content for c in base_chunks) or doc.content
         meta = _strip_transient(dict(doc.metadata or {}))
