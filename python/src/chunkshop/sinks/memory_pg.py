@@ -9,8 +9,6 @@ from __future__ import annotations
 import datetime as _dt
 from dataclasses import replace
 
-import numpy as np
-
 from chunkshop.chunkers.base import Chunk
 from chunkshop.sinks.pg import PgSink
 
@@ -22,6 +20,7 @@ class MemorySink(PgSink):
         self._namespace = self._mem.namespace or cfg.source_tag
         self._recorded_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
         self._superseded: set[str] = set()
+        self._seq_base: dict[str, int] = {}
 
     def _stamp(self, chunks: list[Chunk]) -> list[Chunk]:
         out = []
@@ -37,6 +36,12 @@ class MemorySink(PgSink):
 
     def write_document(self, doc_id, chunks, embeddings, tags_per_chunk) -> None:
         chunks = self._stamp(chunks)
+        base = self._seq_base.get(doc_id, 0)
+        chunks = [replace(c, seq_num=base + i) for i, c in enumerate(chunks)]
+        self._seq_base[doc_id] = base + len(chunks)
+        # NOTE: supersede DELETE, super().write_document insert, and _invalidate
+        # run as three separate transactions (not atomic). This is intentional
+        # and crash-safe: delete-then-insert is an idempotent rebuild on rerun.
         if (self._mem.supersede and self._mem.tier == "consolidated"
                 and doc_id not in self._superseded):
             with self.backend.connect() as conn, conn.cursor() as cur:
@@ -50,7 +55,8 @@ class MemorySink(PgSink):
 
     def _invalidate(self, chunks: list[Chunk]) -> None:
         facts = [c for c in chunks if c.metadata.get("kind") == "fact"
-                 and c.metadata.get("subject") and c.metadata.get("predicate")]
+                 and c.metadata.get("subject") and c.metadata.get("predicate")
+                 and c.metadata.get("effective_from") is not None]
         if not facts:
             return
         with self.backend.connect() as conn, conn.cursor() as cur:

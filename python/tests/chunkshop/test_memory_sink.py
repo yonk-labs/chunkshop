@@ -41,6 +41,30 @@ def _target(**ov):
     return TargetConfig(**k)
 
 
+def test_multi_episode_session_no_seq_collision(ensure_pg):
+    import numpy as np
+    sink = load_sink(_target(), embed_dim=3)
+    sink.create_table()
+    ep1 = [Chunk("s1", 0, "episode one", "episode one",
+                 {"session_id": "s1", "kind": "episode", "frame_seq": 0}),
+           Chunk("s1", 1, "fact a", "fact a",
+                 {"session_id": "s1", "kind": "fact", "subject": "a",
+                  "predicate": "p", "object": "b"})]
+    ep2 = [Chunk("s1", 0, "episode two", "episode two",
+                 {"session_id": "s1", "kind": "episode", "frame_seq": 1})]
+    sink.write_document("s1", ep1, np.array([[0.1, 0.2, 0.3]] * 2), [[], []])
+    sink.write_document("s1", ep2, np.array([[0.1, 0.2, 0.3]]), [[]])
+    with psycopg.connect(ensure_pg) as c, c.cursor() as cur:
+        cur.execute("SELECT count(*), count(distinct id) "
+                    "FROM chunkshop_test_memory.mem")
+        total, distinct = cur.fetchone()
+        cur.execute("SELECT original_content FROM chunkshop_test_memory.mem "
+                    "WHERE kind='episode' ORDER BY original_content")
+        eps = [r[0] for r in cur.fetchall()]
+    assert total == 3 and distinct == 3       # ep1 + its fact + ep2, none overwritten
+    assert eps == ["episode one", "episode two"]   # BOTH episodes survived
+
+
 def test_memorysink_returned_and_stamps(ensure_pg):
     sink = load_sink(_target(), embed_dim=3)
     assert sink.__class__.__name__ == "MemorySink"
