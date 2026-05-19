@@ -36,3 +36,28 @@ def test_events_sorted_by_seq_then_ts():
     src = SessionStagingSource(_cfg("realtime"))
     doc = list(src._documents_from_rows(rows))[0]
     assert [e["content"] for e in doc.metadata["_session_events"]] == ["first", "second"]
+
+
+def test_max_sessions_caps_yielded_sessions():
+    from chunkshop.config import SessionStagingSource as Cfg
+    from chunkshop.sources.session_staging import SessionStagingSource
+    cfg = Cfg(type="session_staging", dsn="postgresql://x/y",
+              staging_table="evt", staging_schema="public",
+              mode="consolidate", max_sessions=1)
+    rows = [("e1", "s1", 1, "user", "a", None, None, 1.0),
+            ("e2", "s2", 1, "user", "b", None, None, 2.0),
+            ("e3", "s3", 1, "user", "c", None, None, 3.0)]
+    docs = list(SessionStagingSource(cfg)._documents_from_rows(rows))
+    assert len(docs) == 1
+    assert docs[0].id == "s1"
+
+
+def test_max_sessions_none_yields_all():
+    from chunkshop.config import SessionStagingSource as Cfg
+    from chunkshop.sources.session_staging import SessionStagingSource
+    cfg = Cfg(type="session_staging", dsn="postgresql://x/y",
+              staging_table="evt", mode="consolidate")
+    rows = [("e1", "s1", 1, "user", "a", None, None, 1.0),
+            ("e2", "s2", 1, "user", "b", None, None, 2.0)]
+    docs = list(SessionStagingSource(cfg)._documents_from_rows(rows))
+    assert {d.id for d in docs} == {"s1", "s2"}
