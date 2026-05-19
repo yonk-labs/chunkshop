@@ -57,3 +57,26 @@ def test_prune_staging_only_consolidated(ensure_pg):
         c.commit()
     removed = prune_staging(dsn, older_than="2020-01-01", only_consolidated=True, **T)
     assert removed == 1 and _count(dsn) == 0
+
+
+def test_event_id_stable_when_no_seq_or_ts(ensure_pg):
+    from chunkshop.memory.staging import _event_id
+    # both None -> empty disambiguator, deterministic, and NOT equal to the
+    # string-"None" variant
+    a = _event_id("s1", None, None, "hello")
+    b = _event_id("s1", None, None, "hello")
+    c = _event_id("s1", None, "None", "hello")
+    assert a == b and a != c
+
+
+def test_prune_all_when_not_only_consolidated(ensure_pg):
+    dsn = ensure_pg
+    ensure_staging_table(dsn, **T)
+    stage_event(dsn, session_id="s1", role="user", content="x", ts=None, **T)
+    with psycopg.connect(dsn) as cc, cc.cursor() as cur:
+        cur.execute("UPDATE chunkshop_test_memory.evt SET staged_at='2000-01-01'")
+        cc.commit()
+    # not-only-consolidated: deletes by age regardless of consumed marker
+    removed = prune_staging(dsn, older_than="2020-01-01",
+                            only_consolidated=False, **T)
+    assert removed == 1 and _count(dsn) == 0

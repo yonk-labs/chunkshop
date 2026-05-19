@@ -18,7 +18,8 @@ def _ident(schema: str, table: str) -> sql.Composed:
 
 
 def _event_id(session_id: str, seq, ts, content: str) -> str:
-    key = f"{session_id}\x00{seq if seq is not None else ts}\x00{content}"
+    disambig = seq if seq is not None else (ts if ts is not None else "")
+    key = f"{session_id}\x00{disambig}\x00{content}"
     return hashlib.sha1(key.encode("utf-8")).hexdigest()
 
 
@@ -50,7 +51,7 @@ def ensure_staging_table(dsn: str, *, table: str, schema: str = "public") -> Non
 
 
 def stage_event(dsn: str, *, session_id: str, role: str, content: str,
-                 ts=None, seq: Optional[int] = None, tool: Optional[str] = None,
+                 ts: Optional[object] = None, seq: Optional[int] = None, tool: Optional[str] = None,
                  outcome: Optional[str] = None, event_id: Optional[str] = None,
                  metadata: Optional[dict] = None,
                  table: str, schema: str = "public") -> str:
@@ -83,6 +84,9 @@ def stage_events(dsn: str, events: list[dict], *, table: str, schema: str = "pub
             " ON CONFLICT (event_id) DO NOTHING"
         ).format(fq=fq), rows)
         conn.commit()
+    # Returns events submitted, NOT necessarily inserted: ON CONFLICT DO NOTHING
+    # silently skips duplicate event_ids. Consumers must not treat this as an
+    # inserted-row count.
     return len(rows)
 
 
