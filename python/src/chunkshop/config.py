@@ -450,12 +450,21 @@ class JSONPathFramerConfig(_Base):
         return v
 
 
+class SessionEpisodeFramerConfig(_Base):
+    type: Literal["session_episode"] = "session_episode"
+    max_gap_seconds: int = 1800
+    max_turns: int = 40
+    max_words: int = 1200
+    boundary_on_tool: bool = True
+
+
 FramerConfig = Annotated[
     Union[
         IdentityFramerConfig,
         HeadingBoundaryFramerConfig,
         RegexBoundaryFramerConfig,
         JSONPathFramerConfig,
+        SessionEpisodeFramerConfig,
     ],
     Field(discriminator="type"),
 ]

@@ -36,3 +36,13 @@ def test_session_staging_rejects_unknown_mode():
     cell["source"]["mode"] = "whenever"
     with pytest.raises(ValidationError):
         CellConfig(**cell)
+
+
+def test_session_episode_framer_defaults():
+    cell = _min_cell()
+    cell["framer"] = {"type": "session_episode"}
+    c = CellConfig(**cell)
+    assert c.framer.type == "session_episode"
+    assert c.framer.max_gap_seconds == 1800
+    assert c.framer.max_turns == 40
+    assert c.framer.boundary_on_tool is True
