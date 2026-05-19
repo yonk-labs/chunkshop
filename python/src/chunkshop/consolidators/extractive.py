@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 _SENT = re.compile(r"(?<=[.!?])\s+")
-_TAG = re.compile(r"^\[[^\]]+\]\s*")
+_TAG = re.compile(r"^\s*\[[^\]]+\]\s*")
 
 
 def _sentences(text: str) -> list[str]:
