@@ -2,6 +2,79 @@
 
 ## Unreleased
 
+## 0.4.4 — 2026-05-19
+
+Agent memory (SP-A) lands, plus consumer-ergonomics fixes that came out
+of integrating the new memory surface with downstream tools.
+
+### Agent memory primitives (SP-A)
+
+- **`chunkshop.memory`** — staging API (`stage_event`, `stage_events`,
+  `ensure_staging_table`, `prune_staging`), `SessionStagingSource`,
+  `SessionEpisodeFramer`, `ConsolidationChunker`, `MemorySink` with
+  `tier` (`provisional`/`consolidated`), supersede, and soft-invalidate
+  semantics. Writes to `agent_memory.memory` with the pg-raggraph fact
+  contract (`subject`/`predicate`/`object`/`support_span`/`confidence`/
+  `effective_from`/`effective_to`/`retracted`/`retracted_at`/`extractor`/
+  `namespace`). Design spec: `docs/superpowers/specs/2026-05-19-chunkshop-memory-primitives-sp-a-design.md`.
+- **Two-cell pattern.** `memory/realtime.yaml` (run frequently) writes
+  `tier='provisional'`; `memory/consolidate.yaml` (run nightly via
+  external cron) segments quiet sessions into episodes, extracts facts
+  via a user-wired callable consolidator, and supersedes the provisional
+  rows for that session. No daemon; same scheduler model as every other
+  chunkshop pattern.
+- **`chunkshop.memory.read_pre_chunked(dsn)`** — read the consolidated
+  store back out in the shape pg-raggraph's `GraphRAG.ingest_records()`
+  accepts. Episode rows become `pre_chunked` entries; fact triples
+  become `known_relationships` + synthesised `known_entities`. O2
+  (consolidated-wins) and retracted-aware defaults applied at the
+  read layer. End-to-end example: `docs/samples/memory-to-pgraggraph/`.
+- **Critical correctness fix (O1).** Consolidate now selects whole
+  sessions when a session has any new event, not at row granularity.
+  Original implementation row-filtered: a late turn arriving after
+  a session was already consolidated would re-select only that row,
+  and `MemorySink`'s destructive supersede would replace the prior
+  consolidated memory with just the fragment. The spec-required O1
+  test caught this before merge; see `python/tests/chunkshop/test_memory_resilience.py`.
+
+### Ergonomics / packaging
+
+- **Lazy backend imports** in `chunkshop.sources`. `pip install chunkshop`
+  with no extras no longer drags in `pymysql` / `sqlite-vec` /
+  `clickhouse-connect` / `boto3` at import time — the four optional
+  backend modules are imported only inside their `load_source`
+  dispatch branch (mirrors the pattern `chunkshop.sinks` already used).
+  Closes #7.
+- **NDCG@k in bakeoff scorer.** `score_query()` emits `ndcg_at_K`
+  alongside `recall_at_K` and `mrr`, single-relevant-item formulation
+  (IDCG=1, so NDCG@k = 1/log2(rank+1) when gold ≤ k, else 0). No
+  external deps. Aggregates flow through unchanged. Closes #8.
+
+### Rust
+
+- NDCG@k parity in `rust/chunkshop/src/bakeoff/score.rs` (mirrors the
+  Python addition; same single-relevant-item formula, same key shape).
+- Lazy-import equivalent is already idiomatic Rust via Cargo features
+  (`#[cfg(feature = "source")]` and friends on every backend module).
+
+### Internal
+
+- Soft-invalidate / `_invalidate` SQL gained explicit `::timestamptz`
+  casts so ISO-timestamp params adapt unambiguously against the
+  `timestamptz` column. `extract(epoch FROM ...)::double precision`
+  in the staging source so the framer keeps numeric gap arithmetic
+  while metadata stays JSON-serialisable.
+- Resilience-test coverage extended: O1 late-event rebuild and O3
+  crash-resume (per-session commit, watermark-after-yield) now have
+  dedicated tests.
+- Tracked: chunkshop#9 (RM-A — Rust port of SP-A; latent until the
+  Rust wave runs).
+
+### Issue references
+
+- Closed: #7 (lazy backend imports), #8 (NDCG in bakeoff scorer).
+- Filed: #9 (RM-A, scope only).
+
 ## 0.4.3 — 2026-05-16
 
 Batteries-included ergonomics for embedding chunkshop as a library and
