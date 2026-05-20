@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::config::{
     HeadingBoundaryFramerConfig, IdentityFramerConfig, JsonPathFramerConfig,
-    RegexBoundaryFramerConfig,
+    RegexBoundaryFramerConfig, SessionEpisodeFramerConfig,
 };
 use crate::sources::Document;
 
@@ -311,6 +311,112 @@ impl FramerImpl for JsonPathFramer {
     }
 }
 
+// --- RM-A Task 6: SessionEpisodeFramer --------------------------------------
+
+/// Stateless episode segmenter for agent-memory sessions. Reads
+/// `metadata._session_events` (set by `SessionStagingSource`) and splits the
+/// session into episodes on the first of: time gap > max_gap_seconds,
+/// turn count >= max_turns, word count >= max_words, or (boundary_on_tool
+/// and a tool event follows a non-tool event). Mirror of Python
+/// `chunkshop.framers.session_episode.SessionEpisodeFramer`.
+pub struct SessionEpisodeFramer {
+    cfg: SessionEpisodeFramerConfig,
+}
+
+impl SessionEpisodeFramer {
+    pub fn new(cfg: SessionEpisodeFramerConfig) -> Self {
+        Self { cfg }
+    }
+}
+
+impl FramerImpl for SessionEpisodeFramer {
+    fn frame(&self, raw: &Document) -> Result<Vec<Document>> {
+        let events: &[Value] = match raw.metadata.get("_session_events") {
+            Some(Value::Array(a)) => a.as_slice(),
+            _ => return Ok(vec![]),
+        };
+        if events.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Build episodes by walking events and inserting boundaries.
+        let mut episodes: Vec<Vec<&Value>> = vec![Vec::new()];
+        let mut words: u32 = 0;
+        for e in events {
+            let cur = episodes.last_mut().unwrap();
+            if let Some(prev) = cur.last().copied() {
+                let prev_ts = prev.get("ts").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let this_ts = e.get("ts").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let gap = (this_ts - prev_ts).max(0.0) as u64;
+                let prev_tool = prev.get("tool").map(|v| !v.is_null()).unwrap_or(false);
+                let this_tool = e.get("tool").map(|v| !v.is_null()).unwrap_or(false);
+                let tool_boundary = self.cfg.boundary_on_tool && this_tool && !prev_tool;
+                if gap > self.cfg.max_gap_seconds
+                    || cur.len() as u32 >= self.cfg.max_turns
+                    || words >= self.cfg.max_words
+                    || tool_boundary
+                {
+                    episodes.push(Vec::new());
+                    words = 0;
+                }
+            }
+            episodes.last_mut().unwrap().push(e);
+            let content = e.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            words += content.split_whitespace().count() as u32;
+        }
+
+        // Materialize Documents for non-empty episodes.
+        let base_meta: serde_json::Map<String, Value> = raw
+            .metadata
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .filter(|(k, _)| k.as_str() != "_session_events")
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut out = Vec::new();
+        let mut frame_seq: u64 = 0;
+        for evs in episodes.into_iter().filter(|e| !e.is_empty()) {
+            let mut lines = Vec::with_capacity(evs.len());
+            for ev in &evs {
+                let role = ev.get("role").and_then(|v| v.as_str()).unwrap_or("event");
+                let tool = ev.get("tool").and_then(|v| v.as_str());
+                let tag = match tool {
+                    Some(t) => format!("{role}/{t}"),
+                    None => role.to_string(),
+                };
+                let content = ev.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                lines.push(format!("[{tag}] {content}"));
+            }
+            let start_ts = evs.first().and_then(|e| e.get("ts")).cloned().unwrap_or(Value::Null);
+            let end_ts = evs.last().and_then(|e| e.get("ts")).cloned().unwrap_or(Value::Null);
+            let turn_span = evs.len() as u64;
+
+            let mut m = base_meta.clone();
+            m.insert("framer".into(), Value::String("session_episode".into()));
+            m.insert("frame_seq".into(), Value::from(frame_seq));
+            m.insert("episode_start_ts".into(), start_ts);
+            m.insert("episode_end_ts".into(), end_ts);
+            m.insert("episode_turn_span".into(), Value::from(turn_span));
+            m.insert(
+                "_episode_events".into(),
+                Value::Array(evs.into_iter().cloned().collect()),
+            );
+
+            out.push(Document {
+                id: raw.id.clone(),
+                content: lines.join("\n"),
+                title: raw.title.clone(),
+                metadata: Value::Object(m),
+            });
+            frame_seq += 1;
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,5 +474,143 @@ mod tests {
         assert_eq!(frames[1].title.as_deref(), Some("B"));
         assert_eq!(frames[0].id, "d#0");
         assert_eq!(frames[1].id, "d#1");
+    }
+
+    // --- RM-A Task 6: SessionEpisodeFramer ---------------------------------
+
+    fn session_doc(events: Vec<Value>) -> Document {
+        Document {
+            id: "s1".into(),
+            content: String::new(),
+            title: None,
+            metadata: json!({ "session_id": "s1", "_session_events": events }),
+        }
+    }
+
+    fn default_se_cfg() -> SessionEpisodeFramerConfig {
+        SessionEpisodeFramerConfig {
+            max_gap_seconds: 1800,
+            max_turns: 40,
+            max_words: 1200,
+            boundary_on_tool: true,
+        }
+    }
+
+    #[test]
+    fn session_episode_single_when_under_thresholds() {
+        let evs = vec![
+            json!({"role": "user", "content": "hi there", "ts": 100.0}),
+            json!({"role": "assistant", "content": "hello back", "ts": 101.0}),
+        ];
+        let f = SessionEpisodeFramer::new(default_se_cfg());
+        let frames = f.frame(&session_doc(evs)).unwrap();
+        assert_eq!(frames.len(), 1);
+        let m = &frames[0].metadata;
+        assert_eq!(m["framer"], "session_episode");
+        assert_eq!(m["frame_seq"], 0);
+        assert_eq!(m["episode_turn_span"], 2);
+        assert_eq!(m["episode_start_ts"], 100.0);
+        assert_eq!(m["episode_end_ts"], 101.0);
+        assert!(frames[0].content.contains("[user] hi there"));
+        assert!(frames[0].content.contains("[assistant] hello back"));
+    }
+
+    #[test]
+    fn session_episode_time_gap_creates_boundary() {
+        let mut cfg = default_se_cfg();
+        cfg.max_gap_seconds = 10;
+        let evs = vec![
+            json!({"role": "user", "content": "first", "ts": 100.0}),
+            json!({"role": "assistant", "content": "still ep1", "ts": 105.0}),
+            json!({"role": "user", "content": "after-gap", "ts": 200.0}),
+        ];
+        let f = SessionEpisodeFramer::new(cfg);
+        let frames = f.frame(&session_doc(evs)).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].metadata["episode_turn_span"], 2);
+        assert_eq!(frames[1].metadata["episode_turn_span"], 1);
+        assert_eq!(frames[1].metadata["frame_seq"], 1);
+    }
+
+    #[test]
+    fn session_episode_max_turns_creates_boundary() {
+        let mut cfg = default_se_cfg();
+        cfg.max_turns = 2;
+        let evs = vec![
+            json!({"role": "user", "content": "a", "ts": 100.0}),
+            json!({"role": "assistant", "content": "b", "ts": 101.0}),
+            json!({"role": "user", "content": "c", "ts": 102.0}),
+        ];
+        let f = SessionEpisodeFramer::new(cfg);
+        let frames = f.frame(&session_doc(evs)).unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].metadata["episode_turn_span"], 2);
+    }
+
+    #[test]
+    fn session_episode_max_words_creates_boundary() {
+        let mut cfg = default_se_cfg();
+        cfg.max_words = 3;
+        let evs = vec![
+            json!({"role": "user", "content": "one two three", "ts": 100.0}),     // 3 words
+            json!({"role": "assistant", "content": "next ep", "ts": 101.0}),      // boundary triggers
+        ];
+        let f = SessionEpisodeFramer::new(cfg);
+        let frames = f.frame(&session_doc(evs)).unwrap();
+        assert_eq!(frames.len(), 2);
+    }
+
+    #[test]
+    fn session_episode_tool_boundary_when_enabled() {
+        let evs = vec![
+            json!({"role": "user", "content": "ask", "ts": 100.0}),
+            json!({"role": "assistant", "content": "calling", "ts": 101.0, "tool": "search"}),
+        ];
+        let f = SessionEpisodeFramer::new(default_se_cfg());
+        let frames = f.frame(&session_doc(evs)).unwrap();
+        assert_eq!(frames.len(), 2);
+        let tag_line = frames[1].content.lines().next().unwrap();
+        assert!(tag_line.starts_with("[assistant/search]"));
+    }
+
+    #[test]
+    fn session_episode_tool_boundary_disabled() {
+        let mut cfg = default_se_cfg();
+        cfg.boundary_on_tool = false;
+        let evs = vec![
+            json!({"role": "user", "content": "ask", "ts": 100.0}),
+            json!({"role": "assistant", "content": "calling", "ts": 101.0, "tool": "search"}),
+        ];
+        let f = SessionEpisodeFramer::new(cfg);
+        let frames = f.frame(&session_doc(evs)).unwrap();
+        assert_eq!(frames.len(), 1);
+    }
+
+    #[test]
+    fn session_episode_empty_session_yields_zero() {
+        let f = SessionEpisodeFramer::new(default_se_cfg());
+        assert_eq!(f.frame(&session_doc(vec![])).unwrap().len(), 0);
+        // missing _session_events entirely also yields zero.
+        let doc = Document {
+            id: "s".into(),
+            content: String::new(),
+            title: None,
+            metadata: json!({"session_id": "s"}),
+        };
+        assert_eq!(f.frame(&doc).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn session_episode_strips_session_events_from_emitted_meta() {
+        let evs = vec![json!({"role": "user", "content": "x", "ts": 100.0})];
+        let f = SessionEpisodeFramer::new(default_se_cfg());
+        let frames = f.frame(&session_doc(evs)).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert!(
+            frames[0].metadata.get("_session_events").is_none(),
+            "_session_events must not leak into per-episode metadata"
+        );
+        // Per-episode events DO appear under the private _episode_events key.
+        assert!(frames[0].metadata.get("_episode_events").is_some());
     }
 }
