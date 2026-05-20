@@ -195,6 +195,10 @@ pub enum FramerConfig {
     HeadingBoundary(HeadingBoundaryFramerConfig),
     RegexBoundary(RegexBoundaryFramerConfig),
     Jsonpath(JsonPathFramerConfig),
+    /// RM-A: agent-memory episode segmentation (gap-based + role/tool
+    /// boundary + max-turns/max-words). Mirror of Python
+    /// `chunkshop.framers.session_episode.SessionEpisodeFramer`.
+    SessionEpisode(SessionEpisodeFramerConfig),
 }
 
 impl Default for FramerConfig {
@@ -232,6 +236,37 @@ pub struct JsonPathFramerConfig {
     pub body_path: String,
 }
 
+/// RM-A Task 2: gap- and turn-based session episode segmentation.
+/// Mirrors Python `SessionEpisodeFramerConfig`. All numeric fields default
+/// to match the Python defaults exactly so the same YAML drives both impls.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionEpisodeFramerConfig {
+    /// Episode boundary when the gap between consecutive events exceeds
+    /// this many seconds. Default 1800 (= 30 min, matches Python).
+    #[serde(default = "default_max_gap_seconds")]
+    pub max_gap_seconds: u64,
+    /// Boundary when an episode reaches this many turns. Default 40.
+    #[serde(default = "default_max_turns")]
+    pub max_turns: u32,
+    /// Boundary when an episode reaches this many words. Default 1200.
+    #[serde(default = "default_max_words")]
+    pub max_words: u32,
+    /// Place a boundary at the role change from non-tool to tool. Default true.
+    #[serde(default = "default_true")]
+    pub boundary_on_tool: bool,
+}
+
+fn default_max_gap_seconds() -> u64 {
+    1800
+}
+fn default_max_turns() -> u32 {
+    40
+}
+fn default_max_words() -> u32 {
+    1200
+}
+
 fn default_heading_pattern() -> String {
     r"^#+\s".to_string()
 }
@@ -253,6 +288,10 @@ pub enum SourceConfig {
     Http(HttpSourceConfig),
     S3(S3SourceConfig),
     ClickhouseTable(ClickhouseTableSourceConfig),
+    /// RM-A: agent-memory staging-table source. Consumed by the two
+    /// `memory/*.yaml` cell presets (realtime + consolidate). Mirror of
+    /// Python `chunkshop.sources.session_staging.SessionStagingSource`.
+    SessionStaging(SessionStagingSourceConfig),
     /// Library/embedded mode — no automatic iteration. The host application
     /// drives ingestion via `chunkshop::Pipeline::from_yaml(...)` and calls
     /// `pipeline.ingest_text(doc_id, text, metadata)` per document.
@@ -386,6 +425,85 @@ pub struct S3SourceConfig {
     pub endpoint_url: Option<String>,
 }
 
+// --- RM-A agent-memory configs (mirror Python SP-A) -------------------------
+
+/// SP-A memory tier — `provisional` (realtime path, supersede=false) or
+/// `consolidated` (lazy path, supersede=true).
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryTier {
+    Provisional,
+    Consolidated,
+}
+
+/// MemorySink-side block on `TargetConfig::Postgres`. When present, the
+/// `load_sink` dispatcher returns a `MemorySink` instead of a plain `PgSink`.
+/// Mirror of Python `chunkshop.config.MemoryConfig`. `deny_unknown_fields`
+/// per RM-A spec (typos must fail load-time).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryConfig {
+    pub tier: MemoryTier,
+    /// Default `true` for `consolidated` tier (it should replace prior
+    /// provisional rows for the same session); `false` is normal for
+    /// `provisional` so realtime cells don't churn the table.
+    #[serde(default = "default_memory_supersede")]
+    pub supersede: bool,
+    /// When None, MemorySink falls back to `source_tag` as the namespace —
+    /// matches the Python default.
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+fn default_memory_supersede() -> bool {
+    true
+}
+
+/// SP-A staging-table source. Reads the chunkshop-owned append-only
+/// staging table (`schema.table`, default `public.chunkshop_staging`)
+/// and yields one `Document` per session. `mode='realtime'` advances
+/// the per-session realtime watermark; `mode='consolidate'` uses a
+/// session-level eligibility WHERE so a late event after consolidation
+/// triggers a full-staging rebuild (SP-A spec O1 — non-negotiable;
+/// see Task 5 of the RM-A plan and Python fix `49861dc`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionStagingSourceConfig {
+    /// Direct DSN (literal or `${VAR}` interpolated at connect time).
+    /// At least one of `dsn` / `dsn_env` must be set.
+    #[serde(default)]
+    pub dsn: Option<String>,
+    #[serde(default)]
+    pub dsn_env: Option<String>,
+    #[serde(default = "default_staging_table")]
+    pub staging_table: String,
+    #[serde(default = "default_staging_schema")]
+    pub staging_schema: String,
+    pub mode: SessionStagingMode,
+    /// Consolidate-mode: only sessions with `max(event_ts|staged_at) < now() -
+    /// min_age_seconds` are selected. Lets quiet sessions consolidate while
+    /// active sessions stay provisional. Ignored in realtime mode.
+    #[serde(default)]
+    pub min_age_seconds: u64,
+    /// Cap on yielded sessions per run (None = no cap). Mirrors Python.
+    #[serde(default)]
+    pub max_sessions: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionStagingMode {
+    Realtime,
+    Consolidate,
+}
+
+fn default_staging_table() -> String {
+    "chunkshop_staging".to_string()
+}
+fn default_staging_schema() -> String {
+    "public".to_string()
+}
+
 fn default_id_from() -> String {
     "stem".to_string()
 }
@@ -417,6 +535,10 @@ pub enum ChunkerConfig {
     Semantic(SemanticChunkerConfig),
     SummaryEmbed(SummaryEmbedChunkerConfig),
     HierarchicalSummary(HierarchicalSummaryChunkerConfig),
+    /// RM-A: wraps a base chunker to emit `kind=episode` chunks plus
+    /// per-triple `kind=fact` chunks from a `Consolidator` callable.
+    /// Mirror of Python `chunkshop.chunkers.consolidation.ConsolidationChunker`.
+    Consolidation(ConsolidationChunkerConfig),
 }
 
 impl ChunkerConfig {
@@ -441,6 +563,7 @@ impl ChunkerConfig {
             ChunkerConfig::HierarchicalSummary(c) => {
                 c.max_chars.or_else(|| c.base.effective_max_chars())
             }
+            ChunkerConfig::Consolidation(c) => c.base.effective_max_chars(),
         }
     }
 
@@ -455,6 +578,7 @@ impl ChunkerConfig {
             ChunkerConfig::NeighborExpand(c) => c.if_oversize.as_deref(),
             ChunkerConfig::SummaryEmbed(c) => c.if_oversize.as_deref(),
             ChunkerConfig::HierarchicalSummary(c) => c.if_oversize.as_deref(),
+            ChunkerConfig::Consolidation(c) => c.if_oversize.as_deref(),
         }
     }
 
@@ -468,6 +592,7 @@ impl ChunkerConfig {
             ChunkerConfig::Semantic(_) => "semantic",
             ChunkerConfig::SummaryEmbed(_) => "summary_embed",
             ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
+            ChunkerConfig::Consolidation(_) => "consolidation",
         }
     }
 }
@@ -535,6 +660,45 @@ pub struct NeighborExpandChunkerConfig {
     #[serde(default)]
     pub if_oversize: Option<Box<ChunkerConfig>>,
 }
+
+/// RM-A Task 3: ConsolidationChunker wraps a base chunker; emits one
+/// `kind=episode` chunk per base chunk and one `kind=fact` chunk per
+/// triple returned by the wired `Consolidator`. Mirror of Python
+/// `chunkshop.chunkers.consolidation.ConsolidationChunker`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationChunkerConfig {
+    /// Underlying chunker for episode-text segmentation (typically
+    /// `sentence_aware` with a memory-sized ceiling).
+    pub base: Box<ChunkerConfig>,
+    /// Which consolidator wires the SPO-triple extraction. v1 ships
+    /// `mode: extractive` (zero-network default); LLM modes wired by the
+    /// host application as Rust trait impls.
+    pub consolidator: ConsolidatorConfig,
+    /// Hard char cap for `kind=fact` chunks. Default 1200 (Python parity).
+    #[serde(default = "default_fact_max_chars")]
+    pub fact_max_chars: usize,
+    #[serde(default)]
+    pub if_oversize: Option<Box<ChunkerConfig>>,
+}
+
+fn default_fact_max_chars() -> usize {
+    1200
+}
+
+/// Consolidator wiring. `mode: extractive` selects the zero-network Rust
+/// default (Task 7). Future v1.x: `mode: llm` once a deterministic LLM
+/// seam lands. Custom impls live in host code and aren't selected via
+/// YAML — they're injected at `build_chunker` time by the consumer.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ConsolidatorConfig {
+    Extractive(ExtractiveConsolidatorConfig),
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractiveConsolidatorConfig {}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SemanticChunkerConfig {
@@ -836,6 +1000,11 @@ pub struct PostgresTargetConfig {
     /// the historical behavior. See `docs/incremental.md`.
     #[serde(default)]
     pub delete_orphans: bool,
+    /// RM-A: when present, `load_sink` returns a MemorySink (extends PgSink
+    /// with tier/kind stamping + supersede + soft-invalidate). Mirror of
+    /// Python `chunkshop.config.TargetConfig.memory`.
+    #[serde(default)]
+    pub memory: Option<MemoryConfig>,
 }
 
 impl PostgresTargetConfig {
@@ -1191,6 +1360,7 @@ fn validate_chunker_config(c: &ChunkerConfig) -> Result<()> {
             }
             validate_chunker_config(&c.base)
         }
+        ChunkerConfig::Consolidation(c) => validate_chunker_config(&c.base),
     }
 }
 
@@ -1631,6 +1801,298 @@ target:
         assert!(
             load_config(&path).is_err(),
             "engine with embedded DROP must be rejected"
+        );
+    }
+
+    // --- RM-A Task 1: SessionStagingSourceConfig + MemoryConfig ------------
+
+    #[test]
+    fn session_staging_source_deserialises() {
+        let yaml = r#"
+cell_name: m
+source:
+  type: session_staging
+  dsn: "postgresql://localhost/x"
+  staging_table: chunkshop_staging
+  staging_schema: public
+  mode: realtime
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load_config should succeed");
+        match cfg.source {
+            SourceConfig::SessionStaging(s) => {
+                assert_eq!(s.staging_table, "chunkshop_staging");
+                assert_eq!(s.staging_schema, "public");
+                assert_eq!(s.mode, SessionStagingMode::Realtime);
+                assert_eq!(s.min_age_seconds, 0);
+                assert!(s.dsn.is_some());
+            }
+            other => panic!("expected SessionStaging variant; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn session_staging_defaults_match_python() {
+        // Only mode is required; staging_schema/staging_table default.
+        let yaml = r#"
+cell_name: m
+source:
+  type: session_staging
+  dsn_env: D
+  mode: consolidate
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        if let SourceConfig::SessionStaging(s) = cfg.source {
+            assert_eq!(s.staging_table, "chunkshop_staging");
+            assert_eq!(s.staging_schema, "public");
+            assert_eq!(s.mode, SessionStagingMode::Consolidate);
+        } else {
+            panic!("not session_staging");
+        }
+    }
+
+    #[test]
+    fn memory_block_on_postgres_target() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: postgres
+  dsn_env: D
+  database: agent_memory
+  table: memory
+  mode: create_if_missing
+  source_tag: ns1
+  hnsw: false
+  memory:
+    tier: consolidated
+    supersede: true
+    namespace: ns1
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        let mem = match cfg.target {
+            TargetConfig::Postgres(p) => p.memory.expect("memory expected"),
+            _ => panic!("expected postgres target"),
+        };
+        assert_eq!(mem.tier, MemoryTier::Consolidated);
+        assert!(mem.supersede);
+        assert_eq!(mem.namespace.as_deref(), Some("ns1"));
+    }
+
+    #[test]
+    fn memory_block_unknown_field_rejected() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: postgres
+  dsn_env: D
+  database: agent_memory
+  table: memory
+  mode: create_if_missing
+  source_tag: ns1
+  hnsw: false
+  memory: { tier: consolidated, supersede: true, namespace: ns1, bogus_field: yes }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("bogus_field must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("bogus_field") || msg.contains("unknown"),
+            "expected unknown-field complaint, got: {msg}"
+        );
+    }
+
+    // --- RM-A Task 2: SessionEpisodeFramerConfig --------------------------
+
+    #[test]
+    fn session_episode_framer_deserialises_with_defaults() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+framer: { type: session_episode }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        match cfg.framer {
+            FramerConfig::SessionEpisode(f) => {
+                assert_eq!(f.max_gap_seconds, 1800);   // python default
+                assert_eq!(f.max_turns, 40);
+                assert_eq!(f.max_words, 1200);
+                assert!(f.boundary_on_tool);
+            }
+            other => panic!("expected SessionEpisode framer; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn session_episode_framer_overrides_apply() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+framer:
+  type: session_episode
+  max_gap_seconds: 600
+  max_turns: 20
+  max_words: 500
+  boundary_on_tool: false
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        if let FramerConfig::SessionEpisode(f) = cfg.framer {
+            assert_eq!(f.max_gap_seconds, 600);
+            assert_eq!(f.max_turns, 20);
+            assert_eq!(f.max_words, 500);
+            assert!(!f.boundary_on_tool);
+        } else {
+            panic!("not session_episode");
+        }
+    }
+
+    // --- RM-A Task 3: ConsolidationChunkerConfig --------------------------
+
+    #[test]
+    fn consolidation_chunker_deserialises() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+framer: { type: session_episode }
+chunker:
+  type: consolidation
+  base:
+    type: sentence_aware
+    max_chars: 2000
+    min_chars: 200
+  consolidator:
+    mode: extractive
+  fact_max_chars: 1200
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        match cfg.chunker {
+            ChunkerConfig::Consolidation(c) => {
+                assert_eq!(c.fact_max_chars, 1200);
+                assert!(matches!(*c.base, ChunkerConfig::SentenceAware(_)));
+                assert!(matches!(c.consolidator, ConsolidatorConfig::Extractive(_)));
+            }
+            other => panic!("expected Consolidation; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn consolidation_chunker_default_fact_max_chars() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: consolidation
+  base: { type: sentence_aware }
+  consolidator: { mode: extractive }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        if let ChunkerConfig::Consolidation(c) = cfg.chunker {
+            assert_eq!(c.fact_max_chars, 1200);  // python parity default
+            assert!(matches!(*c.base, ChunkerConfig::SentenceAware(_)));
+        } else {
+            panic!("not consolidation");
+        }
+    }
+
+    #[test]
+    fn consolidation_chunker_unknown_field_rejected() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: consolidation
+  base: { type: sentence_aware }
+  consolidator: { mode: extractive }
+  bogus_consolidation_field: yes
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("bogus must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("bogus") || msg.contains("unknown"),
+            "expected unknown-field complaint, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn consolidator_unknown_mode_rejected() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: consolidation
+  base: { type: sentence_aware }
+  consolidator: { mode: callable }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        // `mode: callable` is Python-side only; Rust accepts `extractive` (and
+        // future `llm`) but not `callable`. Reject cleanly.
+        let err = load_config(&write_yaml(yaml)).expect_err("callable must fail in rust");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("callable") || msg.contains("variant") || msg.contains("unknown"),
+            "expected mode-unknown complaint, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn session_episode_framer_unknown_field_rejected() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+framer: { type: session_episode, bogus: 1 }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("bogus must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("bogus") || msg.contains("unknown"),
+            "expected unknown-field complaint, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn session_staging_unknown_field_rejected() {
+        let yaml = r#"
+cell_name: m
+source:
+  type: session_staging
+  dsn_env: D
+  mode: realtime
+  bogus: 1
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("bogus must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("bogus") || msg.contains("unknown"),
+            "expected unknown-field complaint, got: {msg}"
         );
     }
 }

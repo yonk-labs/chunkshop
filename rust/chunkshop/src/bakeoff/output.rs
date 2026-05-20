@@ -311,6 +311,12 @@ fn chunker_to_yaml_value(c: &crate::config::ChunkerConfig) -> Result<Value> {
                  these are out of the bakeoff matrix today."
             ));
         }
+        C::Consolidation(_) => {
+            return Err(anyhow::anyhow!(
+                "consolidation chunker is for the agent-memory cell preset (RM-A), \
+                 not the bakeoff matrix; exclude it from bakeoff configs."
+            ));
+        }
     })
 }
 
@@ -429,6 +435,27 @@ fn source_to_yaml_value(s: &crate::config::SourceConfig) -> Value {
             }
             Value::Object(m)
         }
+        S::SessionStaging(s) => {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), json!("session_staging"));
+            if let Some(d) = &s.dsn {
+                m.insert("dsn".into(), json!(d));
+            }
+            if let Some(e) = &s.dsn_env {
+                m.insert("dsn_env".into(), json!(e));
+            }
+            m.insert("staging_table".into(), json!(s.staging_table));
+            m.insert("staging_schema".into(), json!(s.staging_schema));
+            m.insert(
+                "mode".into(),
+                json!(match s.mode {
+                    crate::config::SessionStagingMode::Realtime => "realtime",
+                    crate::config::SessionStagingMode::Consolidate => "consolidate",
+                }),
+            );
+            m.insert("min_age_seconds".into(), json!(s.min_age_seconds));
+            Value::Object(m)
+        }
         S::Inline(_) => json!({ "type": "inline" }),
     }
 }
@@ -462,6 +489,15 @@ fn framer_to_yaml_value(f: &crate::config::FramerConfig) -> Value {
             if let Some(t) = &j.title_path {
                 m.insert("title_path".into(), json!(t));
             }
+            Value::Object(m)
+        }
+        F::SessionEpisode(s) => {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), json!("session_episode"));
+            m.insert("max_gap_seconds".into(), json!(s.max_gap_seconds));
+            m.insert("max_turns".into(), json!(s.max_turns));
+            m.insert("max_words".into(), json!(s.max_words));
+            m.insert("boundary_on_tool".into(), json!(s.boundary_on_tool));
             Value::Object(m)
         }
     }

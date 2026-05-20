@@ -58,6 +58,7 @@ pub fn chunker_label(cfg: &ChunkerConfig) -> String {
         ChunkerConfig::Semantic(_) => "semantic".to_string(),
         ChunkerConfig::SummaryEmbed(_) => "summary_embed".to_string(),
         ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary".to_string(),
+        ChunkerConfig::Consolidation(_) => "consolidation".to_string(),
     }
 }
 
@@ -105,6 +106,9 @@ fn corpus_label(cfg: &BakeoffConfig) -> String {
         SourceConfig::Http(_) => "http".to_string(),
         SourceConfig::S3(s) => format!("s3://{}/{}", s.bucket, s.prefix),
         SourceConfig::ClickhouseTable(c) => format!("ch:{}.{}", c.database_name, c.table),
+        SourceConfig::SessionStaging(s) => {
+            format!("memory:{}.{}", s.staging_schema, s.staging_table)
+        }
         SourceConfig::Inline(_) => "inline".to_string(),
     }
 }
@@ -126,6 +130,7 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             promote_metadata: vec![],
             force_overwrite: false,
             delete_orphans: false,
+            memory: None,
         }),
         BakeoffTargetEntry::Mariadb(t) => TargetConfig::Mariadb(MariadbTargetConfig {
             dsn_env: t.dsn_env.clone(),

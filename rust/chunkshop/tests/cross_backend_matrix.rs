@@ -379,6 +379,7 @@ fn pg_target(schema: &str) -> TargetConfig {
         promote_metadata: vec![],
         force_overwrite: false,
         delete_orphans: false,
+        memory: None,
     })
 }
 

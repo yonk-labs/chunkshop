@@ -10,6 +10,7 @@ use crate::embedder::FastembedEmbedder;
 use crate::extractor::build_extractor;
 use crate::framer::{
     FramerImpl, HeadingBoundaryFramer, IdentityFramer, JsonPathFramer, RegexBoundaryFramer,
+    SessionEpisodeFramer,
 };
 use crate::sources::AnySource;
 
@@ -26,6 +27,7 @@ pub fn build_framer(cfg: FramerConfig) -> Result<Box<dyn FramerImpl + Send + Syn
         FramerConfig::HeadingBoundary(c) => Box::new(HeadingBoundaryFramer::new(c)?),
         FramerConfig::RegexBoundary(c) => Box::new(RegexBoundaryFramer::new(c)?),
         FramerConfig::Jsonpath(c) => Box::new(JsonPathFramer::new(c)),
+        FramerConfig::SessionEpisode(c) => Box::new(SessionEpisodeFramer::new(c)),
     })
 }
 
@@ -134,6 +136,13 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
             }
         }
     }
+
+    // RM-A O3: advance the source's post-iteration watermark ONLY after
+    // the per-doc write loop above succeeds. A mid-loop error (which
+    // would have `?`-bubbled out above) leaves the watermark unadvanced,
+    // so the next run reselects the same sessions. No-op for non-memory
+    // sources.
+    source.commit_processed().await.context("commit_processed")?;
 
     let wall = start.elapsed().as_secs_f64();
     let embed_seconds = embedder.embed_seconds();

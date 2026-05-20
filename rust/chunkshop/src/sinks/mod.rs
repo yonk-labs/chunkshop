@@ -13,12 +13,16 @@ pub mod mariadb;
 pub mod pg;
 pub mod sqlite;
 pub mod clickhouse;
+#[cfg(feature = "memory")]
+pub mod memory_pg;
 
 pub use base::Sink;
 pub use mariadb::MariadbSink;
 pub use pg::PgSink;
 pub use sqlite::SqliteSink;
 pub use clickhouse::ClickhouseSink;
+#[cfg(feature = "memory")]
+pub use memory_pg::MemorySink;
 
 /// Sum type for runtime polymorphism. Pipeline holds `AnySink` and calls
 /// trait methods through the match-delegate impl below.
@@ -27,6 +31,8 @@ pub enum AnySink {
     Mariadb(MariadbSink),
     Sqlite(SqliteSink),
     Clickhouse(ClickhouseSink),
+    #[cfg(feature = "memory")]
+    Memory(MemorySink),
 }
 
 impl Sink for AnySink {
@@ -37,6 +43,8 @@ impl Sink for AnySink {
                 AnySink::Mariadb(s) => s.create_table().await,
                 AnySink::Sqlite(s) => s.create_table().await,
                 AnySink::Clickhouse(s) => s.create_table().await,
+                #[cfg(feature = "memory")]
+                AnySink::Memory(s) => s.create_table().await,
             }
         }
     }
@@ -54,6 +62,8 @@ impl Sink for AnySink {
                 AnySink::Mariadb(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
                 AnySink::Sqlite(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
                 AnySink::Clickhouse(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
+                #[cfg(feature = "memory")]
+                AnySink::Memory(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
             }
         }
     }
@@ -65,6 +75,10 @@ impl Sink for AnySink {
                 AnySink::Mariadb(s) => s.delete_document(doc_id).await,
                 AnySink::Sqlite(s) => s.delete_document(doc_id).await,
                 AnySink::Clickhouse(s) => s.delete_document(doc_id).await,
+                #[cfg(feature = "memory")]
+                AnySink::Memory(_) => Err(anyhow!(
+                    "MemorySink does not implement delete_document; supersede is a write-side concern"
+                )),
             }
         }
     }
@@ -76,6 +90,8 @@ impl Sink for AnySink {
                 AnySink::Mariadb(s) => s.count_docs().await,
                 AnySink::Sqlite(s) => s.count_docs().await,
                 AnySink::Clickhouse(s) => s.count_docs().await,
+                #[cfg(feature = "memory")]
+                AnySink::Memory(s) => s.count_docs().await,
             }
         }
     }
@@ -91,6 +107,8 @@ impl Sink for AnySink {
                 AnySink::Mariadb(s) => s.query_top_k(query_vec, k).await,
                 AnySink::Sqlite(s) => s.query_top_k(query_vec, k).await,
                 AnySink::Clickhouse(s) => s.query_top_k(query_vec, k).await,
+                #[cfg(feature = "memory")]
+                AnySink::Memory(s) => s.query_top_k(query_vec, k).await,
             }
         }
     }
@@ -99,6 +117,14 @@ impl Sink for AnySink {
 pub fn load_sink(cfg: &TargetConfig, backend: AnyBackend, dim: usize) -> Result<AnySink> {
     match (cfg, backend) {
         (TargetConfig::Postgres(t), AnyBackend::Postgres(b)) => {
+            // RM-A: when the target carries a `memory:` block, return a
+            // MemorySink (extends PgSink with tier/kind stamping +
+            // namespace-qualified row id). Otherwise the historical
+            // PgSink path is unchanged.
+            #[cfg(feature = "memory")]
+            if t.memory.is_some() {
+                return Ok(AnySink::Memory(MemorySink::new(t.clone(), b, dim)));
+            }
             Ok(AnySink::Pg(PgSink::new(t.clone(), b, dim)))
         }
         (TargetConfig::Mariadb(t), AnyBackend::Mariadb(b)) => {

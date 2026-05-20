@@ -27,6 +27,7 @@ fn source_type_label(s: &SourceConfig) -> &'static str {
         SourceConfig::Http(_) => "http",
         SourceConfig::S3(_) => "s3",
         SourceConfig::ClickhouseTable(_) => "clickhouse_table",
+        SourceConfig::SessionStaging(_) => "session_staging",
         SourceConfig::Inline(_) => "inline",
     }
 }
@@ -37,6 +38,7 @@ fn framer_type_label(f: &FramerConfig) -> &'static str {
         FramerConfig::HeadingBoundary(_) => "heading_boundary",
         FramerConfig::RegexBoundary(_) => "regex_boundary",
         FramerConfig::Jsonpath(_) => "jsonpath",
+        FramerConfig::SessionEpisode(_) => "session_episode",
     }
 }
 
@@ -49,6 +51,7 @@ fn chunker_type_label(c: &ChunkerConfig) -> &'static str {
         ChunkerConfig::Semantic(_) => "semantic",
         ChunkerConfig::SummaryEmbed(_) => "summary_embed",
         ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
+        ChunkerConfig::Consolidation(_) => "consolidation",
     }
 }
 

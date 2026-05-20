@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Rust — RM-A (agent memory port; chunkshop#9)
+
+Rust now has full SP-A parity. The crate (`chunkshop-rs`) ships the same
+two-cell agent-memory primitives the Python package shipped in 0.4.4:
+
+- **`chunkshop::memory::{stage_event, stage_events, ensure_staging_table,
+  prune_staging, derive_event_id}`** — async sqlx staging API. The
+  `event_id` derivation is **byte-identical** to Python's
+  (`sha1("session_id\x00disambig\x00content")`), so a Python-staged
+  event and a Rust-staged event with the same canonical tuple dedupe
+  cleanly via `ON CONFLICT (event_id) DO NOTHING`.
+- **`SessionStagingSource`** — session-level WHERE for consolidate mode
+  from day 1 (the O1 latent-correctness bug fixed in Python `49861dc`
+  cannot recur in Rust because the test exists from the first commit).
+- **`SessionEpisodeFramer`** — gap/turn/word/tool boundary segmentation.
+- **`Consolidator` trait + `ExtractiveConsolidator`** — zero-network
+  default; LLM/custom consolidators are host-wired at compile time
+  (not via YAML `module:`/`function:` callable — see spec §3.4).
+- **`ConsolidationChunker`** — episode + per-triple fact emission with
+  O4 passthrough on consolidator error.
+- **`MemorySink`** — extends PgSink with tier/kind/namespace/recorded_at
+  stamping, namespace-qualified row id (`{ns}::{doc_id}::{seq_num}` —
+  Python `3dbd12f` parity), supersede (consolidated → DELETE prior
+  rows scoped by source_tag), soft-invalidate (newer contradicting
+  fact retracts older).
+- **`O3 deferred-watermark advance`** — `iter_documents()` stores the
+  pending watermark; `commit_processed()` (called by the runner after
+  the per-doc write loop succeeds) actually issues the UPDATE. A
+  mid-loop crash leaves the watermark unadvanced — same crash-safety
+  contract Python's generator-yield semantics provide.
+- **Preset YAMLs** at `rust/chunkshop/configs/memory/{realtime,consolidate}.yaml`
+  — byte-for-byte parity with Python's, EXCEPT the consolidator section
+  which uses `mode: extractive` (vs Python's `mode: callable`).
+
+Feature-gated via new Cargo feature `memory = ["source", "sink"]`,
+included in `full`.
+
+Tests: 30 unit (config + framer + consolidator + chunker + iso helpers)
++ 22 PG integration (staging, source with O1, sink with supersede/
+soft-invalidate, e2e composing the full pipeline, O1+O3 resilience).
+All green. Spec: `docs/superpowers/specs/2026-05-19-chunkshop-rm-a-rust-memory-primitives-design.md`.
+
 ## 0.4.4 — 2026-05-19
 
 Agent memory (SP-A) lands, plus consumer-ergonomics fixes that came out

@@ -1,0 +1,47 @@
+cell_name: memory_realtime
+source:
+  type: session_staging
+  # `dsn` (literal/${VAR}) is the Python field; `dsn_env` (env-var name)
+  # is the Rust field. Both presets carry both so the same YAML drives
+  # both implementations until the Rust port also accepts `${VAR}`.
+  dsn: "${CHUNKSHOP_MEMORY_DSN}"
+  dsn_env: CHUNKSHOP_MEMORY_DSN
+  staging_table: chunkshop_staging
+  staging_schema: public
+  mode: realtime
+framer:
+  type: identity
+chunker:
+  type: fixed_overlap
+  window_words: 150
+  step_words: 75
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-small-en-v1.5-int8
+  dim: 384
+  threads: 4
+target:
+  type: postgres
+  dsn: "${CHUNKSHOP_MEMORY_DSN}"
+  dsn_env: CHUNKSHOP_MEMORY_DSN
+  database: agent_memory
+  table: memory
+  mode: create_if_missing
+  source_tag: default
+  memory:
+    tier: provisional
+    supersede: false
+  promote_metadata:
+    - path: kind
+      type: text
+    - path: session_id
+      type: text
+    - path: namespace
+      type: text
+    - path: tier
+      type: text
+    - path: recorded_at
+      type: timestamptz
+runtime:
+  omp_num_threads: 2
+  heartbeat_every: 25

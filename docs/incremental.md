@@ -628,3 +628,33 @@ yields one record per session in the exact shape pg-raggraph's
 entries, fact triples become `known_relationships`, and O2 (consolidated-wins)
 is enforced by default. End-to-end example:
 [`docs/samples/memory-to-pgraggraph/`](samples/memory-to-pgraggraph/).
+
+### Rust port (RM-A, tracked at chunkshop#9)
+
+The Rust crate has the same two-cell pattern from chunkshop-rs 0.4.5+
+(unreleased). Same `agent_memory.memory` schema, same `chunkshop_staging`
+table, same YAML preset shape — `event_id` is **byte-identical** across
+languages so an event staged from Python and re-staged from Rust hits
+the same row.
+
+```bash
+export CHUNKSHOP_MEMORY_DSN="postgresql://localhost/agent_memory"
+
+# Realtime cell (provisional tier) — run every minute
+chunkshop-rs ingest --config rust/chunkshop/configs/memory/realtime.yaml
+
+# Consolidate cell (consolidated tier, supersede=true) — run nightly
+chunkshop-rs ingest --config rust/chunkshop/configs/memory/consolidate.yaml
+```
+
+The Rust API surface mirrors Python's: `chunkshop::memory::stage_event` /
+`stage_events` for the staging side, `SessionStagingSource` /
+`SessionEpisodeFramer` / `ConsolidationChunker` / `MemorySink` as the
+provider types. Custom (LLM, rule-based) consolidators are wired at
+compile time via the `Consolidator` trait — Rust has no equivalent of
+Python's dynamic `module:`/`function:` callable, so the consolidator
+section of the YAML uses a built-in `mode:` (currently only `extractive`).
+
+A `read_pre_chunked` equivalent is out of scope for RM-A — defer to RM-B
+if/when a Rust consumer of `agent_memory.memory` surfaces (the current
+consumer story is pg-raggraph in Python).
