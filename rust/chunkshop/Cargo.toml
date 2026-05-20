@@ -108,7 +108,13 @@ tempfile = "3"
 default = ["full"]
 
 # Everything — the historical compile target. Required by the CLI binary.
-full = ["chunkers", "embedder", "extractor", "source", "sink", "pipeline", "bakeoff"]
+full = ["chunkers", "embedder", "extractor", "source", "sink", "pipeline", "bakeoff", "memory"]
+
+# RM-A: agent-memory primitives (staging API, session_staging source,
+# session_episode framer, consolidation chunker, MemorySink, consolidator
+# trait + extractive default). Tracks chunkshop#9. Postgres-only, requires
+# `source` + `sink` to share the existing backend layer.
+memory = ["source", "sink"]
 
 # Just the chunker module + its config types and supporting modules
 # (sentence_split, summarizer, the `Document` struct). Pulls only the

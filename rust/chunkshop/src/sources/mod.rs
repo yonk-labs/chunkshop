@@ -107,6 +107,10 @@ pub fn load_source(cfg: &SourceConfig) -> Result<AnySource> {
         SourceConfig::ClickhouseTable(c) => Ok(AnySource::ClickhouseTable(
             ClickhouseTableSource::new(c.clone()),
         )),
+        SourceConfig::SessionStaging(_) => Err(anyhow!(
+            "session_staging source not yet implemented in this build \
+             (RM-A Task 5; tracking: chunkshop#9)"
+        )),
         SourceConfig::Inline(_) => Err(anyhow!(
             "inline source is not used via load_source — Pipeline::new handles it directly"
         )),

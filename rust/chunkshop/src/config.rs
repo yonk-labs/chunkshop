@@ -253,6 +253,10 @@ pub enum SourceConfig {
     Http(HttpSourceConfig),
     S3(S3SourceConfig),
     ClickhouseTable(ClickhouseTableSourceConfig),
+    /// RM-A: agent-memory staging-table source. Consumed by the two
+    /// `memory/*.yaml` cell presets (realtime + consolidate). Mirror of
+    /// Python `chunkshop.sources.session_staging.SessionStagingSource`.
+    SessionStaging(SessionStagingSourceConfig),
     /// Library/embedded mode — no automatic iteration. The host application
     /// drives ingestion via `chunkshop::Pipeline::from_yaml(...)` and calls
     /// `pipeline.ingest_text(doc_id, text, metadata)` per document.
@@ -384,6 +388,85 @@ pub struct S3SourceConfig {
     /// credential's region.
     #[serde(default)]
     pub endpoint_url: Option<String>,
+}
+
+// --- RM-A agent-memory configs (mirror Python SP-A) -------------------------
+
+/// SP-A memory tier — `provisional` (realtime path, supersede=false) or
+/// `consolidated` (lazy path, supersede=true).
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryTier {
+    Provisional,
+    Consolidated,
+}
+
+/// MemorySink-side block on `TargetConfig::Postgres`. When present, the
+/// `load_sink` dispatcher returns a `MemorySink` instead of a plain `PgSink`.
+/// Mirror of Python `chunkshop.config.MemoryConfig`. `deny_unknown_fields`
+/// per RM-A spec (typos must fail load-time).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryConfig {
+    pub tier: MemoryTier,
+    /// Default `true` for `consolidated` tier (it should replace prior
+    /// provisional rows for the same session); `false` is normal for
+    /// `provisional` so realtime cells don't churn the table.
+    #[serde(default = "default_memory_supersede")]
+    pub supersede: bool,
+    /// When None, MemorySink falls back to `source_tag` as the namespace —
+    /// matches the Python default.
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+fn default_memory_supersede() -> bool {
+    true
+}
+
+/// SP-A staging-table source. Reads the chunkshop-owned append-only
+/// staging table (`schema.table`, default `public.chunkshop_staging`)
+/// and yields one `Document` per session. `mode='realtime'` advances
+/// the per-session realtime watermark; `mode='consolidate'` uses a
+/// session-level eligibility WHERE so a late event after consolidation
+/// triggers a full-staging rebuild (SP-A spec O1 — non-negotiable;
+/// see Task 5 of the RM-A plan and Python fix `49861dc`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionStagingSourceConfig {
+    /// Direct DSN (literal or `${VAR}` interpolated at connect time).
+    /// At least one of `dsn` / `dsn_env` must be set.
+    #[serde(default)]
+    pub dsn: Option<String>,
+    #[serde(default)]
+    pub dsn_env: Option<String>,
+    #[serde(default = "default_staging_table")]
+    pub staging_table: String,
+    #[serde(default = "default_staging_schema")]
+    pub staging_schema: String,
+    pub mode: SessionStagingMode,
+    /// Consolidate-mode: only sessions with `max(event_ts|staged_at) < now() -
+    /// min_age_seconds` are selected. Lets quiet sessions consolidate while
+    /// active sessions stay provisional. Ignored in realtime mode.
+    #[serde(default)]
+    pub min_age_seconds: u64,
+    /// Cap on yielded sessions per run (None = no cap). Mirrors Python.
+    #[serde(default)]
+    pub max_sessions: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionStagingMode {
+    Realtime,
+    Consolidate,
+}
+
+fn default_staging_table() -> String {
+    "chunkshop_staging".to_string()
+}
+fn default_staging_schema() -> String {
+    "public".to_string()
 }
 
 fn default_id_from() -> String {
@@ -836,6 +919,11 @@ pub struct PostgresTargetConfig {
     /// the historical behavior. See `docs/incremental.md`.
     #[serde(default)]
     pub delete_orphans: bool,
+    /// RM-A: when present, `load_sink` returns a MemorySink (extends PgSink
+    /// with tier/kind stamping + supersede + soft-invalidate). Mirror of
+    /// Python `chunkshop.config.TargetConfig.memory`.
+    #[serde(default)]
+    pub memory: Option<MemoryConfig>,
 }
 
 impl PostgresTargetConfig {
@@ -1631,6 +1719,135 @@ target:
         assert!(
             load_config(&path).is_err(),
             "engine with embedded DROP must be rejected"
+        );
+    }
+
+    // --- RM-A Task 1: SessionStagingSourceConfig + MemoryConfig ------------
+
+    #[test]
+    fn session_staging_source_deserialises() {
+        let yaml = r#"
+cell_name: m
+source:
+  type: session_staging
+  dsn: "postgresql://localhost/x"
+  staging_table: chunkshop_staging
+  staging_schema: public
+  mode: realtime
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load_config should succeed");
+        match cfg.source {
+            SourceConfig::SessionStaging(s) => {
+                assert_eq!(s.staging_table, "chunkshop_staging");
+                assert_eq!(s.staging_schema, "public");
+                assert_eq!(s.mode, SessionStagingMode::Realtime);
+                assert_eq!(s.min_age_seconds, 0);
+                assert!(s.dsn.is_some());
+            }
+            other => panic!("expected SessionStaging variant; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn session_staging_defaults_match_python() {
+        // Only mode is required; staging_schema/staging_table default.
+        let yaml = r#"
+cell_name: m
+source:
+  type: session_staging
+  dsn_env: D
+  mode: consolidate
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        if let SourceConfig::SessionStaging(s) = cfg.source {
+            assert_eq!(s.staging_table, "chunkshop_staging");
+            assert_eq!(s.staging_schema, "public");
+            assert_eq!(s.mode, SessionStagingMode::Consolidate);
+        } else {
+            panic!("not session_staging");
+        }
+    }
+
+    #[test]
+    fn memory_block_on_postgres_target() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: postgres
+  dsn_env: D
+  database: agent_memory
+  table: memory
+  mode: create_if_missing
+  source_tag: ns1
+  hnsw: false
+  memory:
+    tier: consolidated
+    supersede: true
+    namespace: ns1
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        let mem = match cfg.target {
+            TargetConfig::Postgres(p) => p.memory.expect("memory expected"),
+            _ => panic!("expected postgres target"),
+        };
+        assert_eq!(mem.tier, MemoryTier::Consolidated);
+        assert!(mem.supersede);
+        assert_eq!(mem.namespace.as_deref(), Some("ns1"));
+    }
+
+    #[test]
+    fn memory_block_unknown_field_rejected() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: postgres
+  dsn_env: D
+  database: agent_memory
+  table: memory
+  mode: create_if_missing
+  source_tag: ns1
+  hnsw: false
+  memory: { tier: consolidated, supersede: true, namespace: ns1, bogus_field: yes }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("bogus_field must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("bogus_field") || msg.contains("unknown"),
+            "expected unknown-field complaint, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn session_staging_unknown_field_rejected() {
+        let yaml = r#"
+cell_name: m
+source:
+  type: session_staging
+  dsn_env: D
+  mode: realtime
+  bogus: 1
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("bogus must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("bogus") || msg.contains("unknown"),
+            "expected unknown-field complaint, got: {msg}"
         );
     }
 }

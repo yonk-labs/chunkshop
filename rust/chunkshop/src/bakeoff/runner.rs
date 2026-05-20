@@ -105,6 +105,9 @@ fn corpus_label(cfg: &BakeoffConfig) -> String {
         SourceConfig::Http(_) => "http".to_string(),
         SourceConfig::S3(s) => format!("s3://{}/{}", s.bucket, s.prefix),
         SourceConfig::ClickhouseTable(c) => format!("ch:{}.{}", c.database_name, c.table),
+        SourceConfig::SessionStaging(s) => {
+            format!("memory:{}.{}", s.staging_schema, s.staging_table)
+        }
         SourceConfig::Inline(_) => "inline".to_string(),
     }
 }
@@ -126,6 +129,7 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             promote_metadata: vec![],
             force_overwrite: false,
             delete_orphans: false,
+            memory: None,
         }),
         BakeoffTargetEntry::Mariadb(t) => TargetConfig::Mariadb(MariadbTargetConfig {
             dsn_env: t.dsn_env.clone(),

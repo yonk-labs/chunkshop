@@ -27,6 +27,7 @@ fn source_type_label(s: &SourceConfig) -> &'static str {
         SourceConfig::Http(_) => "http",
         SourceConfig::S3(_) => "s3",
         SourceConfig::ClickhouseTable(_) => "clickhouse_table",
+        SourceConfig::SessionStaging(_) => "session_staging",
         SourceConfig::Inline(_) => "inline",
     }
 }

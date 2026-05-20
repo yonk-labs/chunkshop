@@ -31,6 +31,7 @@ async fn create_table_overwrite_mode() -> anyhow::Result<()> {
         promote_metadata: vec![],
         force_overwrite: false,
         delete_orphans: false,
+        memory: None,
     };
     let backend = PostgresBackend::new(DSN_ENV.to_string());
     let sink = PgSink::new(cfg, backend, 8);
