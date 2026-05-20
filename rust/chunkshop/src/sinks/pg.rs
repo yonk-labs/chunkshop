@@ -21,6 +21,20 @@ pub struct PgSink {
     cfg: PostgresTargetConfig,
     backend: PostgresBackend,
     embed_dim: usize,
+    /// RM-A: when set, the row-id PK is prefixed with `{namespace}::` —
+    /// `{namespace}::{doc_id}::{seq_num}`. None preserves the historical
+    /// `{doc_id}::{seq_num}` shape. Set by `MemorySink` only; default-None
+    /// for every non-memory caller.
+    id_namespace: Option<String>,
+}
+
+impl PgSink {
+    /// RM-A: chain-style setter for the namespace-qualified row-id mode.
+    /// Used exclusively by `MemorySink::new`.
+    pub fn with_id_namespace(mut self, ns: impl Into<String>) -> Self {
+        self.id_namespace = Some(ns.into());
+        self
+    }
 }
 
 /// Traverse a dotted path through a JSON value. Returns `None` if any segment
@@ -57,7 +71,7 @@ fn canonical_cols<B: BackendDialect>(b: &B, dim: usize) -> Vec<ColSpec> {
 
 impl PgSink {
     pub fn new(cfg: PostgresTargetConfig, backend: PostgresBackend, embed_dim: usize) -> Self {
-        Self { cfg, backend, embed_dim }
+        Self { cfg, backend, embed_dim, id_namespace: None }
     }
 
     fn fq(&self) -> String {
@@ -299,7 +313,15 @@ impl Sink for PgSink {
                 .zip(embeddings.iter())
                 .zip(tags_per_chunk.iter())
             {
-                let id = format!("{}::{}", c.doc_id, c.seq_num);
+                // RM-A: MemorySink configures `id_namespace` to prefix the
+                // row-id PK with `{namespace}::`, preventing cross-namespace
+                // collisions (mirror of Python `3dbd12f`). When unset, the
+                // historical `{doc_id}::{seq_num}` shape is preserved
+                // byte-for-byte.
+                let id = match &self.id_namespace {
+                    Some(ns) => format!("{}::{}::{}", ns, c.doc_id, c.seq_num),
+                    None => format!("{}::{}", c.doc_id, c.seq_num),
+                };
                 let vec = Vector::from(emb.clone());
                 let meta_str = serde_json::to_string(&c.metadata)?;
 
