@@ -26,6 +26,12 @@ pub fn build_framer(cfg: FramerConfig) -> Result<Box<dyn FramerImpl + Send + Syn
         FramerConfig::HeadingBoundary(c) => Box::new(HeadingBoundaryFramer::new(c)?),
         FramerConfig::RegexBoundary(c) => Box::new(RegexBoundaryFramer::new(c)?),
         FramerConfig::Jsonpath(c) => Box::new(JsonPathFramer::new(c)),
+        FramerConfig::SessionEpisode(_) => {
+            return Err(anyhow!(
+                "session_episode framer not yet implemented in this build \
+                 (RM-A Task 6; tracking: chunkshop#9)"
+            ));
+        }
     })
 }
 

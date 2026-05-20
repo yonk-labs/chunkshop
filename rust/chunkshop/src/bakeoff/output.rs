@@ -485,5 +485,14 @@ fn framer_to_yaml_value(f: &crate::config::FramerConfig) -> Value {
             }
             Value::Object(m)
         }
+        F::SessionEpisode(s) => {
+            let mut m = serde_json::Map::new();
+            m.insert("type".into(), json!("session_episode"));
+            m.insert("max_gap_seconds".into(), json!(s.max_gap_seconds));
+            m.insert("max_turns".into(), json!(s.max_turns));
+            m.insert("max_words".into(), json!(s.max_words));
+            m.insert("boundary_on_tool".into(), json!(s.boundary_on_tool));
+            Value::Object(m)
+        }
     }
 }

@@ -195,6 +195,10 @@ pub enum FramerConfig {
     HeadingBoundary(HeadingBoundaryFramerConfig),
     RegexBoundary(RegexBoundaryFramerConfig),
     Jsonpath(JsonPathFramerConfig),
+    /// RM-A: agent-memory episode segmentation (gap-based + role/tool
+    /// boundary + max-turns/max-words). Mirror of Python
+    /// `chunkshop.framers.session_episode.SessionEpisodeFramer`.
+    SessionEpisode(SessionEpisodeFramerConfig),
 }
 
 impl Default for FramerConfig {
@@ -230,6 +234,37 @@ pub struct JsonPathFramerConfig {
     pub title_path: Option<String>,
     #[serde(default = "default_jsonpath_body")]
     pub body_path: String,
+}
+
+/// RM-A Task 2: gap- and turn-based session episode segmentation.
+/// Mirrors Python `SessionEpisodeFramerConfig`. All numeric fields default
+/// to match the Python defaults exactly so the same YAML drives both impls.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionEpisodeFramerConfig {
+    /// Episode boundary when the gap between consecutive events exceeds
+    /// this many seconds. Default 1800 (= 30 min, matches Python).
+    #[serde(default = "default_max_gap_seconds")]
+    pub max_gap_seconds: u64,
+    /// Boundary when an episode reaches this many turns. Default 40.
+    #[serde(default = "default_max_turns")]
+    pub max_turns: u32,
+    /// Boundary when an episode reaches this many words. Default 1200.
+    #[serde(default = "default_max_words")]
+    pub max_words: u32,
+    /// Place a boundary at the role change from non-tool to tool. Default true.
+    #[serde(default = "default_true")]
+    pub boundary_on_tool: bool,
+}
+
+fn default_max_gap_seconds() -> u64 {
+    1800
+}
+fn default_max_turns() -> u32 {
+    40
+}
+fn default_max_words() -> u32 {
+    1200
 }
 
 fn default_heading_pattern() -> String {
@@ -1826,6 +1861,74 @@ target:
         let msg = format!("{:#}", err);
         assert!(
             msg.contains("bogus_field") || msg.contains("unknown"),
+            "expected unknown-field complaint, got: {msg}"
+        );
+    }
+
+    // --- RM-A Task 2: SessionEpisodeFramerConfig --------------------------
+
+    #[test]
+    fn session_episode_framer_deserialises_with_defaults() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+framer: { type: session_episode }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        match cfg.framer {
+            FramerConfig::SessionEpisode(f) => {
+                assert_eq!(f.max_gap_seconds, 1800);   // python default
+                assert_eq!(f.max_turns, 40);
+                assert_eq!(f.max_words, 1200);
+                assert!(f.boundary_on_tool);
+            }
+            other => panic!("expected SessionEpisode framer; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn session_episode_framer_overrides_apply() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+framer:
+  type: session_episode
+  max_gap_seconds: 600
+  max_turns: 20
+  max_words: 500
+  boundary_on_tool: false
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        if let FramerConfig::SessionEpisode(f) = cfg.framer {
+            assert_eq!(f.max_gap_seconds, 600);
+            assert_eq!(f.max_turns, 20);
+            assert_eq!(f.max_words, 500);
+            assert!(!f.boundary_on_tool);
+        } else {
+            panic!("not session_episode");
+        }
+    }
+
+    #[test]
+    fn session_episode_framer_unknown_field_rejected() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+framer: { type: session_episode, bogus: 1 }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("bogus must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("bogus") || msg.contains("unknown"),
             "expected unknown-field complaint, got: {msg}"
         );
     }
