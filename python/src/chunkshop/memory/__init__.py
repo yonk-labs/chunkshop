@@ -8,5 +8,7 @@ deliberately NOT chunkshop.Pipeline (which requires an inline source).
 from chunkshop.memory.staging import (
     stage_event, stage_events, ensure_staging_table, prune_staging,
 )
+from chunkshop.memory.reader import read_pre_chunked
 
-__all__ = ["stage_event", "stage_events", "ensure_staging_table", "prune_staging"]
+__all__ = ["stage_event", "stage_events", "ensure_staging_table",
+           "prune_staging", "read_pre_chunked"]

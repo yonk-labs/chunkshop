@@ -621,3 +621,10 @@ Both presets read the DSN from `${CHUNKSHOP_MEMORY_DSN}`. There is no daemon —
 schedule the two `ingest` invocations externally, same as every other pattern above.
 Design rationale and the pg-raggraph fact contract:
 [`docs/superpowers/specs/2026-05-19-chunkshop-memory-primitives-sp-a-design.md`](superpowers/specs/2026-05-19-chunkshop-memory-primitives-sp-a-design.md).
+
+**Reading the consolidated store back out:** `chunkshop.memory.read_pre_chunked(dsn)`
+yields one record per session in the exact shape pg-raggraph's
+`GraphRAG.ingest_records()` accepts — episode chunks become `pre_chunked`
+entries, fact triples become `known_relationships`, and O2 (consolidated-wins)
+is enforced by default. End-to-end example:
+[`docs/samples/memory-to-pgraggraph/`](samples/memory-to-pgraggraph/).
