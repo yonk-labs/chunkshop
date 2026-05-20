@@ -78,6 +78,18 @@ impl PgSink {
         self.backend.fq_table(&self.cfg.database_name, &self.cfg.table)
     }
 
+    /// RM-A: `MemorySink` (which wraps `PgSink`) needs the fq table name
+    /// to issue the supersede DELETE and soft-invalidate UPDATE directly
+    /// against the same table the inner sink writes to.
+    pub fn fq_pub(&self) -> String {
+        self.fq()
+    }
+
+    /// RM-A: same — MemorySink scopes supersede/invalidate by source_tag.
+    pub fn source_tag(&self) -> Option<&str> {
+        self.cfg.source_tag.as_deref()
+    }
+
     /// Inherent accessor — used by `Pipeline::sample_row` (demo helper).
     /// NOT on the Sink trait; for v0.4.0 PG-only usage. Removed when Pipeline
     /// stops using raw pool access (separate cleanup task, post-R1).

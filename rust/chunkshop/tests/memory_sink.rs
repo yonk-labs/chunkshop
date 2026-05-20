@@ -241,6 +241,243 @@ async fn namespace_falls_back_to_source_tag_when_not_explicit() -> anyhow::Resul
     Ok(())
 }
 
+// --- RM-A Task 10: supersede + soft-invalidate ---------------------------
+
+fn fact_chunk(
+    doc_id: &str,
+    seq_num: usize,
+    subject: &str,
+    predicate: &str,
+    object: &str,
+    effective_from_iso: &str,
+) -> Chunk {
+    Chunk {
+        doc_id: doc_id.to_string(),
+        seq_num,
+        original_content: format!("{subject} {predicate} {object}"),
+        embedded_content: format!("{subject} {predicate} {object}"),
+        metadata: serde_json::json!({
+            "kind": "fact",
+            "session_id": doc_id,
+            "subject": subject,
+            "predicate": predicate,
+            "object": object,
+            "effective_from": effective_from_iso,
+        }),
+    }
+}
+
+fn mk_provisional(database: &str, source_tag: &str) -> PostgresTargetConfig {
+    let mut c = mk_cfg(database, source_tag, Some(source_tag));
+    if let Some(m) = c.memory.as_mut() {
+        m.tier = MemoryTier::Provisional;
+        m.supersede = false;
+    }
+    // Also need `object` + `effective_from` + `retracted` + `retracted_at`
+    // + `effective_to` promote columns for the soft-invalidate test.
+    c.promote_metadata.push(chunkshop::config::PromoteColumn {
+        path: "effective_from".into(),
+        type_: "timestamptz".into(),
+    });
+    c.promote_metadata.push(chunkshop::config::PromoteColumn {
+        path: "effective_to".into(),
+        type_: "timestamptz".into(),
+    });
+    c.promote_metadata.push(chunkshop::config::PromoteColumn {
+        path: "retracted".into(),
+        type_: "boolean".into(),
+    });
+    c.promote_metadata.push(chunkshop::config::PromoteColumn {
+        path: "retracted_at".into(),
+        type_: "timestamptz".into(),
+    });
+    c
+}
+
+fn mk_consolidated_with_promote(database: &str, source_tag: &str) -> PostgresTargetConfig {
+    let mut c = mk_provisional(database, source_tag);
+    if let Some(m) = c.memory.as_mut() {
+        m.tier = MemoryTier::Consolidated;
+        m.supersede = true;
+    }
+    c
+}
+
+#[tokio::test]
+async fn consolidated_supersedes_provisional_scoped_by_source() -> anyhow::Result<()> {
+    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
+    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let database = unique_database();
+    let backend = || PostgresBackend::new(DSN_ENV.to_string());
+
+    // ns1 provisional write
+    let prov_ns1 = MemorySink::new(mk_provisional(&database, "ns1"), backend(), 4);
+    prov_ns1.create_table().await?;
+    prov_ns1
+        .write_document("s1", &[chunk("s1", 0, "ns1 provisional", "episode", "s1")],
+                         &[vec![0.0; 4]], &[vec![]])
+        .await?;
+    // ns2 provisional write (same session) — different source_tag.
+    let prov_ns2 = MemorySink::new(mk_provisional(&database, "ns2"), backend(), 4);
+    prov_ns2
+        .write_document("s1", &[chunk("s1", 0, "ns2 provisional", "episode", "s1")],
+                         &[vec![0.0; 4]], &[vec![]])
+        .await?;
+    // ns1 consolidated write — must DELETE ns1 provisional but leave ns2 alone.
+    let cons_ns1 = MemorySink::new(mk_consolidated_with_promote(&database, "ns1"), backend(), 4);
+    cons_ns1
+        .write_document("s1", &[chunk("s1", 0, "ns1 consolidated", "episode", "s1")],
+                         &[vec![0.0; 4]], &[vec![]])
+        .await?;
+
+    let rows: Vec<(String, String)> = sqlx::query_as(&format!(
+        r#"SELECT source, tier FROM "{database}".memory WHERE doc_id = 's1' ORDER BY source, tier"#
+    ))
+    .fetch_all(&admin_pool)
+    .await?;
+    // Expected: ("ns1","consolidated") + ("ns2","provisional"). ns1 provisional gone.
+    let by_source_tier: Vec<(String, String)> = rows.into_iter().collect();
+    assert!(
+        by_source_tier.contains(&("ns1".into(), "consolidated".into())),
+        "ns1 consolidated missing: {by_source_tier:?}"
+    );
+    assert!(
+        by_source_tier.contains(&("ns2".into(), "provisional".into())),
+        "ns2 provisional must survive (different source): {by_source_tier:?}"
+    );
+    assert!(
+        !by_source_tier.contains(&("ns1".into(), "provisional".into())),
+        "ns1 provisional must be superseded: {by_source_tier:?}"
+    );
+
+    cleanup(&admin_pool, &database).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn double_consolidate_is_idempotent() -> anyhow::Result<()> {
+    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
+    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let database = unique_database();
+    let backend = || PostgresBackend::new(DSN_ENV.to_string());
+
+    // Two separate MemorySink instances (each gets a fresh `_superseded` set,
+    // so each will run the DELETE). Result must still be exactly 1 row.
+    let c1 = MemorySink::new(mk_consolidated_with_promote(&database, "ns1"), backend(), 4);
+    c1.create_table().await?;
+    c1.write_document("s1", &[chunk("s1", 0, "v1", "episode", "s1")],
+                       &[vec![0.0; 4]], &[vec![]])
+        .await?;
+    let c2 = MemorySink::new(mk_consolidated_with_promote(&database, "ns1"), backend(), 4);
+    c2.write_document("s1", &[chunk("s1", 0, "v2", "episode", "s1")],
+                       &[vec![0.0; 4]], &[vec![]])
+        .await?;
+
+    let n: i64 = sqlx::query_scalar(&format!(
+        r#"SELECT count(*) FROM "{database}".memory WHERE doc_id = 's1'"#
+    ))
+    .fetch_one(&admin_pool)
+    .await?;
+    assert_eq!(n, 1, "double-consolidate must converge to 1 row, got {n}");
+
+    let content: String = sqlx::query_scalar(&format!(
+        r#"SELECT original_content FROM "{database}".memory WHERE doc_id = 's1'"#
+    ))
+    .fetch_one(&admin_pool)
+    .await?;
+    assert_eq!(content, "v2", "second write wins after supersede");
+
+    cleanup(&admin_pool, &database).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn soft_invalidate_retracts_older_contradicting_fact() -> anyhow::Result<()> {
+    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
+    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let database = unique_database();
+    let backend = || PostgresBackend::new(DSN_ENV.to_string());
+
+    let sink = MemorySink::new(mk_consolidated_with_promote(&database, "ns1"), backend(), 4);
+    sink.create_table().await?;
+
+    // Old fact: queue uses redis, effective_from 2026-01-01.
+    sink.write_document(
+        "s1",
+        &[fact_chunk("s1", 0, "queue", "uses", "redis",
+                     "2026-01-01T00:00:00+00:00")],
+        &[vec![0.0; 4]],
+        &[vec![]],
+    )
+    .await?;
+    // Newer contradicting fact: queue uses postgres, effective_from 2026-03-01.
+    sink.write_document(
+        "s2",
+        &[fact_chunk("s2", 0, "queue", "uses", "postgres",
+                     "2026-03-01T00:00:00+00:00")],
+        &[vec![0.0; 4]],
+        &[vec![]],
+    )
+    .await?;
+
+    let rows: Vec<(String, bool, Option<String>)> = sqlx::query_as(&format!(
+        r#"SELECT object, retracted, effective_to::text
+           FROM "{database}".memory
+           WHERE kind = 'fact'
+           ORDER BY effective_from"#
+    ))
+    .fetch_all(&admin_pool)
+    .await?;
+    assert_eq!(rows.len(), 2, "expected 2 fact rows; got {rows:?}");
+    let (obj0, ret0, eff_to0) = &rows[0];
+    let (obj1, ret1, _eff_to1) = &rows[1];
+    assert_eq!(obj0, "redis");
+    assert!(*ret0, "older redis fact must be retracted");
+    assert!(eff_to0.as_ref().map(|s| s.starts_with("2026-03-01")).unwrap_or(false),
+            "effective_to on retracted row should be the newer effective_from: {eff_to0:?}");
+    assert_eq!(obj1, "postgres");
+    assert!(!*ret1, "current postgres fact must not be retracted");
+
+    cleanup(&admin_pool, &database).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn sparse_triple_is_no_op_on_invalidate() -> anyhow::Result<()> {
+    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
+    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let database = unique_database();
+    let backend = || PostgresBackend::new(DSN_ENV.to_string());
+
+    let sink = MemorySink::new(mk_consolidated_with_promote(&database, "ns1"), backend(), 4);
+    sink.create_table().await?;
+
+    // Fact chunk missing subject — the soft-invalidate path must skip it
+    // entirely (no UPDATE, no panic). Insert should still succeed.
+    let mut sparse = chunk("s1", 0, "no subject", "fact", "s1");
+    sparse.metadata = serde_json::json!({
+        "kind": "fact",
+        "session_id": "s1",
+        // intentionally no subject / predicate / object / effective_from
+    });
+    sink.write_document(
+        "s1",
+        std::slice::from_ref(&sparse),
+        &[vec![0.0; 4]],
+        &[vec![]],
+    )
+    .await?;
+    let n: i64 = sqlx::query_scalar(&format!(
+        r#"SELECT count(*) FROM "{database}".memory"#
+    ))
+    .fetch_one(&admin_pool)
+    .await?;
+    assert_eq!(n, 1, "sparse fact must still insert; invalidate must skip");
+
+    cleanup(&admin_pool, &database).await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn underscore_prefixed_metadata_keys_stripped() -> anyhow::Result<()> {
     let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };

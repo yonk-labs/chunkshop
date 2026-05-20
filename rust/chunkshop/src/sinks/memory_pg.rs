@@ -6,6 +6,7 @@
 //! is just the DDL + stamping piece.
 
 use std::future::Future;
+use std::sync::Mutex;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -26,6 +27,10 @@ pub struct MemorySink {
     /// Resolved namespace — falls back to `source_tag` when `mem.namespace`
     /// is None, matching Python's MemorySink behavior.
     namespace: String,
+    /// Per-run set of doc_ids already superseded — prevents a second
+    /// supersede DELETE for the same doc on a subsequent write_document
+    /// call within the same cell run. Mirror of Python `self._superseded`.
+    superseded: Mutex<std::collections::HashSet<String>>,
 }
 
 impl MemorySink {
@@ -41,7 +46,13 @@ impl MemorySink {
             .unwrap_or_else(|| "default".to_string());
         let recorded_at = now_iso();
         let inner = PgSink::new(cfg, backend, embed_dim).with_id_namespace(namespace.clone());
-        Self { inner, mem, recorded_at, namespace }
+        Self {
+            inner,
+            mem,
+            recorded_at,
+            namespace,
+            superseded: Mutex::new(std::collections::HashSet::new()),
+        }
     }
 
     /// Stamp memory-cell metadata onto a chunk. Mirror of Python
@@ -106,13 +117,86 @@ impl Sink for MemorySink {
         tags_per_chunk: &[Vec<String>],
     ) -> impl Future<Output = Result<()>> + Send {
         async move {
-            // Stamp memory metadata on every chunk before delegating. Task 10
-            // will add supersede (DELETE before INSERT for consolidated tier)
-            // and soft-invalidate around this call.
             let stamped: Vec<Chunk> = chunks.iter().map(|c| self.stamp(c)).collect();
+
+            // Supersede: for consolidated-tier writes, DELETE prior rows for
+            // this doc_id scoped by source_tag (so cross-namespace memory
+            // for the same session is left alone). Once per doc_id per run.
+            // Mirror of Python `MemorySink.write_document`'s supersede branch.
+            if self.mem.supersede && matches!(self.mem.tier, MemoryTier::Consolidated) {
+                let already = {
+                    let mut s = self.superseded.lock().unwrap();
+                    if s.contains(doc_id) {
+                        true
+                    } else {
+                        s.insert(doc_id.to_string());
+                        false
+                    }
+                };
+                if !already {
+                    let fq = self.inner.fq_pub();
+                    let source = self.inner.source_tag().unwrap_or("default");
+                    sqlx::query(&format!(
+                        "DELETE FROM {fq} WHERE doc_id = $1 AND source = $2"
+                    ))
+                    .bind(doc_id)
+                    .bind(source)
+                    .execute(self.inner.pool().await?)
+                    .await?;
+                }
+            }
+
+            // The actual insert.
             self.inner
                 .write_document(doc_id, &stamped, embeddings, tags_per_chunk)
-                .await
+                .await?;
+
+            // Soft-invalidate: for each fact chunk with a populated SPO
+            // triple AND effective_from, retract prior same-(subject,predicate)
+            // facts whose effective_from is older AND that are not already
+            // retracted. Scoped by source_tag — cross-namespace facts are
+            // independent. Explicit ::timestamptz casts so the ISO-string
+            // params line up with the column type unambiguously.
+            let source = self.inner.source_tag().unwrap_or("default");
+            let fq = self.inner.fq_pub();
+            for c in stamped.iter() {
+                let meta = match c.metadata.as_object() {
+                    Some(m) => m,
+                    None => continue,
+                };
+                if meta.get("kind").and_then(|v| v.as_str()) != Some("fact") {
+                    continue;
+                }
+                let subject = match meta.get("subject").and_then(|v| v.as_str()) {
+                    Some(s) if !s.is_empty() => s,
+                    _ => continue,                            // sparse triple → no-op
+                };
+                let predicate = match meta.get("predicate").and_then(|v| v.as_str()) {
+                    Some(s) if !s.is_empty() => s,
+                    _ => continue,
+                };
+                let effective_from = match meta.get("effective_from").and_then(|v| v.as_str()) {
+                    Some(s) if !s.is_empty() => s,
+                    _ => continue,                            // need timestamp to compare
+                };
+                sqlx::query(&format!(
+                    "UPDATE {fq} \
+                     SET retracted = true, retracted_at = now(), \
+                         effective_to = $1::timestamptz \
+                     WHERE source = $2 AND subject = $3 AND predicate = $4 \
+                       AND effective_from < $5::timestamptz \
+                       AND coalesce(retracted, false) = false"
+                ))
+                .bind(effective_from)
+                .bind(source)
+                .bind(subject)
+                .bind(predicate)
+                .bind(effective_from)
+                .execute(self.inner.pool().await?)
+                .await?;
+            }
+
+            Ok(())
         }
     }
 
