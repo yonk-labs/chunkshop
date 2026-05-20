@@ -69,6 +69,11 @@ pub mod sources;
 // RM-A: zero-network Rust consolidator default + trait. Always-on (only the
 // staging/source/sink layer is `memory`-feature-gated).
 pub mod consolidators;
+/// RM-A: agent-memory staging API — chunkshop-owned append-only session
+/// staging table with deterministic event_id derivation (byte-identical
+/// to Python `chunkshop.memory.staging`).
+#[cfg(feature = "memory")]
+pub mod memory;
 #[cfg(feature = "chunkers")]
 pub mod summarizer;
 

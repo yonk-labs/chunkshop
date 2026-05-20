@@ -38,6 +38,7 @@ fn framer_type_label(f: &FramerConfig) -> &'static str {
         FramerConfig::HeadingBoundary(_) => "heading_boundary",
         FramerConfig::RegexBoundary(_) => "regex_boundary",
         FramerConfig::Jsonpath(_) => "jsonpath",
+        FramerConfig::SessionEpisode(_) => "session_episode",
     }
 }
 
@@ -50,6 +51,7 @@ fn chunker_type_label(c: &ChunkerConfig) -> &'static str {
         ChunkerConfig::Semantic(_) => "semantic",
         ChunkerConfig::SummaryEmbed(_) => "summary_embed",
         ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
+        ChunkerConfig::Consolidation(_) => "consolidation",
     }
 }
 
