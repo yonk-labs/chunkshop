@@ -46,6 +46,10 @@ pub mod mariadb_table;
 pub mod pg_table;
 #[cfg(all(feature = "source", feature = "sink"))]
 pub mod sqlite_table;
+// RM-A Task 5: agent-memory staging-table source. Lives behind the `memory`
+// feature (which itself requires `source` + `sink`).
+#[cfg(feature = "memory")]
+pub mod session_staging;
 
 #[cfg(all(feature = "source", feature = "sink"))]
 pub use clickhouse_table::ClickhouseTableSource;
@@ -55,6 +59,8 @@ pub use mariadb_table::MariadbTableSource;
 pub use pg_table::PgTableSource;
 #[cfg(all(feature = "source", feature = "sink"))]
 pub use sqlite_table::SqliteTableSource;
+#[cfg(feature = "memory")]
+pub use session_staging::SessionStagingSource;
 
 /// Sum type for runtime polymorphism. R1 shipped the original 5 sources.
 /// R2/R3/R4 added MariadbTable, SqliteTable, ClickhouseTable respectively.
@@ -72,6 +78,8 @@ pub enum AnySource {
     Http(HttpSource),
     S3(S3Source),
     ClickhouseTable(ClickhouseTableSource),
+    #[cfg(feature = "memory")]
+    SessionStaging(SessionStagingSource),
 }
 
 #[cfg(all(feature = "source", feature = "sink"))]
@@ -86,6 +94,8 @@ impl AnySource {
             AnySource::Http(s) => s.iter_documents().await,
             AnySource::S3(s) => s.iter_documents().await,
             AnySource::ClickhouseTable(s) => s.iter_documents().await,
+            #[cfg(feature = "memory")]
+            AnySource::SessionStaging(s) => s.iter_documents().await,
         }
     }
 }
@@ -107,9 +117,13 @@ pub fn load_source(cfg: &SourceConfig) -> Result<AnySource> {
         SourceConfig::ClickhouseTable(c) => Ok(AnySource::ClickhouseTable(
             ClickhouseTableSource::new(c.clone()),
         )),
+        #[cfg(feature = "memory")]
+        SourceConfig::SessionStaging(c) => Ok(AnySource::SessionStaging(
+            SessionStagingSource::new(c.clone()),
+        )),
+        #[cfg(not(feature = "memory"))]
         SourceConfig::SessionStaging(_) => Err(anyhow!(
-            "session_staging source not yet implemented in this build \
-             (RM-A Task 5; tracking: chunkshop#9)"
+            "session_staging source requires the `memory` feature (RM-A; chunkshop#9)"
         )),
         SourceConfig::Inline(_) => Err(anyhow!(
             "inline source is not used via load_source — Pipeline::new handles it directly"
