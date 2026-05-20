@@ -185,10 +185,55 @@ embedder:
 def validate(config: Path):
     """Validate a YAML config without running it. Exits 0 if valid, non-zero otherwise.
 
-    Loads the config, runs pydantic validation, and reports the resolved
-    source/chunker/embedder/target shape. Does NOT open DB connections or
-    create tables — useful for fast iteration on config edits.
+    Detects config shape from the YAML doc — an ingest cell vs a
+    `chunkshop bakeoff` matrix config — and dispatches to the right
+    pydantic schema. Reports the resolved shape on success. Does NOT
+    open DB connections or create tables — useful for fast iteration
+    on config edits.
+
+    Closes #10 — prior behavior was to assume ingest-cell shape and
+    surface a wall of `extra_forbidden` errors when given a bakeoff
+    config. Now both shapes validate cleanly via the same CLI.
     """
+    import yaml
+    try:
+        doc = yaml.safe_load(config.read_text())
+    except Exception as e:
+        click.echo(f"[validate] FAIL: {e}", err=True)
+        sys.exit(1)
+
+    if not isinstance(doc, dict):
+        click.echo(
+            f"[validate] FAIL: top-level YAML must be a mapping, got "
+            f"{type(doc).__name__}",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Bakeoff configs are identified by the two fields that ONLY exist
+    # in BakeoffConfig (and never in CellConfig): `matrix` and `gold_queries`.
+    is_bakeoff = "matrix" in doc and "gold_queries" in doc
+
+    if is_bakeoff:
+        from chunkshop.bakeoff.config import BakeoffConfig
+        try:
+            cfg = BakeoffConfig.model_validate(doc)
+        except Exception as e:
+            click.echo(f"[validate] FAIL (bakeoff config): {e}", err=True)
+            sys.exit(1)
+        n_embedders = len(cfg.matrix.embedders)
+        n_chunkers = len(cfg.matrix.chunkers)
+        n_targets = len(cfg.targets)
+        click.echo(f"[validate] OK (bakeoff config) — {cfg.name!r}")
+        click.echo(f"  source:   {cfg.source.type}")
+        click.echo(
+            f"  matrix:   {n_embedders} embedders × {n_chunkers} chunkers "
+            f"× {n_targets} targets = {n_embedders * n_chunkers * n_targets} combos"
+        )
+        click.echo(f"  targets:  {[t.type for t in cfg.targets]}")
+        return
+
+    # Default path: ingest cell.
     try:
         cfg = load_config(config)
     except Exception as e:
