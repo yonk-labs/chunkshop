@@ -1556,13 +1556,160 @@ pub fn build_chunker(cfg: ChunkerConfig) -> anyhow::Result<Box<dyn ChunkerImpl +
                 if_oversize_cfg,
             ))
         }
-        ChunkerConfig::Consolidation(_) => {
-            return Err(anyhow::anyhow!(
-                "consolidation chunker not yet implemented in this build \
-                 (RM-A Task 8; tracking: chunkshop#9)"
-            ));
+        ChunkerConfig::Consolidation(c) => {
+            let base = build_chunker(*c.base)?;
+            let consolidator = crate::consolidators::build_consolidator(&c.consolidator);
+            let fact_max_chars = c.fact_max_chars;
+            Box::new(ConsolidationChunker::new(base, consolidator, fact_max_chars))
         }
     })
+}
+
+// --- RM-A Task 8: ConsolidationChunker --------------------------------------
+
+/// Wraps a base chunker. For each input Document (one episode produced by
+/// `SessionEpisodeFramer`), emits the base chunker's chunks stamped
+/// `kind=episode`, plus one `kind=fact` chunk per SPO triple returned by
+/// the wired `Consolidator`. O4 resilience: if the consolidator errors,
+/// emit only the episode chunks with `consolidation_error=<msg>` stamped
+/// in metadata — never raise.
+///
+/// Mirror of Python `chunkshop.chunkers.consolidation.ConsolidationChunker`.
+pub struct ConsolidationChunker {
+    base: Box<dyn ChunkerImpl + Send + Sync>,
+    consolidator: Box<dyn crate::consolidators::Consolidator>,
+    fact_max_chars: usize,
+}
+
+impl ConsolidationChunker {
+    pub fn new(
+        base: Box<dyn ChunkerImpl + Send + Sync>,
+        consolidator: Box<dyn crate::consolidators::Consolidator>,
+        fact_max_chars: usize,
+    ) -> Self {
+        Self {
+            base,
+            consolidator,
+            fact_max_chars,
+        }
+    }
+}
+
+impl ChunkerImpl for ConsolidationChunker {
+    fn chunk(&self, doc: &Document) -> Vec<Chunk> {
+        use serde_json::{json, Value};
+
+        let extractor_mode = self.consolidator.mode();
+        let session_id_value = doc
+            .metadata
+            .get("session_id")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let start_ts = doc
+            .metadata
+            .get("episode_start_ts")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let end_ts = doc
+            .metadata
+            .get("episode_end_ts")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let frame_seq = doc
+            .metadata
+            .get("frame_seq")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let session_id_str = session_id_value.as_str().unwrap_or(&doc.id);
+
+        let episode_input = crate::consolidators::EpisodeInput {
+            text: &doc.content,
+            frame_seq,
+            session_id: session_id_str,
+            episode_start_ts: start_ts,
+            episode_end_ts: end_ts,
+        };
+
+        let mut out = self.base.chunk(doc);
+
+        // Stamp `kind=episode` + extractor + episode_end_ts on the base
+        // chunks (chunker-wins layering — these survive downstream merges).
+        for c in out.iter_mut() {
+            if let Some(obj) = c.metadata.as_object_mut() {
+                obj.insert("kind".into(), Value::String("episode".into()));
+                obj.insert("extractor".into(), Value::String(extractor_mode.into()));
+                if !obj.contains_key("session_id") && !session_id_value.is_null() {
+                    obj.insert("session_id".into(), session_id_value.clone());
+                }
+                obj.insert("episode_end_ts".into(), json!(end_ts));
+            }
+        }
+
+        let next_seq_base = out.len();
+
+        // O4 resilience: consolidator error → episode-only emission with
+        // consolidation_error stamped. Never propagate the error.
+        let cons_out = match self.consolidator.consolidate(&episode_input) {
+            Ok(o) => o,
+            Err(e) => {
+                let msg = format!("{:#}", e);
+                for c in out.iter_mut() {
+                    if let Some(obj) = c.metadata.as_object_mut() {
+                        obj.insert("consolidation_error".into(), Value::String(msg.clone()));
+                    }
+                }
+                return out;
+            }
+        };
+
+        // Emit one fact chunk per triple.
+        for (i, fact) in cons_out.facts.iter().enumerate() {
+            let text_full = format!(
+                "{} {} {}",
+                fact.subject.trim(),
+                fact.predicate.trim(),
+                fact.object.trim()
+            );
+            let truncated = take_chars(&text_full, self.fact_max_chars);
+            let support = fact
+                .support_span
+                .as_ref()
+                .map(|s| take_chars(s, self.fact_max_chars))
+                .unwrap_or_default();
+
+            let mut meta = serde_json::Map::new();
+            meta.insert("kind".into(), Value::String("fact".into()));
+            meta.insert("extractor".into(), Value::String(extractor_mode.into()));
+            if !session_id_value.is_null() {
+                meta.insert("session_id".into(), session_id_value.clone());
+            }
+            meta.insert("subject".into(), Value::String(fact.subject.clone()));
+            meta.insert("predicate".into(), Value::String(fact.predicate.clone()));
+            meta.insert("object".into(), Value::String(fact.object.clone()));
+            if !support.is_empty() {
+                meta.insert("support_span".into(), Value::String(support));
+            }
+            if let Some(conf) = fact.confidence {
+                meta.insert("confidence".into(), json!(conf));
+            }
+            meta.insert("source_chunk_seq".into(), json!(i as u64));
+            meta.insert("episode_end_ts".into(), json!(end_ts));
+
+            out.push(Chunk {
+                doc_id: doc.id.clone(),
+                seq_num: next_seq_base + i,
+                original_content: truncated.clone(),
+                embedded_content: truncated,
+                metadata: Value::Object(meta),
+            });
+        }
+
+        out
+    }
+}
+
+fn take_chars(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
 }
 
 #[cfg(test)]
@@ -1919,5 +2066,142 @@ mod tests {
         ];
         let sizes = group_sizes(HierarchicalGrouping::SectionAware, chunks);
         assert_eq!(sizes, vec![2, 3, 1]);
+    }
+
+    // --- RM-A Task 8: ConsolidationChunker --------------------------------
+
+    use crate::consolidators::{
+        ConsolidationOutput, Consolidator, EpisodeInput, FactTriple,
+    };
+
+    /// Test double: emits N synthetic facts.
+    struct FakeCons {
+        facts: Vec<FactTriple>,
+        mode: &'static str,
+    }
+    impl Consolidator for FakeCons {
+        fn consolidate(&self, _e: &EpisodeInput<'_>) -> anyhow::Result<ConsolidationOutput> {
+            Ok(ConsolidationOutput {
+                summary: "fake summary".into(),
+                facts: self.facts.clone(),
+            })
+        }
+        fn mode(&self) -> &'static str {
+            self.mode
+        }
+    }
+
+    /// Test double: always errors.
+    struct ErrCons;
+    impl Consolidator for ErrCons {
+        fn consolidate(&self, _e: &EpisodeInput<'_>) -> anyhow::Result<ConsolidationOutput> {
+            Err(anyhow::anyhow!("simulated consolidator failure"))
+        }
+        fn mode(&self) -> &'static str {
+            "broken"
+        }
+    }
+
+    fn episode_doc(text: &str) -> Document {
+        Document {
+            id: "s1".into(),
+            content: text.into(),
+            title: None,
+            metadata: serde_json::json!({
+                "session_id": "s1",
+                "frame_seq": 0u64,
+                "episode_start_ts": 100.0_f64,
+                "episode_end_ts": 200.0_f64,
+            }),
+        }
+    }
+
+    fn fact(subj: &str, pred: &str, obj: &str) -> FactTriple {
+        FactTriple {
+            subject: subj.into(),
+            predicate: pred.into(),
+            object: obj.into(),
+            support_span: Some(format!("because: {} {}", subj, obj)),
+            confidence: Some(0.8),
+        }
+    }
+
+    fn base_chunker() -> Box<dyn ChunkerImpl + Send + Sync> {
+        Box::new(SentenceAwareChunker::new(SentenceAwareChunkerConfig {
+            doc_type: "prose".into(),
+            max_chars: 2000,
+            min_chars: 50,
+            if_oversize: None,
+        }))
+    }
+
+    #[test]
+    fn consolidation_emits_episode_plus_one_fact_per_triple() {
+        let cons = Box::new(FakeCons {
+            facts: vec![fact("queue", "uses", "postgres"), fact("api", "calls", "search")],
+            mode: "fake",
+        });
+        let chunker = ConsolidationChunker::new(base_chunker(), cons, 1200);
+        let doc = episode_doc("We migrated the queue to postgres. The api calls search.");
+        let chunks = chunker.chunk(&doc);
+        let kinds: Vec<&str> = chunks
+            .iter()
+            .map(|c| c.metadata["kind"].as_str().unwrap_or(""))
+            .collect();
+        assert!(kinds.iter().any(|k| *k == "episode"), "missing episode kind: {kinds:?}");
+        let fact_count = kinds.iter().filter(|k| **k == "fact").count();
+        assert_eq!(fact_count, 2, "expected 2 fact chunks; got {kinds:?}");
+        // SPO populated
+        let fact_chunk = chunks.iter().find(|c| c.metadata["kind"] == "fact").unwrap();
+        assert_eq!(fact_chunk.metadata["subject"], "queue");
+        assert_eq!(fact_chunk.metadata["predicate"], "uses");
+        assert_eq!(fact_chunk.metadata["object"], "postgres");
+        assert_eq!(fact_chunk.metadata["extractor"], "fake");
+        assert!(fact_chunk.metadata.get("support_span").is_some());
+    }
+
+    #[test]
+    fn consolidation_fact_chunk_truncated_to_fact_max_chars() {
+        let long_obj = "x".repeat(2000);
+        let cons = Box::new(FakeCons {
+            facts: vec![fact("s", "p", &long_obj)],
+            mode: "fake",
+        });
+        let chunker = ConsolidationChunker::new(base_chunker(), cons, 200);
+        let chunks = chunker.chunk(&episode_doc("episode body."));
+        let fact_chunk = chunks.iter().find(|c| c.metadata["kind"] == "fact").unwrap();
+        assert!(fact_chunk.original_content.chars().count() <= 200);
+    }
+
+    #[test]
+    fn consolidation_o4_resilience_on_consolidator_error() {
+        let chunker = ConsolidationChunker::new(base_chunker(), Box::new(ErrCons), 1200);
+        let chunks = chunker.chunk(&episode_doc("an episode."));
+        // O4: only episode chunks; zero facts; consolidation_error stamped.
+        let kinds: Vec<&str> = chunks
+            .iter()
+            .map(|c| c.metadata["kind"].as_str().unwrap_or(""))
+            .collect();
+        assert!(kinds.iter().all(|k| *k == "episode"), "no facts allowed: {kinds:?}");
+        assert!(!chunks.is_empty(), "should still emit episode chunks");
+        for c in &chunks {
+            assert!(
+                c.metadata.get("consolidation_error").is_some(),
+                "missing consolidation_error stamp: {:?}",
+                c.metadata
+            );
+        }
+    }
+
+    #[test]
+    fn consolidation_episode_carries_session_id_and_extractor() {
+        let cons = Box::new(FakeCons { facts: vec![], mode: "extractive" });
+        let chunker = ConsolidationChunker::new(base_chunker(), cons, 1200);
+        let chunks = chunker.chunk(&episode_doc("hello world. another sentence here."));
+        for c in chunks.iter().filter(|c| c.metadata["kind"] == "episode") {
+            assert_eq!(c.metadata["session_id"], "s1");
+            assert_eq!(c.metadata["extractor"], "extractive");
+            assert_eq!(c.metadata["episode_end_ts"], 200.0);
+        }
     }
 }
