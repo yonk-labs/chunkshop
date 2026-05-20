@@ -236,7 +236,7 @@ wheels = [
 
 [[package]]
 name = "chunkshop"
-version = "0.4.3"
+version = "0.4.5"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.4.5 — 2026-05-20
+
+The Rust agent-memory port lands. The rest of the release is docs +
+ergonomics that came out of integrating the new memory surface.
+
 ### Rust — RM-A (agent memory port; chunkshop#9)
 
 Rust now has full SP-A parity. The crate (`chunkshop-rs`) ships the same
@@ -43,6 +48,42 @@ Tests: 30 unit (config + framer + consolidator + chunker + iso helpers)
 + 22 PG integration (staging, source with O1, sink with supersede/
 soft-invalidate, e2e composing the full pipeline, O1+O3 resilience).
 All green. Spec: `docs/superpowers/specs/2026-05-19-chunkshop-rm-a-rust-memory-primitives-design.md`.
+
+### CLI
+
+- **`validate` detects bakeoff configs.** Previously, `chunkshop validate
+  --config docs/samples/bakeoff.yaml` printed a wall of cryptic pydantic
+  `extra_forbidden` errors because `validate` always assumed an ingest-
+  cell shape. Now it sniffs the YAML for the two fields unique to
+  `BakeoffConfig` (`matrix` + `gold_queries`) and dispatches to the
+  right schema:
+
+      $ chunkshop validate --config docs/samples/bakeoff.yaml
+      [validate] OK (bakeoff config) — 'samples_bakeoff'
+        source:   files
+        matrix:   3 embedders × 2 chunkers × 3 targets = 18 combos
+        targets:  ['postgres', 'mariadb', 'sqlite']
+
+  Closes #10. Ingest-cell path is unchanged.
+
+### Docs
+
+- **`docs/architecture/memory-sink.md`** — full user-facing architecture
+  write-up for MemorySink. Data-flow diagram, two-tier semantics, row
+  identity + namespace scoping, the O1 data-loss bug walk-through,
+  crash-safety (O3), consolidator seam (Python callable vs Rust trait),
+  pg-raggraph fact contract, explicit out-of-scope list.
+- **`docs/samples/memory-scheduling/`** — four working scheduling
+  patterns for the two-cell pattern: `cron/` (cron file + systemd
+  `.service` / `.timer` units), `k8s-cronjob/` (ConfigMap + two CronJob
+  manifests, sized appropriately), `in-process-python/` (asyncio
+  scheduler + FastAPI lifespan integration + end-to-end demo),
+  `in-process-rust/` (tokio mirror, axum integration + demo).
+- **`docs/incremental.md`** Agent-memory section links to both.
+
+### Issue references
+
+- Closed: #9 (RM-A wave), #10 (validate bakeoff configs).
 
 ## 0.4.4 — 2026-05-19
 
