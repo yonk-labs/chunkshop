@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: chunkshop-memory-realtime
+spec:
+  schedule: "* * * * *"
+  # Forbid prevents overlap if a run goes long — the watermark advance
+  # is single-writer-safe but you still don't want pile-up.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: chunkshop
+            image: ghcr.io/yonk-labs/chunkshop:0.4.4
+            imagePullPolicy: IfNotPresent
+            command: ["chunkshop", "ingest", "--config", "/etc/chunkshop/memory/realtime.yaml"]
+            env:
+            - name: CHUNKSHOP_MEMORY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: chunkshop-pg
+                  key: dsn
+            volumeMounts:
+            - name: configs
+              mountPath: /etc/chunkshop/memory
+            resources:
+              requests: { cpu: "100m", memory: "256Mi" }
+              limits:   { cpu: "500m", memory: "1Gi"  }
+          volumes:
+          - name: configs
+            configMap:
+              name: chunkshop-memory-configs

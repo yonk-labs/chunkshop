@@ -1,0 +1,23 @@
+# /etc/cron.d/chunkshop-memory
+# chunkshop two-cell agent memory schedule.
+# Edit the DSN line below for your environment, then `sudo cp` into place.
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+CHUNKSHOP_MEMORY_DSN=postgresql://app:secret@db.internal:5432/agent_memory
+
+# Realtime: every minute. Fast (<1s for typical agent volume).
+# Writes `tier='provisional'` rows so a fresh agent reply has memory
+# within ~1 minute of the last user turn.
+* * * * *   app   chunkshop ingest --config /etc/chunkshop/memory/realtime.yaml >> /var/log/chunkshop-realtime.log 2>&1
+
+# Consolidate: nightly at 02:30. Heavier — segments quiet sessions
+# into episodes, extracts SPO facts via your wired consolidator,
+# supersedes the provisional rows. Min-age default in the YAML is
+# 3600s (1 hour) so active conversations aren't consolidated mid-flight.
+30 2 * * *  app   chunkshop ingest --config /etc/chunkshop/memory/consolidate.yaml >> /var/log/chunkshop-consolidate.log 2>&1
+
+# Prune: weekly. Drops staging rows older than 30 days that have been
+# consolidated. Keeps the staging table tidy without losing data that
+# might still need re-consolidation.
+0 3 * * 0   app   python3 -c "from chunkshop.memory import prune_staging; import os, datetime; cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=30)).isoformat(); n = prune_staging(os.environ['CHUNKSHOP_MEMORY_DSN'], older_than=cutoff, table='chunkshop_staging'); print(f'pruned {n} rows')" >> /var/log/chunkshop-prune.log 2>&1

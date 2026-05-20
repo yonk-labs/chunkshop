@@ -1,0 +1,115 @@
+# ConfigMap mounting the two memory preset YAMLs into the CronJob pods.
+# Production tip: pin to a tagged commit by sourcing these from your
+# image instead of a ConfigMap if you want immutable configs per release.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chunkshop-memory-configs
+data:
+  realtime.yaml: |
+    cell_name: memory_realtime
+    source:
+      type: session_staging
+      dsn: "${CHUNKSHOP_MEMORY_DSN}"
+      dsn_env: CHUNKSHOP_MEMORY_DSN
+      staging_table: chunkshop_staging
+      staging_schema: public
+      mode: realtime
+    framer:
+      type: identity
+    chunker:
+      type: fixed_overlap
+      window_words: 150
+      step_words: 75
+    embedder:
+      type: fastembed
+      model_name: Xenova/bge-small-en-v1.5-int8
+      dim: 384
+      threads: 2
+    target:
+      type: postgres
+      dsn: "${CHUNKSHOP_MEMORY_DSN}"
+      dsn_env: CHUNKSHOP_MEMORY_DSN
+      database: agent_memory
+      table: memory
+      mode: create_if_missing
+      source_tag: default
+      memory:
+        tier: provisional
+        supersede: false
+      promote_metadata:
+        - { path: kind,        type: text }
+        - { path: session_id,  type: text }
+        - { path: namespace,   type: text }
+        - { path: tier,        type: text }
+        - { path: recorded_at, type: timestamptz }
+    runtime:
+      omp_num_threads: 2
+      heartbeat_every: 25
+
+  consolidate.yaml: |
+    cell_name: memory_consolidate
+    source:
+      type: session_staging
+      dsn: "${CHUNKSHOP_MEMORY_DSN}"
+      dsn_env: CHUNKSHOP_MEMORY_DSN
+      staging_table: chunkshop_staging
+      staging_schema: public
+      mode: consolidate
+      min_age_seconds: 3600
+    framer:
+      type: session_episode
+      max_gap_seconds: 1800
+      max_turns: 40
+      max_words: 1200
+    chunker:
+      type: consolidation
+      base:
+        type: sentence_aware
+        max_chars: 2000
+        min_chars: 200
+      consolidator:
+        # Python uses `mode: callable` + module/function. To wire an
+        # LLM consolidator, replace this block. The zero-network
+        # extractive default does NOT extract SPO facts — episode rows
+        # only — so structured fact extraction needs an LLM you wire.
+        mode: callable
+        module: chunkshop.consolidators.extractive
+        function: consolidate
+      fact_max_chars: 1200
+    embedder:
+      type: fastembed
+      model_name: Xenova/bge-small-en-v1.5-int8
+      dim: 384
+      threads: 4
+    target:
+      type: postgres
+      dsn: "${CHUNKSHOP_MEMORY_DSN}"
+      dsn_env: CHUNKSHOP_MEMORY_DSN
+      database: agent_memory
+      table: memory
+      mode: create_if_missing
+      source_tag: default
+      memory:
+        tier: consolidated
+        supersede: true
+      promote_metadata:
+        - { path: kind,             type: text }
+        - { path: session_id,       type: text }
+        - { path: namespace,        type: text }
+        - { path: tier,             type: text }
+        - { path: recorded_at,      type: timestamptz }
+        - { path: subject,          type: text }
+        - { path: predicate,        type: text }
+        - { path: object,           type: text }
+        - { path: support_span,     type: text }
+        - { path: confidence,       type: text }
+        - { path: effective_from,   type: timestamptz }
+        - { path: effective_to,     type: timestamptz }
+        - { path: retracted,        type: boolean }
+        - { path: retracted_at,     type: timestamptz }
+        - { path: source_chunk_seq, type: int }
+        - { path: extractor,        type: text }
+    runtime:
+      omp_num_threads: 2
+      heartbeat_every: 25

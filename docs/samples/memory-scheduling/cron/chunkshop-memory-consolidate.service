@@ -1,0 +1,23 @@
+[Unit]
+Description=chunkshop memory — consolidate tier (one-shot)
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=app
+Group=app
+EnvironmentFile=/etc/chunkshop/env
+ExecStart=/usr/local/bin/chunkshop ingest --config /etc/chunkshop/memory/consolidate.yaml
+StandardOutput=journal
+StandardError=journal
+
+# Consolidate can be slow if you wired an LLM consolidator — give it room.
+# Adjust based on your typical session volume.
+TimeoutStartSec=30min
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/log
+ProtectHome=true
+PrivateTmp=true

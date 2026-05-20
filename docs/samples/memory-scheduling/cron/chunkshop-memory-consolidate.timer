@@ -1,0 +1,12 @@
+[Unit]
+Description=chunkshop consolidate — nightly 02:30
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+AccuracySec=1min
+# If the box was off when 02:30 hit, fire the consolidate run on the
+# next start instead of skipping it.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

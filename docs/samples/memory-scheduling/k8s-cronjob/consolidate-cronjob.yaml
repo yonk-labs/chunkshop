@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: chunkshop-memory-consolidate
+spec:
+  schedule: "30 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      # Up to 30 min for the consolidate run. Increase if you wired a
+      # slow LLM consolidator and your session volume is heavy.
+      activeDeadlineSeconds: 1800
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: chunkshop
+            image: ghcr.io/yonk-labs/chunkshop:0.4.4
+            imagePullPolicy: IfNotPresent
+            command: ["chunkshop", "ingest", "--config", "/etc/chunkshop/memory/consolidate.yaml"]
+            env:
+            - name: CHUNKSHOP_MEMORY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: chunkshop-pg
+                  key: dsn
+            volumeMounts:
+            - name: configs
+              mountPath: /etc/chunkshop/memory
+            resources:
+              # Higher than realtime — embedder + (optionally) LLM
+              # consolidator pulling its weight here.
+              requests: { cpu: "500m", memory: "1Gi" }
+              limits:   { cpu: "2",    memory: "4Gi" }
+          volumes:
+          - name: configs
+            configMap:
+              name: chunkshop-memory-configs

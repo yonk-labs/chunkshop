@@ -629,6 +629,13 @@ entries, fact triples become `known_relationships`, and O2 (consolidated-wins)
 is enforced by default. End-to-end example:
 [`docs/samples/memory-to-pgraggraph/`](samples/memory-to-pgraggraph/).
 
+**Architecture write-up:** [`docs/architecture/memory-sink.md`](architecture/memory-sink.md) —
+two-tier semantics, row identity, late-event rebuild (O1), crash-safety
+(O3), the consolidator seam, and the pg-raggraph fact contract.
+**Scheduling patterns:** [`docs/samples/memory-scheduling/`](samples/memory-scheduling/) —
+cron + systemd timer, k8s CronJob, in-process Python (asyncio),
+in-process Rust (tokio).
+
 ### Rust port (RM-A, tracked at chunkshop#9)
 
 The Rust crate has the same two-cell pattern from chunkshop-rs 0.4.5+
