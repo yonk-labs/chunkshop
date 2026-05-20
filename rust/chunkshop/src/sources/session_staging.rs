@@ -19,7 +19,7 @@
 //! Mirror of Python `chunkshop.sources.session_staging.SessionStagingSource`.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
@@ -68,6 +68,14 @@ fn resolve_dsn(cfg: &SessionStagingSourceConfig) -> Result<String> {
 pub struct SessionStagingSource {
     cfg: SessionStagingSourceConfig,
     pool: OnceCell<PgPool>,
+    /// O3 crash-safety: iter_documents() stores (watermark_iso, key,
+    /// emitted_sessions) here; the watermark UPDATE is deferred to an
+    /// explicit `commit_processed()` call the runner makes AFTER the
+    /// per-doc write loop succeeds. If the loop errors mid-iteration,
+    /// commit_processed() never runs and the next run reselects everything.
+    /// Mirror of Python's generator semantics (the UPDATE runs after all
+    /// yields complete, never reached on a mid-yield crash).
+    pending_watermark: Mutex<Option<(String, &'static str, Vec<String>)>>,
 }
 
 impl SessionStagingSource {
@@ -75,7 +83,40 @@ impl SessionStagingSource {
         Self {
             cfg,
             pool: OnceCell::new(),
+            pending_watermark: Mutex::new(None),
         }
+    }
+
+    /// O3: advance the per-session watermark for sessions emitted by the
+    /// most recent `iter_documents()` call. The runner MUST call this
+    /// after the per-doc write loop succeeds. If it isn't called (mid-loop
+    /// crash or early return), the watermark stays unadvanced and the
+    /// next run reselects the same sessions — same crash-safety the
+    /// Python generator semantics provide.
+    pub async fn commit_processed(&self) -> Result<()> {
+        let pending = self.pending_watermark.lock().unwrap().take();
+        let Some((watermark, wm_key, sessions)) = pending else {
+            return Ok(());
+        };
+        if sessions.is_empty() {
+            return Ok(());
+        }
+        let fq = format!(
+            "\"{}\".\"{}\"",
+            self.cfg.staging_schema, self.cfg.staging_table
+        );
+        let update_sql = format!(
+            "UPDATE {fq} \
+             SET consumed = consumed || jsonb_build_object($1::text, $2::text) \
+             WHERE session_id = ANY($3)"
+        );
+        sqlx::query(&update_sql)
+            .bind(wm_key)
+            .bind(&watermark)
+            .bind(&sessions)
+            .execute(self.pool().await?)
+            .await?;
+        Ok(())
     }
 
     async fn pool(&self) -> Result<&PgPool> {
@@ -222,22 +263,12 @@ impl SessionStagingSource {
             emitted_sessions.push(sid);
         }
 
-        // Advance the watermark for emitted sessions. Uses the watermark
-        // captured BEFORE the SELECT so concurrent inserts after the SELECT
-        // are not falsely marked consumed.
-        if !emitted_sessions.is_empty() {
-            let update_sql = format!(
-                "UPDATE {fq} \
-                 SET consumed = consumed || jsonb_build_object($1::text, $2::text) \
-                 WHERE session_id = ANY($3)"
-            );
-            sqlx::query(&update_sql)
-                .bind(wm_key)
-                .bind(&watermark)
-                .bind(&emitted_sessions)
-                .execute(pool)
-                .await?;
-        }
+        // O3: don't advance the watermark yet — store it and let the
+        // runner trigger the UPDATE after the per-doc write loop succeeds.
+        // Mid-iteration crash → commit_processed() never runs → next run
+        // reselects these sessions. Matches Python generator semantics.
+        *self.pending_watermark.lock().unwrap() =
+            Some((watermark, wm_key, emitted_sessions));
 
         Ok(docs)
     }

@@ -98,6 +98,19 @@ impl AnySource {
             AnySource::SessionStaging(s) => s.iter_documents().await,
         }
     }
+
+    /// RM-A O3 crash-safety: runner calls this AFTER the per-doc write
+    /// loop succeeds. For `SessionStaging` (the only source that has
+    /// post-iteration state today) it advances the `consumed` watermark
+    /// for the sessions just emitted. Non-memory sources have no
+    /// post-iteration state — this is a no-op for them.
+    pub async fn commit_processed(&self) -> Result<()> {
+        match self {
+            #[cfg(feature = "memory")]
+            AnySource::SessionStaging(s) => s.commit_processed().await,
+            _ => Ok(()),
+        }
+    }
 }
 
 #[cfg(all(feature = "source", feature = "sink"))]

@@ -137,6 +137,13 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
         }
     }
 
+    // RM-A O3: advance the source's post-iteration watermark ONLY after
+    // the per-doc write loop above succeeds. A mid-loop error (which
+    // would have `?`-bubbled out above) leaves the watermark unadvanced,
+    // so the next run reselects the same sessions. No-op for non-memory
+    // sources.
+    source.commit_processed().await.context("commit_processed")?;
+
     let wall = start.elapsed().as_secs_f64();
     let embed_seconds = embedder.embed_seconds();
     info!(cell = %cfg.cell_name, docs = docs_processed, chunks = chunks_written, wall = wall, embed = embed_seconds, "cell DONE");

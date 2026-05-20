@@ -140,8 +140,13 @@ async fn realtime_mode_advances_consumed_realtime() -> anyhow::Result<()> {
     let src = SessionStagingSource::new(make_cfg(&dsn, &schema, SessionStagingMode::Realtime));
     let docs = src.iter_documents().await?;
     assert_eq!(docs.len(), 1);
+    // O3: commit_processed() is what actually advances the watermark.
+    // Without it (mid-loop crash equivalent), the watermark stays at the
+    // prior value and the next run reselects everything. This is the
+    // contract the runner relies on for crash-safety.
+    src.commit_processed().await?;
 
-    // The single row should now have `consumed.realtime` set.
+    // After commit, the single row should now have `consumed.realtime` set.
     let row = sqlx::query(&format!(
         r#"SELECT consumed->>'realtime' AS wm FROM "{schema}".staging"#
     ))
@@ -152,6 +157,7 @@ async fn realtime_mode_advances_consumed_realtime() -> anyhow::Result<()> {
 
     // Re-running yields zero docs (watermark filters everything out).
     let docs2 = src.iter_documents().await?;
+    src.commit_processed().await?;
     assert_eq!(docs2.len(), 0, "re-run after watermark advance must yield nothing");
 
     cleanup(&pool, &schema).await?;
@@ -189,6 +195,9 @@ async fn consolidate_mode_uses_session_level_where_for_late_events() -> anyhow::
         .as_array()
         .expect("_session_events array");
     assert_eq!(evs1.len(), 2, "round-1 should emit both events");
+    // Commit the round-1 watermark — simulates the runner's post-write
+    // success path.
+    src.commit_processed().await?;
 
     // Late event arrives AFTER consolidation. It has consumed='{}' but the
     // older events have consumed.consolidated set.
