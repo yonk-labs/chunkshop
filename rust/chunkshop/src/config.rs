@@ -535,6 +535,10 @@ pub enum ChunkerConfig {
     Semantic(SemanticChunkerConfig),
     SummaryEmbed(SummaryEmbedChunkerConfig),
     HierarchicalSummary(HierarchicalSummaryChunkerConfig),
+    /// RM-A: wraps a base chunker to emit `kind=episode` chunks plus
+    /// per-triple `kind=fact` chunks from a `Consolidator` callable.
+    /// Mirror of Python `chunkshop.chunkers.consolidation.ConsolidationChunker`.
+    Consolidation(ConsolidationChunkerConfig),
 }
 
 impl ChunkerConfig {
@@ -559,6 +563,7 @@ impl ChunkerConfig {
             ChunkerConfig::HierarchicalSummary(c) => {
                 c.max_chars.or_else(|| c.base.effective_max_chars())
             }
+            ChunkerConfig::Consolidation(c) => c.base.effective_max_chars(),
         }
     }
 
@@ -573,6 +578,7 @@ impl ChunkerConfig {
             ChunkerConfig::NeighborExpand(c) => c.if_oversize.as_deref(),
             ChunkerConfig::SummaryEmbed(c) => c.if_oversize.as_deref(),
             ChunkerConfig::HierarchicalSummary(c) => c.if_oversize.as_deref(),
+            ChunkerConfig::Consolidation(c) => c.if_oversize.as_deref(),
         }
     }
 
@@ -586,6 +592,7 @@ impl ChunkerConfig {
             ChunkerConfig::Semantic(_) => "semantic",
             ChunkerConfig::SummaryEmbed(_) => "summary_embed",
             ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
+            ChunkerConfig::Consolidation(_) => "consolidation",
         }
     }
 }
@@ -653,6 +660,45 @@ pub struct NeighborExpandChunkerConfig {
     #[serde(default)]
     pub if_oversize: Option<Box<ChunkerConfig>>,
 }
+
+/// RM-A Task 3: ConsolidationChunker wraps a base chunker; emits one
+/// `kind=episode` chunk per base chunk and one `kind=fact` chunk per
+/// triple returned by the wired `Consolidator`. Mirror of Python
+/// `chunkshop.chunkers.consolidation.ConsolidationChunker`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationChunkerConfig {
+    /// Underlying chunker for episode-text segmentation (typically
+    /// `sentence_aware` with a memory-sized ceiling).
+    pub base: Box<ChunkerConfig>,
+    /// Which consolidator wires the SPO-triple extraction. v1 ships
+    /// `mode: extractive` (zero-network default); LLM modes wired by the
+    /// host application as Rust trait impls.
+    pub consolidator: ConsolidatorConfig,
+    /// Hard char cap for `kind=fact` chunks. Default 1200 (Python parity).
+    #[serde(default = "default_fact_max_chars")]
+    pub fact_max_chars: usize,
+    #[serde(default)]
+    pub if_oversize: Option<Box<ChunkerConfig>>,
+}
+
+fn default_fact_max_chars() -> usize {
+    1200
+}
+
+/// Consolidator wiring. `mode: extractive` selects the zero-network Rust
+/// default (Task 7). Future v1.x: `mode: llm` once a deterministic LLM
+/// seam lands. Custom impls live in host code and aren't selected via
+/// YAML — they're injected at `build_chunker` time by the consumer.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ConsolidatorConfig {
+    Extractive(ExtractiveConsolidatorConfig),
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractiveConsolidatorConfig {}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SemanticChunkerConfig {
@@ -1314,6 +1360,7 @@ fn validate_chunker_config(c: &ChunkerConfig) -> Result<()> {
             }
             validate_chunker_config(&c.base)
         }
+        ChunkerConfig::Consolidation(c) => validate_chunker_config(&c.base),
     }
 }
 
@@ -1913,6 +1960,101 @@ target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mod
         } else {
             panic!("not session_episode");
         }
+    }
+
+    // --- RM-A Task 3: ConsolidationChunkerConfig --------------------------
+
+    #[test]
+    fn consolidation_chunker_deserialises() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+framer: { type: session_episode }
+chunker:
+  type: consolidation
+  base:
+    type: sentence_aware
+    max_chars: 2000
+    min_chars: 200
+  consolidator:
+    mode: extractive
+  fact_max_chars: 1200
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        match cfg.chunker {
+            ChunkerConfig::Consolidation(c) => {
+                assert_eq!(c.fact_max_chars, 1200);
+                assert!(matches!(*c.base, ChunkerConfig::SentenceAware(_)));
+                assert!(matches!(c.consolidator, ConsolidatorConfig::Extractive(_)));
+            }
+            other => panic!("expected Consolidation; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn consolidation_chunker_default_fact_max_chars() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: consolidation
+  base: { type: sentence_aware }
+  consolidator: { mode: extractive }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).unwrap();
+        if let ChunkerConfig::Consolidation(c) = cfg.chunker {
+            assert_eq!(c.fact_max_chars, 1200);  // python parity default
+            assert!(matches!(*c.base, ChunkerConfig::SentenceAware(_)));
+        } else {
+            panic!("not consolidation");
+        }
+    }
+
+    #[test]
+    fn consolidation_chunker_unknown_field_rejected() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: consolidation
+  base: { type: sentence_aware }
+  consolidator: { mode: extractive }
+  bogus_consolidation_field: yes
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("bogus must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("bogus") || msg.contains("unknown"),
+            "expected unknown-field complaint, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn consolidator_unknown_mode_rejected() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker:
+  type: consolidation
+  base: { type: sentence_aware }
+  consolidator: { mode: callable }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mode: create_if_missing, source_tag: ns1, hnsw: false }
+"#;
+        // `mode: callable` is Python-side only; Rust accepts `extractive` (and
+        // future `llm`) but not `callable`. Reject cleanly.
+        let err = load_config(&write_yaml(yaml)).expect_err("callable must fail in rust");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("callable") || msg.contains("variant") || msg.contains("unknown"),
+            "expected mode-unknown complaint, got: {msg}"
+        );
     }
 
     #[test]

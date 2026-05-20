@@ -311,6 +311,12 @@ fn chunker_to_yaml_value(c: &crate::config::ChunkerConfig) -> Result<Value> {
                  these are out of the bakeoff matrix today."
             ));
         }
+        C::Consolidation(_) => {
+            return Err(anyhow::anyhow!(
+                "consolidation chunker is for the agent-memory cell preset (RM-A), \
+                 not the bakeoff matrix; exclude it from bakeoff configs."
+            ));
+        }
     })
 }
 

@@ -58,6 +58,7 @@ pub fn chunker_label(cfg: &ChunkerConfig) -> String {
         ChunkerConfig::Semantic(_) => "semantic".to_string(),
         ChunkerConfig::SummaryEmbed(_) => "summary_embed".to_string(),
         ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary".to_string(),
+        ChunkerConfig::Consolidation(_) => "consolidation".to_string(),
     }
 }
 

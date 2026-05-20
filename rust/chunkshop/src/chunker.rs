@@ -1556,6 +1556,12 @@ pub fn build_chunker(cfg: ChunkerConfig) -> anyhow::Result<Box<dyn ChunkerImpl +
                 if_oversize_cfg,
             ))
         }
+        ChunkerConfig::Consolidation(_) => {
+            return Err(anyhow::anyhow!(
+                "consolidation chunker not yet implemented in this build \
+                 (RM-A Task 8; tracking: chunkshop#9)"
+            ));
+        }
     })
 }
 

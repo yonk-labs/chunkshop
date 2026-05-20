@@ -60,6 +60,12 @@ pub fn chunker_key(cfg: &ChunkerConfig) -> Result<String> {
                  both before exposing them."
             ));
         }
+        ChunkerConfig::Consolidation(_) => {
+            return Err(anyhow!(
+                "consolidation chunker is for the agent-memory cell preset \
+                 (RM-A), not the bakeoff matrix; exclude it from bakeoff configs."
+            ));
+        }
     })
 }
 
