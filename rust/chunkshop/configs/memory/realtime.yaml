@@ -1,7 +1,11 @@
 cell_name: memory_realtime
 source:
   type: session_staging
+  # `dsn` (literal/${VAR}) is the Python field; `dsn_env` (env-var name)
+  # is the Rust field. Both presets carry both so the same YAML drives
+  # both implementations until the Rust port also accepts `${VAR}`.
   dsn: "${CHUNKSHOP_MEMORY_DSN}"
+  dsn_env: CHUNKSHOP_MEMORY_DSN
   staging_table: chunkshop_staging
   staging_schema: public
   mode: realtime
@@ -19,6 +23,7 @@ embedder:
 target:
   type: postgres
   dsn: "${CHUNKSHOP_MEMORY_DSN}"
+  dsn_env: CHUNKSHOP_MEMORY_DSN
   database: agent_memory
   table: memory
   mode: create_if_missing

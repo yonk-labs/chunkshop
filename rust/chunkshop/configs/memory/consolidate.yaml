@@ -10,7 +10,9 @@
 cell_name: memory_consolidate
 source:
   type: session_staging
+  # `dsn` is Python; `dsn_env` is Rust. See realtime.yaml comment.
   dsn: "${CHUNKSHOP_MEMORY_DSN}"
+  dsn_env: CHUNKSHOP_MEMORY_DSN
   staging_table: chunkshop_staging
   staging_schema: public
   mode: consolidate
@@ -37,6 +39,7 @@ embedder:
 target:
   type: postgres
   dsn: "${CHUNKSHOP_MEMORY_DSN}"
+  dsn_env: CHUNKSHOP_MEMORY_DSN
   database: agent_memory
   table: memory
   mode: create_if_missing
