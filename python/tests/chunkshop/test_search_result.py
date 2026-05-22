@@ -162,3 +162,32 @@ def test_explicit_summary_hints_override(seeded):
                  k=5, return_mode="summary", summarize_fn=summarize,
                  summary_hints=["beta"])
     assert isinstance(res.summary, str)
+
+
+def test_chunks_mode_no_lede_import(seeded, monkeypatch):
+    """SC-010/SC-011: chunks return mode must NOT trigger a lede import."""
+    import builtins
+    import sys
+
+    schema, emb = seeded
+
+    # Evict any cached lede modules so a fresh import would be observable.
+    for m in [k for k in sys.modules if k == "lede" or k.startswith("lede.")]:
+        monkeypatch.delitem(sys.modules, m, raising=False)
+
+    real_import = builtins.__import__
+
+    def guard(name, *a, **k):
+        assert not (name == "lede" or name.startswith("lede.")), (
+            f"chunks mode imported {name!r} — lede must not be imported in this path"
+        )
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", guard)
+
+    qv = emb.embed(["alpha"])[0]
+    from chunkshop.search_common import search
+
+    res = search(DSN, schema=schema, table=TABLE, query="alpha", query_vec=qv,
+                 k=5, return_mode="chunks")  # must not trip the guard
+    assert res.summary is None
