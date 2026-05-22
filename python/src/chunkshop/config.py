@@ -707,6 +707,43 @@ class PromoteColumn(_Base):
         return self.path.replace(".", "__").lower()
 
 
+# FTS language allowlist mirrored from chunkshop.search._ALLOWED_LANGUAGES.
+# A top-level `from chunkshop.search import _ALLOWED_LANGUAGES` would be circular
+# because search.py (via its backend import) pulls in chunkshop.config. Keep this
+# set in sync with search.py's copy; a future refactor can dedupe by having search
+# import from config instead.
+_ALLOWED_FTS_LANGUAGES = {
+    "simple", "arabic", "armenian", "basque", "catalan", "danish", "dutch",
+    "english", "finnish", "french", "german", "greek", "hindi", "hungarian",
+    "indonesian", "irish", "italian", "lithuanian", "nepali", "norwegian",
+    "portuguese", "romanian", "russian", "serbian", "spanish", "swedish",
+    "tamil", "turkish", "yiddish",
+}
+
+
+class FtsConfig(_Base):
+    """Opt-in full-text-search index for a target table (LD-4).
+
+    When ``enabled=True`` the sink will create a tsvector generated column
+    and a GIN index on it at table-creation time. ``language`` is the
+    PostgreSQL text-search configuration name (e.g. ``"english"``); it is
+    allowlisted because it is concatenated into generated-column DDL and
+    cannot be a bound parameter.
+    """
+
+    enabled: bool = False
+    language: str = "english"
+
+    @field_validator("language")
+    @classmethod
+    def _lang_allowlisted(cls, v: str) -> str:
+        if v not in _ALLOWED_FTS_LANGUAGES:
+            raise ValueError(
+                f"fts.language must be one of {sorted(_ALLOWED_FTS_LANGUAGES)}, got {v!r}"
+            )
+        return v
+
+
 class TargetConfig(_DsnResolvable):
     type: Literal["postgres", "sqlite", "mariadb", "clickhouse"]
     database_name: str = Field(alias="database")
@@ -722,6 +759,10 @@ class TargetConfig(_DsnResolvable):
     # spec. Set to "ReplacingMergeTree(created_at) ORDER BY (id)" to opt into
     # lazy dedup at merge time. Ignored on non-CH backends.
     engine: Optional[str] = None
+    # Opt-in full-text-search index. When set, the Postgres sink creates a
+    # tsvector generated column and a GIN index alongside the vector column.
+    # Ignored by non-Postgres backends (I-4 scope: Postgres only for v0.5).
+    fts: Optional[FtsConfig] = None
 
     @field_validator("table", "database_name", "source_tag")
     @classmethod
