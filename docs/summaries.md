@@ -215,6 +215,25 @@ Rules of thumb:
 - Use `passthrough` to prove summaries help on your corpus before investing in
   the tuning.
 
+## Retrieval-time summarization (Fast mode)
+
+`summary_embed` and `hierarchical_summary` summarize at **ingest time** —
+changing what gets embedded. chunkshop also has a **query-time** summarization
+surface: `summarize_hits`, which collapses the K chunks a search returned into
+one query-biased summary you send the LLM instead of N raw chunks (~90% fewer
+input tokens for ~2–3 ms). These are the two summarization surfaces:
+
+| Surface | When | What it summarizes |
+|---|---|---|
+| `summary_embed` / `hierarchical_summary` (this doc) | Ingest time | Each chunk's `embedded_content` |
+| `summarize_hits` ([`hybrid-search.md`](hybrid-search.md)) | Query time | The retrieved hits, into one LLM context |
+
+Both consume the same injectable summarizer contract (`(text, **kwargs) -> str`,
+e.g. `chunkshop.summarizers.lede.summarize`). For the read-side recipe —
+`hybrid_search` then `summarize_hits` — see
+[`hybrid-search.md`](hybrid-search.md); for the benchmarks behind Fast mode see
+[`fast-mode-rag-benchmarks.md`](fast-mode-rag-benchmarks.md).
+
 ## Retrieval-side considerations
 
 chunkshop writes the rows; how you query them is yours. Some patterns that

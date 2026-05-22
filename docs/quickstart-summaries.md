@@ -263,6 +263,22 @@ SELECT * FROM mydata.hierarchical
 WHERE granularity = 'fine' AND group_id = (SELECT group_id FROM top_coarse);
 ```
 
+## Retrieval-time summarization (Fast mode)
+
+The recipes above summarize at **ingest time**. There's also a **query-time**
+surface — `summarize_hits` — that collapses the K chunks a search returns into
+one query-biased summary to send the LLM instead of N raw chunks (~90% fewer
+input tokens). The two summarization surfaces:
+
+- **Ingest time:** `summary_embed` / `hierarchical_summary` (this doc) — changes
+  what gets embedded.
+- **Query time:** `summarize_hits` — summarizes the retrieved hits into one LLM
+  context. See [`hybrid-search.md`](hybrid-search.md) for the full
+  `hybrid_search` → `summarize_hits` recipe, and
+  [`fast-mode-rag-benchmarks.md`](fast-mode-rag-benchmarks.md) for the numbers.
+
+Both use the same injectable summarizer (`chunkshop.summarizers.lede.summarize`).
+
 ## What this replaces
 
 Before `summary_embed`, wiring a summarizer into ingest meant pre-processing

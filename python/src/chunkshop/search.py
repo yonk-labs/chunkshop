@@ -1,0 +1,336 @@
+"""Postgres hybrid retrieval — the read side of chunkshop (Brief B core).
+
+A small, focused read API over a chunkshop chunks table:
+
+  - `ensure_fts`        : idempotently add a generated tsvector column + GIN index
+  - `keyword_search`    : full-text search (to_tsquery OR-join + ts_rank)
+  - `semantic_search`   : pgvector cosine top-k, distance converted to similarity
+  - `hybrid_search`     : run multiple legs and fuse (RRF or weighted min-max)
+
+Plus a `where` filter (metadata/source/tags, FILTER-ONLY — not a ranking leg)
+shared across every leg.
+
+Security: every user value is a bound parameter. The only non-parameterizable
+inputs are the FTS `language` (allowlisted) and SQL identifiers (quoted via the
+backend). User query text, filter values, and limits are NEVER interpolated.
+
+Connections are short-lived (one psycopg connection opened per call), mirroring
+`PgSink`. This is a read API, so per-call connect is fine.
+
+This module deliberately contains no summary logic — summarization is the
+benchmark's job, wired through `chunkshop.summarizers.lede`. (Per the core
+import-boundary guard, this file pulls in no summarizer dependency at all.)
+"""
+from __future__ import annotations
+
+import json
+import re
+from typing import Any, Optional
+
+import numpy as np
+import psycopg
+
+from chunkshop.backends.postgres import PostgresBackend
+# Shared, backend-agnostic primitives. `Hit`, `_fuse_rrf`, `_fuse_weighted` are
+# re-exported here for backward compatibility (tests and callers import them as
+# `chunkshop.search.Hit` / `chunkshop.search._fuse_rrf`).
+from chunkshop.search_common import (  # noqa: F401  (re-exported)
+    Hit,
+    _fuse_rrf,
+    _fuse_weighted,
+    fuse as _fuse,
+    validate_hybrid_args as _validate_hybrid_args,
+)
+
+
+# FTS regconfig allowlist. The language name is concatenated into the
+# generated-column DDL (`to_tsvector('<lang>', ...)`) where it CANNOT be a bound
+# parameter, so it must be allowlisted to prevent injection. websearch_to_tsquery
+# in the search paths also takes it as a literal for the same reason.
+# Covers PostgreSQL's stock text-search configurations (I-4); extend if your
+# cluster defines custom ones — keep it an allowlist (never interpolate raw input).
+_ALLOWED_LANGUAGES = {
+    "simple", "arabic", "armenian", "basque", "catalan", "danish", "dutch",
+    "english", "finnish", "french", "german", "greek", "hindi", "hungarian",
+    "indonesian", "irish", "italian", "lithuanian", "nepali", "norwegian",
+    "portuguese", "romanian", "russian", "serbian", "spanish", "swedish",
+    "tamil", "turkish", "yiddish",
+}
+
+
+# Query tokenizer for the FTS leg (I-12). Alphanumeric runs only — punctuation
+# and quotes are stripped, so an injection probe like `'; DROP TABLE` tokenizes
+# to harmless words. The sanitized tokens are joined with the tsquery OR operator
+# (`|`) and bound to `to_tsquery`, so the ONLY operators in the param are the ones
+# we insert — injection-safe.
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _query_tokens(query: str) -> list[str]:
+    """Lowercased alphanumeric tokens, len>=2, deduped preserving order."""
+    seen: dict[str, None] = {}
+    for tok in _TOKEN_RE.findall(query.lower()):
+        if len(tok) >= 2:
+            seen.setdefault(tok, None)
+    return list(seen)
+
+
+def _check_language(language: str) -> str:
+    if language not in _ALLOWED_LANGUAGES:
+        raise ValueError(
+            f"language must be one of {sorted(_ALLOWED_LANGUAGES)}, got {language!r} "
+            f"(allowlisted because it is concatenated into generated-column DDL)"
+        )
+    return language
+
+
+def _backend() -> PostgresBackend:
+    # Stateless dialect helper (quote_ident, fq_table, vector_literal). We pass a
+    # dummy dsn since we open our own connections from the caller-supplied dsn.
+    return PostgresBackend(dsn="")
+
+
+def _fq(backend: PostgresBackend, schema: str, table: str) -> str:
+    return backend.fq_table(schema, table)
+
+
+def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
+    """Build a parameterized WHERE fragment + params from a filter dict.
+
+    Returns ("", []) when `where` is falsy. The fragment is a conjunction of the
+    supported predicates WITHOUT a leading AND/WHERE — callers splice it in.
+
+    Supported keys:
+      - {"tags": [...]}            -> tags && ARRAY[...]::text[]   (overlap)
+      - {"source": "..."}          -> source = %s
+      - {"metadata": {k: v, ...}}  -> metadata @> %s::jsonb        (containment)
+
+    All values are bound params; none are interpolated.
+
+    CAUTION (I-6): prefer this filter for STRUCTURED fields (source, category,
+    tenant, date). Do NOT gate recall on free-text keyword `tags` — query and
+    document vocabularies diverge ("rotate API keys" vs a chunk tagged
+    [secret, secrets]) and a hard overlap filter silently drops the answer
+    (measured: removed the gold doc on ~4/14 queries). Use keyword tags for
+    faceting/display or a soft re-rank signal, not a recall-critical WHERE.
+    """
+    if not where:
+        return "", []
+
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    unknown = set(where) - {"tags", "source", "metadata"}
+    if unknown:
+        raise ValueError(f"unsupported where keys: {sorted(unknown)}")
+
+    tags = where.get("tags")
+    if tags is not None:
+        if not isinstance(tags, (list, tuple)):
+            raise ValueError("where['tags'] must be a list of strings")
+        # I-7: case-insensitive overlap. Stored tags are lowercased at ingest
+        # (lede tags are lowercase), so casefolding only the query-side values is
+        # sufficient — cheaper than wrapping the column in lower(tags).
+        # Still a bound param: we lowercase the Python values, never interpolate.
+        # array overlap: ARRAY[%s, %s, ...]::text[]
+        placeholders = ", ".join(["%s"] * len(tags))
+        clauses.append(f"tags && ARRAY[{placeholders}]::text[]")
+        params.extend([str(t).casefold() for t in tags])
+
+    source = where.get("source")
+    if source is not None:
+        clauses.append("source = %s")
+        params.append(source)
+
+    meta = where.get("metadata")
+    if meta is not None:
+        if not isinstance(meta, dict):
+            raise ValueError("where['metadata'] must be a dict")
+        clauses.append("metadata @> %s::jsonb")
+        params.append(json.dumps(meta))
+
+    return " AND ".join(clauses), params
+
+
+def ensure_fts(
+    dsn: str,
+    *,
+    schema: str,
+    table: str,
+    language: str = "english",
+) -> None:
+    """Idempotently add a generated `search_vector` tsvector column + GIN index.
+
+    Safe to call repeatedly. The tsvector is GENERATED ALWAYS from
+    original_content, so it stays in sync with no application-side maintenance.
+    """
+    _check_language(language)
+    backend = _backend()
+    fq = _fq(backend, schema, table)
+    idx = backend.quote_ident(f"{table}_fts_idx")
+
+    add_col = (
+        f"ALTER TABLE {fq} ADD COLUMN IF NOT EXISTS search_vector tsvector "
+        f"GENERATED ALWAYS AS (to_tsvector('{language}', original_content)) STORED"
+    )
+    create_idx = f"CREATE INDEX IF NOT EXISTS {idx} ON {fq} USING GIN(search_vector)"
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(add_col)
+        cur.execute(create_idx)
+        conn.commit()
+
+
+def keyword_search(
+    dsn: str,
+    *,
+    schema: str,
+    table: str,
+    query: str,
+    k: int,
+    where: Optional[dict] = None,
+    language: str = "english",
+) -> list[Hit]:
+    """Full-text search via to_tsquery (OR semantics) + ts_rank. legs=('fts',).
+
+    I-12: tokens are joined with the tsquery OR operator (` | `) so partial-term
+    matches count — a multi-word query matches docs containing ANY token, not
+    only docs containing ALL of them (the AND default of websearch_to_tsquery).
+    """
+    _check_language(language)
+    tokens = _query_tokens(query)
+    if not tokens:
+        # No usable tokens (empty / all-punctuation / all single-char) — an empty
+        # tsquery errors, so short-circuit to "no FTS hits".
+        return []
+    or_tsquery = " | ".join(tokens)
+    backend = _backend()
+    fq = _fq(backend, schema, table)
+    where_sql, where_params = _build_where(where)
+
+    sql = (
+        f"SELECT doc_id, seq_num, original_content, metadata, "
+        f"ts_rank(search_vector, to_tsquery('{language}', %s)) AS score, "
+        f"embedded_content "
+        f"FROM {fq} "
+        f"WHERE search_vector @@ to_tsquery('{language}', %s)"
+    )
+    params: list[Any] = [or_tsquery, or_tsquery]
+    if where_sql:
+        sql += f" AND {where_sql}"
+        params.extend(where_params)
+    sql += " ORDER BY score DESC LIMIT %s"
+    params.append(k)
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+    return [
+        Hit(
+            doc_id=r[0],
+            seq_num=r[1],
+            text=r[2],
+            metadata=r[3] or {},
+            score=float(r[4]),
+            legs=("fts",),
+            embedded_text=r[5] or "",
+        )
+        for r in rows
+    ]
+
+
+def semantic_search(
+    dsn: str,
+    *,
+    schema: str,
+    table: str,
+    query_vec: np.ndarray,
+    k: int,
+    where: Optional[dict] = None,
+) -> list[Hit]:
+    """pgvector cosine top-k; score = 1 - distance (higher=better). legs=('semantic',)."""
+    backend = _backend()
+    fq = _fq(backend, schema, table)
+    vec_lit = backend.vector_literal(query_vec)
+    where_sql, where_params = _build_where(where)
+
+    sql = (
+        f"SELECT doc_id, seq_num, original_content, metadata, "
+        f"embedding <=> %s::vector AS distance, "
+        f"embedded_content "
+        f"FROM {fq}"
+    )
+    params: list[Any] = [vec_lit]
+    if where_sql:
+        sql += f" WHERE {where_sql}"
+        params.extend(where_params)
+    sql += " ORDER BY embedding <=> %s::vector LIMIT %s"
+    params.extend([vec_lit, k])
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+    return [
+        Hit(
+            doc_id=r[0],
+            seq_num=r[1],
+            text=r[2],
+            metadata=r[3] or {},
+            score=1.0 - float(r[4]),
+            legs=("semantic",),
+            embedded_text=r[5] or "",
+        )
+        for r in rows
+    ]
+
+
+def hybrid_search(
+    dsn: str,
+    *,
+    schema: str,
+    table: str,
+    query: Optional[str] = None,
+    query_vec: Optional[np.ndarray] = None,
+    k: int,
+    legs: tuple[str, ...] = ("semantic", "fts"),
+    where: Optional[dict] = None,
+    fusion: str = "rrf",
+    weights: Optional[dict[str, float]] = None,
+    rrf_k: int = 60,
+    language: str = "english",
+    candidate_multiplier: int = 3,
+) -> list[Hit]:
+    """Run the requested legs and fuse them into a single ranked list.
+
+    legs: subset of ("semantic", "fts"). "semantic" requires query_vec; "fts"
+    requires query.
+
+    I-3: each leg fetches `max(k * candidate_multiplier, k)` candidates rather
+    than just `k`, so a chunk that ranks > k within an individual leg but would
+    land in the fused top-k still enters the candidate pool. The fused result is
+    truncated to `k` at the end.
+
+    fusion="rrf": each leg contributes 1/(rrf_k + rank); rows hit by multiple
+        legs sum their contributions and thus rank higher (the point of hybrid).
+    fusion="weighted": min-max normalize each leg's scores to [0,1], then
+        sum(weights[leg] * norm_score); default weight 1.0 per leg.
+
+    Returns top-k by fused score. Each Hit's `legs` lists which legs matched it.
+    """
+    _validate_hybrid_args(legs=legs, query=query, query_vec=query_vec, fusion=fusion)
+
+    # Over-fetch per leg so deep-but-dual-matched candidates survive into fusion.
+    cand_k = max(k * candidate_multiplier, k)
+
+    leg_results: dict[str, list[Hit]] = {}
+    if "semantic" in legs:
+        leg_results["semantic"] = semantic_search(
+            dsn, schema=schema, table=table, query_vec=query_vec, k=cand_k, where=where
+        )
+    if "fts" in legs:
+        leg_results["fts"] = keyword_search(
+            dsn, schema=schema, table=table, query=query, k=cand_k, where=where,
+            language=language,
+        )
+
+    return _fuse(leg_results, k=k, fusion=fusion, weights=weights, rrf_k=rrf_k)
