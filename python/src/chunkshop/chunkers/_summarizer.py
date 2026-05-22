@@ -17,6 +17,7 @@ from chunkshop.config import (
     ExternalSummarizer,
     PassthroughSummarizer,
 )
+from chunkshop.hints import expand_hints
 
 
 SummarizerFn = Callable[[str, dict], str]
@@ -65,8 +66,45 @@ def build_summarizer(cfg) -> SummarizerFn:
             )
         kwargs = dict(cfg.kwargs)
 
+        def _resolve(meta: dict, field, key, expected_types, type_name):
+            if field is None or field not in meta:
+                return None
+            value = meta[field]
+            if not isinstance(value, expected_types):
+                raise RuntimeError(
+                    f"callable summarizer: doc.metadata[{field!r}] "
+                    f"(for {key}) must be {type_name}, "
+                    f"got {type(value).__name__}"
+                )
+            return value
+
         def _callable(text: str, meta: dict) -> str:
-            return fn(text, **kwargs)
+            call_kwargs = dict(kwargs)
+            hints = _resolve(meta, cfg.hints_from_meta, "hints",
+                             (list, dict), "a list or dict")
+            if hints is not None:
+                call_kwargs["hints"] = hints
+            focus = _resolve(meta, cfg.hint_focus_from_meta, "hint_focus",
+                             (int, float), "a number")
+            if isinstance(focus, bool):
+                raise RuntimeError(
+                    f"callable summarizer: doc.metadata[{cfg.hint_focus_from_meta!r}] "
+                    f"(for hint_focus) must be a number, got bool"
+                )
+            if focus is not None:
+                call_kwargs["hint_focus"] = float(focus)
+            mode = _resolve(meta, cfg.hint_mode_from_meta, "hint_mode",
+                            (str,), "a string")
+            if mode is not None:
+                call_kwargs["hint_mode"] = mode
+            if cfg.expand is not None and call_kwargs.get("hints"):
+                call_kwargs["hints"] = expand_hints(
+                    call_kwargs["hints"],
+                    kinds=tuple(cfg.expand.kinds),
+                    top_k=cfg.expand.top_k,
+                    expand_weight=cfg.expand.expand_weight,
+                )
+            return fn(text, **call_kwargs)
 
         return _callable
 

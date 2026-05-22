@@ -19,6 +19,13 @@ uv sync --extra dev --extra extractors --extra all-backends
 # Full test suite (some tests skip if Postgres unreachable)
 uv run pytest -q
 
+# lede / lede-spacy / hybrid-search tests (I-1): the lede-spacy extra + a spaCy
+# model are NOT in the default sync, and a plain `uv run` re-syncs and prunes them
+# (the lede expansion tests then silently SKIP). To actually run them:
+#   uv pip install -e ".[lede]" -e ".[lede-spacy]"
+#   uv run --no-sync python -m spacy download en_core_web_sm
+#   uv run --no-sync pytest -q        # --no-sync preserves the extras + model
+
 # Single test file
 uv run pytest tests/chunkshop/test_sink_append_mode.py -v
 

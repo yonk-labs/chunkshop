@@ -276,6 +276,79 @@ corpus — stick with the simpler passthrough.
 | Just want to prove summarization matters               | `passthrough`                                              |
 | Abstractive without LLM cost (future)                  | `callable` with lede-neural (when the sibling repo ships) |
 
+## Step 8 — per-document hints with `hints_from_meta`
+
+Static `kwargs.hints` applies the same bias to every document in a cell.
+When documents vary in topic — say a corpus of HR policies where each file
+covers a different benefit — you can attach document-specific hints in the
+source metadata and tell lede to use them instead.
+
+### Wire up the source metadata
+
+If you are ingesting from a `files` source, add a `lede_hints` field to each
+document's front-matter or sidecar metadata (any list or weighted dict that
+lede accepts):
+
+```yaml
+# docs/samples/offer-letter-policy.md front-matter
+---
+lede_hints: ["salary", "bonus", "equity"]
+---
+```
+
+### Configure the cell
+
+```yaml
+chunker:
+  type: summary_embed
+  base:
+    type: hierarchy
+  summarizer:
+    mode: callable
+    module: chunkshop.summarizers.lede
+    kwargs:
+      hint_focus: 0.7
+      hint_mode: soft
+    hints_from_meta: lede_hints   # per-doc hints override static kwargs.hints
+```
+
+`hints_from_meta: lede_hints` is a typed field on the summarizer config
+(distinct from `kwargs`). At ingest time, for each document:
+
+- If `doc.metadata["lede_hints"]` is present, it **overrides** any
+  `kwargs.hints` for that document only.
+- Documents that lack the field fall back to `kwargs.hints` (if set) or run
+  with no hint bias.
+
+This lets a single cell handle a mixed corpus without splitting it into one
+cell per topic.
+
+### Verify the hints were applied
+
+chunkshop stores the **summary text** (`embedded_content`), not the hint
+parameters — the bias shows up in *which sentences lede selected*, not in a
+metadata column. The honest check is to compare the summaries of documents
+that carried `lede_hints` against those that did not. Inspect a few rows:
+
+```bash
+psql $CHUNKSHOP_DSN -c "
+SELECT
+  doc_id,
+  metadata->>'summarizer' AS summarizer,
+  substring(embedded_content for 120) AS summary_start
+FROM chunkshop_samples.summary_embed
+ORDER BY doc_id, seq_num
+LIMIT 6;
+"
+```
+
+Summaries of documents whose metadata supplied `lede_hints` should lean
+toward sentences mentioning those terms; documents without the field fall
+back to static `kwargs.hints` (or unbiased extraction if none was set). To
+confirm a specific bias, re-ingest the same corpus without `hints_from_meta`
+into a second table and diff the `embedded_content` for a hinted document —
+the hinted run should surface the hint-bearing sentences earlier.
+
 ## What to read next
 
 - `docs/summaries.md` — reference for every mode, grouping strategy, and query
