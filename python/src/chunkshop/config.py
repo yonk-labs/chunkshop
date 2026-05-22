@@ -759,9 +759,10 @@ class TargetConfig(_DsnResolvable):
     # spec. Set to "ReplacingMergeTree(created_at) ORDER BY (id)" to opt into
     # lazy dedup at merge time. Ignored on non-CH backends.
     engine: Optional[str] = None
-    # Opt-in full-text-search index. When set, the Postgres sink creates a
-    # tsvector generated column and a GIN index alongside the vector column.
-    # Ignored by non-Postgres backends (I-4 scope: Postgres only for v0.5).
+    # Opt-in full-text-search index. When set, each sink creates the
+    # appropriate backend-native FTS structure alongside the vector column:
+    # Postgres→GIN tsvector index, SQLite→FTS5 external-content table,
+    # MariaDB→FULLTEXT index, ClickHouse→tokenbf_v1 data-skipping index.
     fts: Optional[FtsConfig] = None
 
     @field_validator("table", "database_name", "source_tag")
