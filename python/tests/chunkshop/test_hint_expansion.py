@@ -28,6 +28,19 @@ def test_lemma_expansion_adds_lemmatized_form():
     assert any(t.lower() == "county" for t in out)
 
 
+@pytest.mark.skipif(
+    not _has_spacy_model("en_core_web_md"),
+    reason="similar expansion needs a vector model (en_core_web_md); requires lede-spacy>=0.4.2",
+)
+def test_similar_expansion_adds_vector_neighbors():
+    # lede-spacy>=0.4.2 fixed _nlp() to load a vector model for the 'similar'
+    # kind (was hardcoded to en_core_web_sm, which has no vectors). It should
+    # now return the original plus vector neighbors instead of raising.
+    out = expand_hints(["king"], kinds=("similar",), top_k=5)
+    assert "king" in out
+    assert len(out) > 1
+
+
 def test_synonyms_without_extra_raises_actionable(monkeypatch):
     import chunkshop.hints as H
 
