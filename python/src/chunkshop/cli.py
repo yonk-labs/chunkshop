@@ -484,5 +484,129 @@ def bakeoff(config_path: Path, yes: bool):
     click.echo(f"Recommended cell: {yaml_path}")
 
 
+def _parse_where(opts) -> dict:
+    """Parse ``--where KEY=VALUE`` opts into a structured filter dict.
+
+    Supported keys:
+      ``source=<tag>``         — filter by source_tag column.
+      ``tags=a,b``             — filter to chunks whose tags array overlaps [a, b].
+      ``metadata.<key>=<val>`` — filter by a jsonb metadata key.
+
+    Raises ``ValueError`` on unrecognised keys or missing ``=``.
+    """
+    where: dict = {}
+    for item in opts:
+        if "=" not in item:
+            raise ValueError(f"--where must be KEY=VALUE, got {item!r}")
+        key, val = item.split("=", 1)
+        if key == "tags":
+            where["tags"] = val.split(",")
+        elif key == "source":
+            where["source"] = val
+        elif key.startswith("metadata."):
+            where.setdefault("metadata", {})[key[len("metadata."):]] = val
+        else:
+            raise ValueError(f"unsupported --where key: {key!r}")
+    return where
+
+
+@cli.command()
+@click.option(
+    "--config", required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to the YAML/JSON cell config.",
+)
+@click.option("--query", required=True, help="Free-text query string.")
+@click.option("--k", default=10, type=int, show_default=True,
+              help="Number of results to return.")
+@click.option(
+    "--return", "return_mode",
+    type=click.Choice(["chunks", "summary+chunks", "summary"]),
+    default="chunks", show_default=True,
+    help="What the result carries: fused hit list, summary, or both.",
+)
+@click.option(
+    "--legs", default="semantic,fts", show_default=True,
+    help="Comma-separated retrieval legs (semantic, fts).",
+)
+@click.option(
+    "--where", "where_opts", multiple=True,
+    help="Filter as KEY=VALUE (source=x, tags=a,b, metadata.k=v). Repeatable.",
+)
+@click.option("--json", "as_json", is_flag=True,
+              help="Emit results as JSON instead of human-readable text.")
+def search(config, query, k, return_mode, legs, where_opts, as_json):
+    """Hybrid-search a cell's target; optionally summarize the hits.
+
+    Embeds the query with the cell's configured embedder, runs a hybrid
+    semantic + full-text search against the cell's target table, and prints
+    the results. Use --return to choose between raw chunks, a summary, or
+    both. Errors exit non-zero with a plain message, no traceback.
+
+    Examples:
+
+    \b
+        chunkshop search --config cell.yaml --query "pgvector cosine search"
+        chunkshop search --config cell.yaml --query "alpha" --k 5 --json
+        chunkshop search --config cell.yaml --query "alpha" \\
+            --return summary+chunks --where source=infra
+    """
+    import json as _json
+
+    import yaml as _yaml
+
+    from chunkshop.config import CellConfig
+    from chunkshop.embedders import load_embedder
+    from chunkshop.search_common import search as _search
+
+    try:
+        cfg = CellConfig.model_validate(_yaml.safe_load(Path(config).read_text()))
+        emb = load_embedder(cfg.embedder)
+        qv = emb.embed([query])[0]
+        tgt = cfg.target
+
+        summarize_fn = None
+        if return_mode != "chunks":
+            from chunkshop.summarizers.lede import summarize as summarize_fn  # type: ignore[assignment]
+
+        parsed_where = _parse_where(where_opts) or None
+        res = _search(
+            tgt.resolve_dsn(),
+            schema=tgt.database_name,
+            table=tgt.table,
+            query=query,
+            query_vec=qv,
+            k=k,
+            legs=tuple(legs.split(",")),
+            where=parsed_where,
+            return_mode=return_mode,
+            summarize_fn=summarize_fn,
+            language=(tgt.fts.language if tgt.fts else "english"),
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+
+    if as_json:
+        click.echo(_json.dumps({
+            "query": res.query,
+            "summary": res.summary,
+            "chunks": [
+                {
+                    "doc_id": h.doc_id,
+                    "seq_num": h.seq_num,
+                    "score": h.score,
+                    "text": h.text,
+                    "legs": list(h.legs),
+                }
+                for h in res.chunks
+            ],
+        }, indent=2))
+    else:
+        if res.summary:
+            click.echo(f"SUMMARY:\n{res.summary}\n")
+        for i, h in enumerate(res.chunks, 1):
+            click.echo(f"{i}. [{h.score:.4f}] {h.doc_id}#{h.seq_num}  {h.text[:120]}")
+
+
 if __name__ == "__main__":
     cli()
