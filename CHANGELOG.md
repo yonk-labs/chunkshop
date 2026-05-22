@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-05-22
+
+Search lands. This release adds lede v0.4 hint-biased extraction, a hybrid
+retrieval surface across all four backends, and a configurable "Fast-mode"
+RAG path that summarizes retrieved chunks before they reach an LLM (~90%
+input-token savings on real corpora). All Python; the Rust crate version is
+bumped in lockstep but is unchanged this release.
+
+### lede v0.4 hint-biased extraction
+
+- **Hint kwargs flow through `summary_embed`.** `hints` / `hint_focus` /
+  `hint_mode` pass through the existing `chunkshop.summarizers.lede` shim to
+  bias extractive summaries toward query terms. No-hint output is
+  byte-identical to before (golden-tested).
+- **Per-document hints.** `CallableSummarizer` gains `hints_from_meta` /
+  `hint_focus_from_meta` / `hint_mode_from_meta` — pull hints from each
+  document's metadata, overriding static kwargs.
+- **`lede_top_terms` extractor.** Ranked salient words/phrases via lede 0.4.1
+  `top_terms(with_scores=True)` (real composite scores, unified kind ranking)
+  into `tags` + `metadata['top_terms']`.
+- **Hint expansion.** `chunkshop.hints.expand_hints` shim + an `expand:` block
+  on the summarizer/extractor (lemma/synonyms/similar via lede-spacy ≥0.4.2).
+  Optional `[lede-spacy]` extra; lede/lede_spacy are imported only inside three
+  designated shim modules (grep-enforced).
+
+### Hybrid search surface (`chunkshop.search`)
+
+- **`semantic_search` / `keyword_search` / `hybrid_search`** on Postgres,
+  SQLite, MariaDB (full ranked FTS) and ClickHouse (degraded token-filter),
+  with RRF + weighted fusion, candidate over-fetch, and a metadata/source/tags
+  `where` filter (filter-only, not a ranking leg). FTS uses OR-joined terms.
+- **`summarize_hits`** — heading-aware Fast-mode summary: collapses the top-K
+  retrieved chunks into one query-biased summary, prepending deduped chunk
+  headings so extractive summarization keeps structural facts (titles/captions).
+- Benchmarks + best practices: `docs/fast-mode-rag-benchmarks.md`.
+
+### Search product (configurable)
+
+- **`target.fts: {enabled, language}`** — opt-in FTS index built at ingest
+  (create modes) or validated on append, across all four backends. Default off;
+  absent `fts` ⇒ ingest is byte-identical.
+- **`chunkshop search` CLI** — `--query`, `--k`, `--return chunks|summary+chunks|summary`,
+  `--legs`, `--where KEY=VALUE`, `--json`. Loads the cell's embedder, embeds the
+  query, runs hybrid search, optionally summarizes.
+- **`SearchResult` + `search()`** — typed `{chunks, summary, query}` return with
+  three modes; summary hints auto-derived from the query (overridable), summary
+  via the injectable lede summarizer. `chunks` mode imports no lede.
+- Guide: `docs/hybrid-search.md`.
+
 ## 0.4.5 — 2026-05-20
 
 The Rust agent-memory port lands. The rest of the release is docs +
