@@ -34,6 +34,18 @@ by either are interchangeable.
   produced **identical MRR (0.903 sentence_aware, 0.896 hierarchy) on all 4
   backends.** Differences are wall time, not accuracy.
 
+## Read side — hybrid search + Fast-mode summarization
+
+chunkshop also ships an in-process **read API** over the tables it writes:
+`semantic_search` (vector top-K), `keyword_search` (full-text), and
+`hybrid_search` (both legs, RRF or weighted fusion) — on all four backends
+(pg/sqlite/mariadb full FTS; clickhouse degraded by design). On top of it,
+`summarize_hits` is a **Fast-mode RAG** helper: collapse the K retrieved chunks
+into one query-biased summary before sending to an LLM — **~90% fewer input
+tokens for ~2–3 ms**, costing about one query in ten of accuracy. See
+[`docs/hybrid-search.md`](docs/hybrid-search.md) (numbers:
+[`docs/fast-mode-rag-benchmarks.md`](docs/fast-mode-rag-benchmarks.md)).
+
 ## Headline benchmarks
 
 Three reproducible benches in [`docs/samples/benchmarks/`](docs/samples/benchmarks/),
@@ -250,7 +262,9 @@ engine. Storage shape is identical; only column types differ. See
 | [`docs/extractors.md`](docs/extractors.md) | Each extractor: why use it, config, promoted-column pairing. |
 | [`docs/summaries.md`](docs/summaries.md) | summary_embed + hierarchical chunker reference. |
 | [`docs/storage-model.md`](docs/storage-model.md) | What chunkshop writes per row + how to query each payload. |
-| [`docs/query-clients.md`](docs/query-clients.md) | Query the ingested table from Python, JS/TS, Rust, Go. |
+| [`docs/query-clients.md`](docs/query-clients.md) | Query the ingested table from Python, JS/TS, Rust, Go (raw SQL). |
+| [`docs/hybrid-search.md`](docs/hybrid-search.md) | Read-side Python API: semantic / keyword / hybrid search + fusion, and `summarize_hits` Fast-mode RAG. |
+| [`docs/fast-mode-rag-benchmarks.md`](docs/fast-mode-rag-benchmarks.md) | Fast-mode token-savings + accuracy benchmarks behind `summarize_hits`. |
 
 ### Tutorials
 

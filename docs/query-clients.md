@@ -11,6 +11,14 @@ Rust, and Go. Each example:
 2. Runs a pgvector cosine-distance query with `<=>`.
 3. Returns the top 3 most-similar chunks.
 
+> **Want hybrid (semantic + keyword) search, fusion, or Fast-mode RAG
+> summarization in Python?** This doc is the language-neutral raw-SQL path. For
+> the higher-level in-process Python read API — `semantic_search`,
+> `keyword_search`, `hybrid_search` (RRF / weighted fusion), and the
+> `summarize_hits` Fast-mode helper that collapses K chunks into one
+> query-biased summary — see [`hybrid-search.md`](hybrid-search.md). It works on
+> all four backends.
+
 ## Prerequisites
 
 - Postgres with pgvector, populated by a chunkshop ingest (follow
