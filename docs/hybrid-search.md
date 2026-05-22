@@ -366,6 +366,258 @@ Two things make Fast mode viable, both measured in
   lookups, send raw chunks (or summary + an "expand if unsure" escape hatch).
   (§7a)
 
+## Enabling FTS at ingest (`target.fts`)
+
+For ingest-driven setups you can skip the manual `ensure_fts` call entirely by
+declaring `target.fts` in your cell YAML. The sink builds (or validates) the FTS
+index as part of the ingest run — no separate startup call needed:
+
+```yaml
+target:
+  type: postgres
+  database: chunkshop_samples
+  table: handbook
+  mode: overwrite           # or create_if_missing
+  fts:
+    enabled: true
+    language: english       # default; any PostgreSQL text-search config name
+```
+
+`FtsConfig` has two fields:
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Opt in to FTS index creation |
+| `language` | `str` | `"english"` | PostgreSQL text-search config name; allowlisted |
+
+`language` is allowlisted (the same set accepted by `ensure_fts`) because it is
+concatenated into the generated-column DDL where it cannot be a bound parameter.
+
+### Behavior per mode
+
+| `target.mode` | What happens with `fts.enabled: true` |
+|---|---|
+| `overwrite` | Drops + re-creates the table, then calls `ensure_fts` to build the index. |
+| `create_if_missing` | Creates the table (if absent), then calls `ensure_fts` to build the index. |
+| `append` | Validates that the FTS index already exists; raises `RuntimeError` if it's missing (the table was created without FTS). Re-create with `overwrite` or `create_if_missing` to add the index. |
+
+The validation on `append` guards against querying a non-existent FTS index at
+search time — if the index is absent you get a clear error at ingest rather than
+a silent empty FTS leg at query time.
+
+### Per-backend support
+
+The same `target.fts` block works across all four backends, but FTS fidelity
+differs (see **Which backends** above):
+
+| Backend | FTS structure built |
+|---|---|
+| Postgres + pgvector | `search_vector tsvector` generated column + GIN index |
+| SQLite + sqlite-vec | FTS5 external-content table |
+| MariaDB 11.7+ | FULLTEXT index |
+| ClickHouse 24.10+ | `tokenbf_v1` data-skipping index (degraded — binary match, no ranking) |
+
+When `fts.enabled: false` (the default) the sink writes no FTS structure and the
+manual `ensure_fts` pattern from earlier in this doc applies.
+
+---
+
+## The `chunkshop search` CLI
+
+`chunkshop search` is a one-shot query command. It loads the cell config, embeds
+the query with the same embedder that ran ingest, calls `search()`, and prints
+results as human-readable text or JSON:
+
+```text
+Usage: chunkshop search [OPTIONS]
+
+Options:
+  --config PATH                   Path to the YAML/JSON cell config. [required]
+  --query TEXT                    Free-text query string. [required]
+  --k INTEGER                     Number of results to return. [default: 10]
+  --return [chunks|summary+chunks|summary]
+                                  What the result carries: fused hit list,
+                                  summary, or both. [default: chunks]
+  --legs TEXT                     Comma-separated retrieval legs (semantic,
+                                  fts). [default: semantic,fts]
+  --where TEXT                    Filter as KEY=VALUE (source=x, tags=a,b,
+                                  metadata.k=v). Repeatable.
+  --json                          Emit results as JSON instead of human-
+                                  readable text.
+  --help                          Show this message and exit.
+```
+
+### One-shot examples
+
+```bash
+# Default: semantic + FTS, top 10, human-readable text
+chunkshop search --config cell.yaml --query "how do we rotate API keys"
+
+# Fast-mode summary — collapses hits before display, top 5
+chunkshop search --config cell.yaml --query "how do we rotate API keys" \
+    --return summary+chunks --k 5
+
+# Tenant scoping via source_tag — only chunks ingested with source=infra_v2
+chunkshop search --config cell.yaml --query "firewall rules" \
+    --where source=infra_v2
+
+# Tag filter + metadata filter (repeatable)
+chunkshop search --config cell.yaml --query "costs" \
+    --where tags=billing,ops --where metadata.category=quarterly
+
+# JSON output for programmatic consumption
+chunkshop search --config cell.yaml --query "alpha" --k 5 --json
+```
+
+### Text output shape
+
+```
+SUMMARY:
+<extractive summary string>       ← only present when --return includes summary
+
+1. [0.8312] doc_id#3  The first 120 chars of the chunk body…
+2. [0.7991] doc_id#1  The next result…
+…
+```
+
+### JSON output shape (`--json`)
+
+```json
+{
+  "query": "alpha",
+  "summary": null,
+  "chunks": [
+    {
+      "doc_id": "handbook_2024",
+      "seq_num": 3,
+      "score": 0.8312,
+      "text": "original chunk body…",
+      "legs": ["fts", "semantic"]
+    }
+  ]
+}
+```
+
+`summary` is `null` when `--return chunks` (the default). `chunks` is an empty
+array when `--return summary`. Both are populated for `--return summary+chunks`.
+
+### `--where` filter syntax
+
+`--where` is repeatable. Each item is `KEY=VALUE`:
+
+| Form | Meaning |
+|---|---|
+| `source=<tag>` | Exact match on the write-once `source` provenance column. Useful for tenant scoping. |
+| `tags=a,b` | Array overlap on the tags column — chunks with at least one of the listed tags. |
+| `metadata.<key>=<val>` | Top-level metadata equality (jsonb containment on Postgres). |
+
+Unknown keys raise `ValueError` and exit non-zero.
+
+---
+
+## `search()` + `SearchResult` — three return modes
+
+`search()` in `chunkshop.search_common` is the typed Python entry point. It
+wraps `hybrid_search` (Postgres default) and optionally `summarize_hits` into a
+single call, returning a `SearchResult`:
+
+```python
+@dataclass
+class SearchResult:
+    chunks: list[Hit]       # fused Hit list (empty when return_mode="summary")
+    summary: str | None     # extractive summary (None when return_mode="chunks")
+    query: str              # the original query string
+```
+
+### Signature
+
+```python
+from chunkshop.search_common import search, SearchResult
+
+result: SearchResult = search(
+    dsn,
+    schema="chunkshop_samples",
+    table="handbook",
+    query="how do we rotate API keys",   # required for "fts" leg
+    query_vec=qvec,                       # required for "semantic" leg
+    k=10,
+    legs=("semantic", "fts"),             # default
+    where=None,
+    fusion="rrf",                         # "rrf" or "weighted"
+    return_mode="chunks",                 # "chunks" | "summary+chunks" | "summary"
+    summarize_fn=None,                    # required for any non-chunks mode
+    summary_hints=None,                   # explicit hint terms; overrides auto-derivation
+    summary_expand=None,                  # HintExpansion for synonym/lemma widening
+    summary_max_length=1200,
+    language="english",
+)
+```
+
+### The three `return_mode` values
+
+| `return_mode` | `chunks` field | `summary` field | Lede imported? |
+|---|---|---|---|
+| `"chunks"` (default) | Full fused hit list | `None` | No — import-boundary-clean |
+| `"summary+chunks"` | Full fused hit list | Extractive summary string | Yes |
+| `"summary"` | Empty list | Extractive summary string | Yes |
+
+`"chunks"` mode is the zero-dep fast path. It does not import lede or call
+`summarize_hits` at all — choosing `return_mode="chunks"` keeps the call
+lede-free regardless of whether the `[lede]` extra is installed.
+
+### Auto query-hint summarization
+
+For `"summary"` and `"summary+chunks"` modes, `search()` auto-derives hint terms
+from the query via `lede.extract.top_terms` (through the `lede_top_terms` shim)
+when `summary_hints` is not given. You can override with:
+
+- **`summary_hints`** — explicit list of terms to bias the summary toward. Caller
+  wins; auto-derivation is skipped.
+- **`summary_expand`** — a `HintExpansion` config that widens the derived hints
+  with synonyms / lemmas via lede_spacy. Applied after `summary_hints` if given.
+
+Both knobs are optional; omitting them gives you query-auto-biased summarization
+out of the box.
+
+### Short runnable example
+
+```python
+import os
+from chunkshop.config import FastembedEmbedder
+from chunkshop.embedders import load_embedder
+from chunkshop.search_common import search
+from chunkshop.summarizers.lede import summarize      # needs [lede] extra
+
+DSN    = os.environ["CHUNKSHOP_DSN"]
+QUERY  = "how do we rotate API keys"
+
+embedder = load_embedder(
+    FastembedEmbedder(type="fastembed", model_name="BAAI/bge-small-en-v1.5", dim=384)
+)
+qvec = embedder.embed([QUERY])[0]
+
+result = search(
+    DSN,
+    schema="chunkshop_samples",
+    table="handbook",
+    query=QUERY,
+    query_vec=qvec,
+    k=10,
+    return_mode="summary+chunks",
+    summarize_fn=summarize,           # injected — chunkshop core never imports lede
+)
+
+print(result.summary)                 # extractive, query-biased, ≤1200 chars
+for h in result.chunks:
+    print(h.score, h.doc_id, h.seq_num, h.legs)
+```
+
+The FTS language used at query time is inferred from `tgt.fts.language` in the
+CLI. In direct `search()` calls, pass `language=` explicitly if your table was
+indexed with a non-English config.
+
+---
+
 ## See also
 
 - [`fast-mode-rag-benchmarks.md`](fast-mode-rag-benchmarks.md) — full numbers,
