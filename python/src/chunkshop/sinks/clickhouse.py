@@ -132,6 +132,35 @@ class ClickHouseSink:
                 else:
                     raise ValueError(f"unknown mode: {self.cfg.mode}")
 
+        if self.cfg.fts and self.cfg.fts.enabled:
+            self._ensure_or_validate_fts()
+
+    def _ensure_or_validate_fts(self) -> None:
+        schema = self.cfg.database_name
+        index_name = "original_content_tok"
+        if self.cfg.mode == "append":
+            with self.backend.connect() as client:
+                r = client.query(
+                    "SELECT 1 FROM system.data_skipping_indices "
+                    "WHERE database={db:String} AND table={tbl:String} AND name={idx:String}",
+                    parameters={"db": schema, "tbl": self.cfg.table, "idx": index_name},
+                )
+                if not r.result_rows:
+                    raise RuntimeError(
+                        f"target.fts.enabled=true but {schema}.{self.cfg.table} has no "
+                        f"tokenbf_v1 index ({index_name}). Re-create the table with "
+                        f"mode=overwrite or create_if_missing + fts.enabled, or remove "
+                        f"target.fts."
+                    )
+            return
+        from chunkshop.search_clickhouse import ensure_fts
+        ensure_fts(
+            self.cfg.resolve_dsn(),
+            schema=schema,
+            table=self.cfg.table,
+            language=self.cfg.fts.language,
+        )
+
     def _create_base_ddl(self, client) -> None:
         engine = getattr(self.cfg, "engine", None)  # optional CH-only field
         for stmt in self.backend.emit_chunks_table_ddl(
