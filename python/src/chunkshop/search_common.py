@@ -18,11 +18,25 @@ Keeping fusion in one place means a fusion fix lands once, not four times.
 
 No backend imports here — pure Python + numpy-free. The `Hit` contract is
 deliberately identical to what the Postgres module historically returned.
+
+``SearchResult`` and ``search()`` are the user-facing entry point. ``search()``
+wraps ``hybrid_search`` (pg default) and optionally ``summarize_hits``, exposing
+three return modes:
+
+  - ``"chunks"``        — returns the fused hit list; no summarization, no lede
+                          import.  (SC-010: chunks mode must be lede-free.)
+  - ``"summary"``       — summarizes the hits; chunks list is discarded (empty).
+  - ``"summary+chunks"``— summarizes AND returns the hit list.
+
+All lede-related imports (``lede.extract.top_terms`` via the shim, lede_spacy
+``expand_hints``) are deferred to the summary path so the chunks-only path stays
+import-boundary-clean.
 """
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal, Optional
 
 
 @dataclass(frozen=True)
@@ -229,3 +243,150 @@ def summarize_hits(
         return summary
 
     return "\n".join(headings) + "\n\n" + summary
+
+
+# ---------------------------------------------------------------------------
+# SearchResult + search() — user-facing entry point (SC-008, SC-009, SC-010)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SearchResult:
+    """Container returned by ``search()``.
+
+    Attributes:
+        chunks:  fused ``Hit`` list (empty when ``return_mode="summary"``).
+        summary: extractive summary string (``None`` when ``return_mode="chunks"``).
+        query:   the original query string, preserved for logging / display.
+    """
+    chunks: list  # list[Hit]
+    summary: Optional[str]
+    query: str
+
+
+def _derive_query_hints(query: str) -> list[str]:
+    """Return salient terms from *query* via the lede shim (SC-016 compliant).
+
+    Routes through ``chunkshop.extractors.lede_top_terms.query_hints`` — the
+    designated shim file that is permitted to import lede.  This function itself
+    contains NO ``from lede`` / ``import lede`` statement; the import happens
+    inside the shim, lazily, only when a summary mode is requested.
+    """
+    from chunkshop.extractors.lede_top_terms import query_hints  # lazy — summary path only
+    return query_hints(query, n=6)
+
+
+def _summarize_for_query(
+    hits: list[Hit],
+    query: str,
+    *,
+    summarize_fn: Optional[Callable[..., str]],
+    summary_hints: Optional[list[str]],
+    summary_expand,
+    max_length: int,
+) -> str:
+    """Run extractive summarization biased toward the query.
+
+    ``summarize_fn`` is required for any summary mode; raises ``ValueError``
+    when absent so the caller gets an actionable message rather than a confusing
+    ``TypeError`` inside ``summarize_hits``.
+
+    Hint resolution order:
+      1. Explicit ``summary_hints`` (caller wins).
+      2. Auto-derived from *query* via lede ``top_terms`` shim (SC-016).
+      3. If expansion config provided, route through ``chunkshop.hints.expand_hints``.
+    """
+    if summarize_fn is None:
+        raise ValueError(
+            "summary return modes require summarize_fn "
+            "(e.g. chunkshop.summarizers.lede.summarize)"
+        )
+    hints: Optional[Sequence] = (
+        summary_hints if summary_hints is not None else _derive_query_hints(query)
+    )
+    if summary_expand is not None and hints:
+        from chunkshop.hints import expand_hints  # lazy — summary path only
+        hints = expand_hints(
+            hints,
+            kinds=tuple(summary_expand.kinds),
+            top_k=summary_expand.top_k,
+            expand_weight=summary_expand.expand_weight,
+        )
+    return summarize_hits(hits, summarize_fn, max_length=max_length, hints=hints)
+
+
+def search(
+    dsn: str,
+    *,
+    schema: str,
+    table: str,
+    query: Optional[str] = None,
+    query_vec=None,
+    k: int = 10,
+    legs=("semantic", "fts"),
+    where: Optional[dict] = None,
+    fusion: str = "rrf",
+    return_mode: Literal["chunks", "summary+chunks", "summary"] = "chunks",
+    summarize_fn: Optional[Callable[..., str]] = None,
+    summary_hints: Optional[list[str]] = None,
+    summary_expand=None,
+    summary_max_length: int = 1200,
+    language: str = "english",
+) -> SearchResult:
+    """Hybrid search with optional summarization — the chunkshop read entry point.
+
+    Wraps :func:`chunkshop.search.hybrid_search` (Postgres default) and
+    :func:`summarize_hits` into a single call with three return modes.
+
+    SC-010: ``return_mode="chunks"`` performs NO summarization and triggers NO
+    lede import — ``hybrid_search`` is imported lazily below, but lede / top_terms
+    are never touched on this path.
+
+    Args:
+        dsn: Postgres DSN.
+        schema / table: target table coordinates.
+        query: free-text query (required when legs includes "fts").
+        query_vec: embedding vector (required when legs includes "semantic").
+        k: number of results to return.
+        legs: retrieval legs; subset of ``("semantic", "fts")``.
+        where: structured filter dict forwarded to ``hybrid_search``.
+        fusion: ``"rrf"`` or ``"weighted"``.
+        return_mode: controls what the ``SearchResult`` carries.
+        summarize_fn: injectable ``(text, **kwargs) -> str`` summarizer.
+            Required for any non-chunks mode.
+        summary_hints: explicit hint terms for summarization; overrides
+            auto-derivation from *query*.
+        summary_expand: optional ``HintExpansion`` config for synonym / lemma
+            expansion of hints via lede_spacy.
+        summary_max_length: forwarded as ``max_length`` to ``summarize_hits``.
+        language: FTS language, forwarded to ``hybrid_search``.
+
+    Returns:
+        ``SearchResult(chunks, summary, query)``.
+    """
+    from chunkshop.search import hybrid_search  # lazy: pg backend default
+    hits = hybrid_search(
+        dsn,
+        schema=schema,
+        table=table,
+        query=query,
+        query_vec=query_vec,
+        k=k,
+        legs=tuple(legs),
+        where=where,
+        fusion=fusion,
+        language=language,
+    )
+
+    if return_mode == "chunks":
+        return SearchResult(chunks=hits, summary=None, query=query or "")
+
+    summary = _summarize_for_query(
+        hits,
+        query or "",
+        summarize_fn=summarize_fn,
+        summary_hints=summary_hints,
+        summary_expand=summary_expand,
+        max_length=summary_max_length,
+    )
+    chunks = [] if return_mode == "summary" else hits
+    return SearchResult(chunks=chunks, summary=summary, query=query or "")

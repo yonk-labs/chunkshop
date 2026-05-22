@@ -94,6 +94,33 @@ class SqliteSink:
                     raise ValueError(f"unknown mode: {self.cfg.mode}")
             conn.commit()
 
+        if self.cfg.fts and self.cfg.fts.enabled:
+            self._ensure_or_validate_fts()
+
+    def _ensure_or_validate_fts(self) -> None:
+        fts_table = f"{self.cfg.table}_fts"
+        if self.cfg.mode == "append":
+            with self.backend.connect() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (fts_table,),
+                )
+                if cur.fetchone() is None:
+                    raise RuntimeError(
+                        f"target.fts.enabled=true but {fts_table} does not exist. "
+                        f"Re-create the table with mode=overwrite or create_if_missing "
+                        f"+ fts.enabled, or remove target.fts."
+                    )
+            return
+        from chunkshop.search_sqlite import ensure_fts
+        ensure_fts(
+            self.cfg.resolve_dsn(),
+            schema="",
+            table=self.cfg.table,
+            language=self.cfg.fts.language,
+        )
+
     def _create_base_ddl(self, cur) -> None:
         for stmt in self.backend.emit_chunks_table_ddl(
             fq=self._fq_main(),

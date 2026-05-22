@@ -81,6 +81,29 @@ class PgSink:
                     raise ValueError(f"unknown mode: {self.cfg.mode}")
             conn.commit()
 
+        if self.cfg.fts and self.cfg.fts.enabled:
+            self._ensure_or_validate_fts()
+
+    def _ensure_or_validate_fts(self) -> None:
+        schema = self.cfg.database_name
+        idx = f"{self.cfg.table}_fts_idx"
+        if self.cfg.mode == "append":
+            with self.backend.connect() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM pg_indexes WHERE schemaname=%s AND indexname=%s",
+                    (schema, idx),
+                )
+                if cur.fetchone() is None:
+                    raise RuntimeError(
+                        f"target.fts.enabled=true but {schema}.{self.cfg.table} has no "
+                        f"FTS index ({idx}). Re-create the table with mode=overwrite or "
+                        f"create_if_missing + fts.enabled, or remove target.fts."
+                    )
+            return
+        from chunkshop.search import ensure_fts
+        ensure_fts(self.cfg.resolve_dsn(), schema=schema,
+                   table=self.cfg.table, language=self.cfg.fts.language)
+
     def _create_base_ddl(self, cur) -> None:
         for stmt in self.backend.emit_chunks_table_ddl(
             fq=self._fq(),

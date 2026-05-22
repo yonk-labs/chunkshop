@@ -88,3 +88,21 @@ class LedeTopTermsExtractor:
 
         tags = [e["term"] for e in entries]
         return ExtractResult(tags=tags, metadata={"top_terms": entries})
+
+
+def query_hints(query: str, n: int = 6) -> list[str]:
+    """Return the top-n salient terms from *query* as a plain string list.
+
+    Thin shim so search_common.py can derive query hints without importing lede
+    directly (SC-016: only shim files may import lede). Lazy import — lede is
+    not loaded unless a summary return mode is requested.
+    """
+    try:
+        from lede.extract import top_terms
+    except ImportError as exc:
+        raise RuntimeError(
+            "query hint derivation requires lede>=0.4.1. "
+            "Install with: pip install 'lede>=0.4.1' (or the chunkshop [lede] extra)."
+        ) from exc
+    results = top_terms(query, n=n, with_scores=True)
+    return [ts.term for ts in results]
