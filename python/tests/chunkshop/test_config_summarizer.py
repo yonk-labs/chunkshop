@@ -109,3 +109,44 @@ def test_extra_fields_forbidden():
             summarizer={"mode": "passthrough"},
             extra_field="oops",
         )
+
+
+def test_callable_summarizer_from_meta_fields_default_none():
+    from chunkshop.config import CallableSummarizer
+    cfg = CallableSummarizer(mode="callable", module="m", function="summarize")
+    assert cfg.hints_from_meta is None
+    assert cfg.hint_focus_from_meta is None
+    assert cfg.hint_mode_from_meta is None
+
+
+def test_callable_summarizer_rejects_unknown_field():
+    import pytest
+    from pydantic import ValidationError
+    from chunkshop.config import CallableSummarizer
+    with pytest.raises(ValidationError):
+        CallableSummarizer(mode="callable", module="m", hints_from_metaa="x")
+
+
+def test_lede_top_terms_config_defaults_and_discriminates():
+    from chunkshop.config import CompositeExtractor
+    comp = CompositeExtractor(type="composite", extractors=[{"type": "lede_top_terms"}])
+    e = comp.extractors[0]
+    assert e.type == "lede_top_terms"
+    assert e.n == 10
+    assert e.kinds == ("words", "phrases")
+    assert e.hint_focus == 0.7
+    assert e.hint_mode == "soft"
+
+
+def test_hint_expansion_defaults_and_validation():
+    import pytest
+    from pydantic import ValidationError
+    from chunkshop.config import HintExpansion
+    h = HintExpansion()
+    assert h.kinds == ("lemma",)
+    assert h.top_k == 5
+    assert h.expand_weight == 0.5
+    with pytest.raises(ValidationError):
+        HintExpansion(kinds=())          # empty
+    with pytest.raises(ValidationError):
+        HintExpansion(kinds=("bogus",))  # bad literal

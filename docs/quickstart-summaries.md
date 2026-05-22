@@ -92,6 +92,78 @@ chunker:
 chunkshop never imports `my_project.summarizers` at module level — the
 dispatch happens only when the chunker runs.
 
+## Hint-biased extraction (lede v0.4)
+
+Pass `hints` (plus optional `hint_focus`, `hint_mode`) under `summarizer.kwargs`
+to bias lede's extractive scoring toward specific terms:
+
+```yaml
+chunker:
+  type: summary_embed
+  base:
+    type: hierarchy
+  summarizer:
+    mode: callable
+    module: chunkshop.summarizers.lede
+    kwargs:
+      hints: ["onboarding", "benefits"]   # or {term: weight}
+      hint_focus: 0.7                      # 0=ignore .. 1=only-hint pool
+      hint_mode: soft                      # soft=bias, hard=filter
+```
+
+`hint_mode: soft` (default) adds a ranking bonus to hint-bearing sentences
+without removing any; `hint_mode: hard` keeps **only** sentences that contain
+at least one hint term, then ranks normally.
+
+Hints can be a plain list or a weighted dict:
+
+```yaml
+hints: ["onboarding", "benefits"]          # equal weight
+hints: {onboarding: 2.0, benefits: 1.0}   # onboarding weighted 2×
+```
+
+**Matching rules (lede v0.4):**
+
+- Case-insensitive — `Onboarding` matches `onboarding`.
+- Word-boundary — `smith` does **not** match `blacksmith`.
+- Multi-word hints are contiguous — `John Smith` matches `John Smith Sr.` but
+  not `John P. Smith`.
+- No Unicode normalization — `café` and `cafe` are distinct hints.
+- No stemming — `onboard` and `onboarding` are separate terms.
+
+Hint expansion (stemming, synonym aliases) is covered in the
+[subsection below](#hint-expansion-lede-spacy).
+
+### Hint expansion (lede-spacy)
+
+Install the optional extra: `pip install 'lede-spacy>=0.4'`. Add an `expand:`
+block under the summarizer (or the `lede_top_terms` extractor) to widen hints
+before lede ranks:
+
+```yaml
+summarizer:
+  mode: callable
+  module: chunkshop.summarizers.lede
+  kwargs: {hints: [counties], hint_focus: 0.7}
+  expand:
+    kinds: [lemma]          # lemma | synonyms | similar
+    top_k: 5
+    expand_weight: 0.5
+```
+
+Expansion kinds and their requirements:
+
+- `lemma` — any spaCy model (e.g. `python -m spacy download en_core_web_sm`).
+  ~2x your hint count. "counties" -> +"county".
+- `synonyms` — `pip install 'lede-spacy[synonyms]'` + `python -m nltk.downloader
+  wordnet`. ~7x at top_k=3. Single-word hints only.
+- `similar` — a vector model (`en_core_web_md`/`_lg`). ~15x+ at top_k=5.
+
+These corpora/models are NOT pulled by chunkshop; a missing one raises an
+actionable error naming the install command. Expansion is Python-only (the
+chunkshop Rust port has no equivalent). When `expand:` is omitted, hints are
+passed to lede unchanged.
+
 ### `passthrough` — baseline (raw chunk as the summary)
 
 ```yaml

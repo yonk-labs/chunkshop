@@ -276,6 +276,21 @@ class SemanticChunker(_Base):
 # --- Summarizer config (origin-agnostic; see brief SC-002, SC-005) ---
 
 
+class HintExpansion(_Base):
+    """Optional lede-spacy hint expansion. lemma is cheap; synonyms/similar
+    require extra installs (enforced at runtime in chunkshop/hints.py)."""
+    kinds: tuple[Literal["lemma", "synonyms", "similar"], ...] = ("lemma",)
+    top_k: int = Field(default=5, ge=1)
+    expand_weight: float = Field(default=0.5, ge=0.0)
+
+    @field_validator("kinds")
+    @classmethod
+    def _kinds_nonempty(cls, v):
+        if not v:
+            raise ValueError("kinds must be non-empty")
+        return v
+
+
 class ExternalSummarizer(_Base):
     """Pull summary from a source document's metadata field (upstream-computed)."""
     mode: Literal["external"]
@@ -288,6 +303,10 @@ class CallableSummarizer(_Base):
     module: str
     function: str = "summarize"
     kwargs: dict = Field(default_factory=dict)
+    hints_from_meta: Optional[str] = None
+    hint_focus_from_meta: Optional[str] = None
+    hint_mode_from_meta: Optional[str] = None
+    expand: Optional[HintExpansion] = None
 
 
 class PassthroughSummarizer(_Base):
@@ -595,6 +614,23 @@ class SpacyEntitiesExtractor(_Base):
     )
 
 
+class LedeTopTermsExtractor(_Base):
+    type: Literal["lede_top_terms"]
+    n: int = Field(default=10, ge=1)
+    kinds: tuple[Literal["words", "phrases"], ...] = ("words", "phrases")
+    hints: Optional[Union[list[str], dict[str, float]]] = None
+    hint_focus: float = Field(default=0.7, ge=0.0, le=1.0)
+    hint_mode: Literal["soft", "hard"] = "soft"
+    expand: Optional[HintExpansion] = None
+
+    @field_validator("kinds")
+    @classmethod
+    def _kinds_nonempty(cls, v):
+        if not v:
+            raise ValueError("kinds must be non-empty")
+        return v
+
+
 class CompositeExtractor(_Base):
     type: Literal["composite"]
     extractors: list["ExtractorConfig"] = Field(default_factory=list)
@@ -607,6 +643,7 @@ ExtractorConfig = Annotated[
         LangDetectExtractor,
         KeyBertPhrasesExtractor,
         SpacyEntitiesExtractor,
+        LedeTopTermsExtractor,
         CompositeExtractor,
     ],
     Field(discriminator="type"),
