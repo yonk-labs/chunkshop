@@ -32,8 +32,8 @@ class LedeTopTermsExtractor:
             from lede.extract import top_terms
         except ImportError as exc:
             raise RuntimeError(
-                "lede_top_terms extractor requires lede>=0.4.1. "
-                "Install with: pip install 'lede>=0.4.1' (or the chunkshop [lede] extra)."
+                "lede_top_terms extractor requires lede>=0.4.2. "
+                "Install with: pip install 'lede>=0.4.2' (or the chunkshop [lede] extra)."
             ) from exc
 
         # Resolve effective hints, applying expansion if configured.
@@ -101,8 +101,8 @@ def query_hints(query: str, n: int = 6) -> list[str]:
         from lede.extract import top_terms
     except ImportError as exc:
         raise RuntimeError(
-            "query hint derivation requires lede>=0.4.1. "
-            "Install with: pip install 'lede>=0.4.1' (or the chunkshop [lede] extra)."
+            "query hint derivation requires lede>=0.4.2. "
+            "Install with: pip install 'lede>=0.4.2' (or the chunkshop [lede] extra)."
         ) from exc
     results = top_terms(query, n=n, with_scores=True)
     return [ts.term for ts in results]

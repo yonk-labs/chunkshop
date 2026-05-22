@@ -236,7 +236,7 @@ wheels = [
 
 [[package]]
 name = "chunkshop"
-version = "0.4.5"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -314,7 +314,7 @@ requires-dist = [
     { name = "keybert", marker = "extra == 'nlp'", specifier = ">=0.8" },
     { name = "langdetect", marker = "extra == 'lang'", specifier = ">=1.0.9" },
     { name = "langdetect", marker = "extra == 'nlp'", specifier = ">=1.0.9" },
-    { name = "lede", marker = "extra == 'lede'", specifier = ">=0.4.1" },
+    { name = "lede", marker = "extra == 'lede'", specifier = ">=0.4.2" },
     { name = "lede-spacy", marker = "extra == 'lede-spacy'", specifier = ">=0.4.2" },
     { name = "nltk", marker = "extra == 'extractors'", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
@@ -764,11 +764,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/0e/72/a3add0e4eec4eb9e2
 
 [[package]]
 name = "lede"
-version = "0.4.1"
+version = "0.4.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/97/be/9d8adfb4aaa84bf811ebeb944f402f53aa1b9e5cd9fd925b7d510f790a6d/lede-0.4.1.tar.gz", hash = "sha256:588b1707668ffcb77f2e568c90bd09fad09aa9497ba74669dbd860f4f8007d58", size = 128707, upload-time = "2026-05-22T10:44:21.597Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/73/91/3edb1050427aced89327a563074780739aade403c6e11dddb38f9b6b1aa8/lede-0.4.2.tar.gz", hash = "sha256:793bd61748bfda05cb47ebd5434fba4fff22e841512b1ce558fab1061b89956a", size = 134811, upload-time = "2026-05-22T17:19:50.435Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/e4/75094e112643d5523a363254d39a77a6b9c4ee4633312b516872eeeee7d1/lede-0.4.1-py3-none-any.whl", hash = "sha256:67f771af870bc3994299502126f3485c9792cfde55026d593507c39131f953b7", size = 67358, upload-time = "2026-05-22T10:44:19.76Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/e8/e4726c202a305106135a96ba139f8655f83d77a06580520171f7dd14843a/lede-0.4.2-py3-none-any.whl", hash = "sha256:3bad85fcde8fbc259615a6cbff1fc4c39cd11ee2f4613e4541def7897fd6a3c5", size = 70864, upload-time = "2026-05-22T17:19:49.246Z" },
 ]
 
 [[package]]

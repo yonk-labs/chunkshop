@@ -64,14 +64,16 @@ jobs:
         # local dev. --wait blocks until every service's healthcheck passes.
         run: docker compose -f docker-compose.test.yaml up -d --wait
 
-      - name: Install project + dev + nlp + all backend extras
+      - name: Install project + dev + nlp + lede + all backend extras
         working-directory: python
         # --frozen installs strictly from the committed lockfile and refuses
         # to update it. Catches "I forgot to commit uv.lock after adding a
         # dep" before it merges. all-backends pulls pymysql /
         # clickhouse-connect / sqlite-vec so the modular-backend test modules
-        # import (they fail at *collection* otherwise).
-        run: uv sync --frozen --extra dev --extra extractors --extra nlp --extra all-backends
+        # import (they fail at *collection* otherwise). lede provides the
+        # query-hint/summary feature the search tests exercise (they import
+        # chunkshop.summarizers.lede directly and have no skip-guard).
+        run: uv sync --frozen --extra dev --extra extractors --extra nlp --extra all-backends --extra lede
 
       - name: Verify pgvector extension available
         run: |
