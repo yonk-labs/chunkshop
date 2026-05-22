@@ -191,3 +191,21 @@ def test_search_unreachable_db_exits_nonzero_no_traceback(tmp_path, search_cell)
     ])
     assert r.exit_code != 0
     assert "Traceback" not in r.output
+
+
+def test_validate_accepts_fts_cell(search_cell):
+    """SC-005: `chunkshop validate` must accept a cell config that includes target.fts."""
+    r = CliRunner().invoke(cli, ["validate", "--config", str(search_cell)])
+    assert r.exit_code == 0, r.output
+
+
+def test_search_e2e_summary_plus_chunks(search_cell):
+    """SC-005: End-to-end — real ingest (via fixture) → search with summary → both present."""
+    r = CliRunner().invoke(cli, [
+        "search", "--config", str(search_cell),
+        "--query", "alpha", "--k", "5",
+        "--return", "summary+chunks", "--json",
+    ])
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert data["chunks"] and isinstance(data["summary"], str)
