@@ -80,7 +80,9 @@ sha1 = { version = "0.10", optional = true }
 # ClickHouse HTTP URL). default-features=false on sqlx is preserved from the
 # v4 line so sqlx-sqlite's libsqlite3-sys does not clash with rusqlite's.
 blake2 = { version = "0.10", default-features = false, optional = true }
-pgvector = { version = "0.4", features = ["sqlx"], optional = true }
+# Pinned to =0.4.1: pgvector 0.4.2 widened its sqlx req to >=0.8,<0.10, which lets
+# Cargo pull sqlx 0.9 alongside our pinned 0.8.6 -> two sqlx_core versions, trait mismatch.
+pgvector = { version = "=0.4.1", features = ["sqlx"], optional = true }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "mysql", "json", "chrono"], optional = true }
 clickhouse = { version = "0.15", optional = true }
 rusqlite = { version = "0.32", features = ["bundled", "load_extension"], optional = true }

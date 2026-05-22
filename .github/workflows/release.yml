@@ -119,11 +119,11 @@ jobs:
 
       - name: Run lib tests
         working-directory: rust
-        run: cargo test --workspace --lib --no-fail-fast
+        run: cargo test --workspace --lib --no-fail-fast --locked
 
       - name: Package crate
         working-directory: rust
-        run: cargo package -p chunkshop-rs
+        run: cargo package -p chunkshop-rs --locked
 
       - name: Show packaged file list
         working-directory: rust
