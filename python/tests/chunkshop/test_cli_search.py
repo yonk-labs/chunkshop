@@ -134,3 +134,60 @@ def test_search_text_output(search_cell):
     ])
     assert r.exit_code == 0, r.output
     assert r.output.strip()  # prints something
+
+
+def test_search_summary_plus_chunks(search_cell):
+    r = CliRunner().invoke(cli, [
+        "search", "--config", str(search_cell),
+        "--query", "alpha beta", "--k", "5",
+        "--return", "summary+chunks", "--json",
+    ])
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert data["summary"] and data["chunks"]
+
+
+def test_search_summary_only_text(search_cell):
+    r = CliRunner().invoke(cli, [
+        "search", "--config", str(search_cell),
+        "--query", "alpha", "--return", "summary",
+    ])
+    assert r.exit_code == 0, r.output
+    assert "SUMMARY:" in r.output
+
+
+def test_search_where_source_filter(search_cell):
+    # The fixture ingests all CORPUS docs with source_tag="test".
+    # Filtering by a non-matching source_tag returns zero chunks.
+    r = CliRunner().invoke(cli, [
+        "search", "--config", str(search_cell),
+        "--query", "alpha", "--json",
+        "--where", "source=nonexistent_tag",
+    ])
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert data["chunks"] == []
+
+
+def test_search_bad_where_exits_nonzero_no_traceback(search_cell):
+    r = CliRunner().invoke(cli, [
+        "search", "--config", str(search_cell),
+        "--query", "alpha", "--where", "garbage",
+    ])
+    assert r.exit_code != 0
+    assert "Traceback" not in r.output
+
+
+def test_search_unreachable_db_exits_nonzero_no_traceback(tmp_path, search_cell):
+    # Point the config at a dead DSN; expect a clean ClickException, not a traceback.
+    import pathlib
+    cfg = yaml.safe_load(pathlib.Path(search_cell).read_text())
+    cfg["target"]["dsn"] = "postgresql://postgres:postgres@127.0.0.1:1/nope"
+    dead = tmp_path / "dead.yaml"
+    dead.write_text(yaml.dump(cfg, sort_keys=False))
+    r = CliRunner().invoke(cli, [
+        "search", "--config", str(dead),
+        "--query", "alpha",
+    ])
+    assert r.exit_code != 0
+    assert "Traceback" not in r.output
