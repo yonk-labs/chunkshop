@@ -70,8 +70,8 @@ impl ClickhouseTableSource {
             .collect()
             .await
             .with_context(|| format!("collecting CH source response: {q}"))?;
-        let body = std::str::from_utf8(&bytes)
-            .context("CH JSONEachRow response was not valid UTF-8")?;
+        let body =
+            std::str::from_utf8(&bytes).context("CH JSONEachRow response was not valid UTF-8")?;
 
         let mut out = Vec::new();
         for line in body.lines() {

@@ -29,9 +29,8 @@ impl PostgresBackend {
     pub async fn pool(&self) -> Result<&PgPool> {
         self.pool
             .get_or_try_init(|| async {
-                let dsn = std::env::var(&self.dsn_env).with_context(|| {
-                    format!("DSN env var {} not set", self.dsn_env)
-                })?;
+                let dsn = std::env::var(&self.dsn_env)
+                    .with_context(|| format!("DSN env var {} not set", self.dsn_env))?;
                 // max_connections(1) mirrors the Python implementation's
                 // short-lived per-document connection discipline (see
                 // CLAUDE.md). PgSink opens one short transaction per
@@ -46,6 +45,17 @@ impl PostgresBackend {
                     .with_context(|| format!("connecting to {}", self.dsn_env))
             })
             .await
+    }
+
+    pub fn vector_metric_sql(metric: &str) -> Result<(&'static str, &'static str)> {
+        match metric {
+            "cosine" => Ok(("<=>", "vector_cosine_ops")),
+            "inner_product" => Ok(("<#>", "vector_ip_ops")),
+            "l2" => Ok(("<->", "vector_l2_ops")),
+            other => anyhow::bail!(
+                "vector_metric must be one of 'cosine', 'inner_product', or 'l2', got {other:?}"
+            ),
+        }
     }
 }
 
@@ -133,8 +143,9 @@ impl BackendDialect for PostgresBackend {
         fq: &str,
         cols: &[ColSpec],
         hnsw: bool,
-        _dim: usize,            // dim is encoded in the embedding column's type_ddl
-        _engine: Option<&str>,  // engine clause is not applicable on PG
+        _dim: usize,           // dim is encoded in the embedding column's type_ddl
+        _engine: Option<&str>, // engine clause is not applicable on PG
+        vector_metric: Option<&str>,
     ) -> Vec<String> {
         let mut col_lines: Vec<String> = Vec::with_capacity(cols.len());
         let mut pk_cols: Vec<&str> = Vec::new();
@@ -172,9 +183,16 @@ impl BackendDialect for PostgresBackend {
             self.quote_ident(&format!("{bare}_doc_seq_idx"))
         ));
         if hnsw {
+            let metric = vector_metric.unwrap_or("cosine");
+            let (_op, opclass) = Self::vector_metric_sql(metric).expect("validated vector_metric");
+            let idx_suffix = if metric == "cosine" {
+                "_emb_hnsw_idx".to_string()
+            } else {
+                format!("_emb_hnsw_{metric}_idx")
+            };
             stmts.push(format!(
-                "CREATE INDEX IF NOT EXISTS {} ON {fq} USING hnsw (\"embedding\" vector_cosine_ops)",
-                self.quote_ident(&format!("{bare}_emb_hnsw_idx"))
+                "CREATE INDEX IF NOT EXISTS {} ON {fq} USING hnsw (\"embedding\" {opclass})",
+                self.quote_ident(&format!("{bare}{idx_suffix}"))
             ));
         }
         stmts
@@ -275,10 +293,34 @@ mod tests {
 
     fn canonical_cols(dim: usize) -> Vec<ColSpec> {
         vec![
-            ColSpec { name: "id", type_ddl: "text".into(), nullable: false, default: None, is_primary_key: true },
-            ColSpec { name: "doc_id", type_ddl: "text".into(), nullable: false, default: None, is_primary_key: false },
-            ColSpec { name: "seq_num", type_ddl: "int".into(), nullable: false, default: None, is_primary_key: false },
-            ColSpec { name: "embedding", type_ddl: format!("vector({dim})"), nullable: false, default: None, is_primary_key: false },
+            ColSpec {
+                name: "id",
+                type_ddl: "text".into(),
+                nullable: false,
+                default: None,
+                is_primary_key: true,
+            },
+            ColSpec {
+                name: "doc_id",
+                type_ddl: "text".into(),
+                nullable: false,
+                default: None,
+                is_primary_key: false,
+            },
+            ColSpec {
+                name: "seq_num",
+                type_ddl: "int".into(),
+                nullable: false,
+                default: None,
+                is_primary_key: false,
+            },
+            ColSpec {
+                name: "embedding",
+                type_ddl: format!("vector({dim})"),
+                nullable: false,
+                default: None,
+                is_primary_key: false,
+            },
         ]
     }
 
@@ -286,7 +328,7 @@ mod tests {
     fn emit_chunks_table_ddl_no_hnsw() {
         let b = backend();
         let cols = canonical_cols(384);
-        let stmts = b.emit_chunks_table_ddl("\"db\".\"t\"", &cols, false, 384, None);
+        let stmts = b.emit_chunks_table_ddl("\"db\".\"t\"", &cols, false, 384, None, None);
         assert_eq!(stmts.len(), 2);
         assert!(stmts[0].starts_with("CREATE TABLE IF NOT EXISTS \"db\".\"t\""));
         assert!(stmts[0].contains("\"id\" text NOT NULL"));
@@ -299,10 +341,43 @@ mod tests {
     fn emit_chunks_table_ddl_with_hnsw() {
         let b = backend();
         let cols = canonical_cols(384);
-        let stmts = b.emit_chunks_table_ddl("\"db\".\"t\"", &cols, true, 384, None);
+        let stmts = b.emit_chunks_table_ddl("\"db\".\"t\"", &cols, true, 384, None, None);
         assert_eq!(stmts.len(), 3);
         assert!(stmts[2].contains("USING hnsw (\"embedding\" vector_cosine_ops)"));
         assert!(stmts[2].contains("\"t_emb_hnsw_idx\""));
+    }
+
+    #[test]
+    fn vector_metric_sql_maps_pgvector_operators() {
+        assert_eq!(
+            PostgresBackend::vector_metric_sql("cosine").unwrap(),
+            ("<=>", "vector_cosine_ops")
+        );
+        assert_eq!(
+            PostgresBackend::vector_metric_sql("inner_product").unwrap(),
+            ("<#>", "vector_ip_ops")
+        );
+        assert_eq!(
+            PostgresBackend::vector_metric_sql("l2").unwrap(),
+            ("<->", "vector_l2_ops")
+        );
+        assert!(PostgresBackend::vector_metric_sql("manhattan").is_err());
+    }
+
+    #[test]
+    fn emit_chunks_table_ddl_hnsw_uses_metric_opclass() {
+        let b = backend();
+        let cols = canonical_cols(384);
+        let stmts = b.emit_chunks_table_ddl(
+            "\"db\".\"t\"",
+            &cols,
+            true,
+            384,
+            None,
+            Some("inner_product"),
+        );
+        assert!(stmts[2].contains("USING hnsw (\"embedding\" vector_ip_ops)"));
+        assert!(stmts[2].contains("\"t_emb_hnsw_inner_product_idx\""));
     }
 
     #[test]

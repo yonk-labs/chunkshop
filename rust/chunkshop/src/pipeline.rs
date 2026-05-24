@@ -57,10 +57,17 @@ impl Pipeline {
             EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,
         };
         let backend = crate::backends::load_backend(&cfg.target).context("load backend")?;
-        let sink = crate::sinks::load_sink(&cfg.target, backend, embedder.dim())
-            .context("load sink")?;
+        let sink =
+            crate::sinks::load_sink(&cfg.target, backend, embedder.dim()).context("load sink")?;
         sink.create_table().await?;
-        Ok(Self { cfg, framer, chunker, extractor, embedder, sink })
+        Ok(Self {
+            cfg,
+            framer,
+            chunker,
+            extractor,
+            embedder,
+            sink,
+        })
     }
 
     /// Convenience: load YAML from disk, validate, and construct.
@@ -94,8 +101,7 @@ impl Pipeline {
             if chunks.is_empty() {
                 continue;
             }
-            let texts: Vec<String> =
-                chunks.iter().map(|c| c.embedded_content.clone()).collect();
+            let texts: Vec<String> = chunks.iter().map(|c| c.embedded_content.clone()).collect();
             let embeddings = self.embedder.embed(texts)?;
 
             let doc_meta = fdoc.metadata.as_object().cloned().unwrap_or_default();
@@ -151,8 +157,7 @@ impl Pipeline {
     /// `Ok(None)` until they add their own sample paths; the demo is a
     /// PG-flavored convenience, not a Sink trait method.
     pub async fn sample_row(&self, doc_id: &str) -> Result<Option<(i32, String)>> {
-        let (AnySink::Pg(pg_sink), TargetConfig::Postgres(target)) =
-            (&self.sink, &self.cfg.target)
+        let (AnySink::Pg(pg_sink), TargetConfig::Postgres(target)) = (&self.sink, &self.cfg.target)
         else {
             return Ok(None);
         };
@@ -163,10 +168,7 @@ impl Pipeline {
             tbl = fq
         );
         let pool = pg_sink.pool().await?;
-        let row = sqlx::query(&stmt)
-            .bind(doc_id)
-            .fetch_optional(pool)
-            .await?;
+        let row = sqlx::query(&stmt).bind(doc_id).fetch_optional(pool).await?;
         Ok(row.map(|r| (r.get::<i32, _>(0), r.get::<String, _>(1))))
     }
 }

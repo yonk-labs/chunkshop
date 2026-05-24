@@ -2,8 +2,8 @@
 
 use chunkshop::backends::SQLiteBackend;
 use chunkshop::config::SqliteTargetConfig;
-use chunkshop::sinks::SqliteSink;
 use chunkshop::sinks::Sink;
+use chunkshop::sinks::SqliteSink;
 use tempfile::tempdir;
 
 fn cfg(dsn_env: &str, mode: &str, source_tag: &str) -> SqliteTargetConfig {
@@ -30,7 +30,10 @@ async fn append_errors_when_table_missing() {
     let sink = SqliteSink::new(cfg(&env, "append", "t1"), b, 4);
     let err = sink.create_table().await.unwrap_err();
     let msg = format!("{err:#}");
-    assert!(msg.contains("does not exist"), "expected 'does not exist': {msg}");
+    assert!(
+        msg.contains("does not exist"),
+        "expected 'does not exist': {msg}"
+    );
 }
 
 #[tokio::test]
@@ -48,8 +51,10 @@ async fn append_errors_when_dim_mismatches() {
     let sink2 = SqliteSink::new(cfg(&env, "append", "t2"), b2, 8);
     let err = sink2.create_table().await.unwrap_err();
     let msg = format!("{err:#}");
-    assert!(msg.contains("dim 4") && msg.contains("embed_dim 8"),
-            "expected dim mismatch: {msg}");
+    assert!(
+        msg.contains("dim 4") && msg.contains("embed_dim 8"),
+        "expected dim mismatch: {msg}"
+    );
 }
 
 #[tokio::test]
@@ -60,14 +65,18 @@ async fn append_errors_when_vec_partner_missing() {
     std::env::set_var(&env, path.to_str().unwrap());
     // Hand-create a chunks table WITHOUT its vec0 partner.
     let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("CREATE TABLE chunks (id TEXT PRIMARY KEY)").unwrap();
+    conn.execute_batch("CREATE TABLE chunks (id TEXT PRIMARY KEY)")
+        .unwrap();
     drop(conn);
 
     let b = SQLiteBackend::new(env.clone());
     let sink = SqliteSink::new(cfg(&env, "append", "t1"), b, 4);
     let err = sink.create_table().await.unwrap_err();
     let msg = format!("{err:#}");
-    assert!(msg.contains("no vec0 partner"), "expected 'no vec0 partner': {msg}");
+    assert!(
+        msg.contains("no vec0 partner"),
+        "expected 'no vec0 partner': {msg}"
+    );
 }
 
 #[tokio::test]
@@ -85,7 +94,8 @@ async fn overwrite_refuses_foreign_source_tag() {
             "INSERT INTO chunks (id, doc_id, seq_num, original_content, embedded_content, source) \
              VALUES ('a', 'd', 0, 'x', 'x', 't1')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
     }
     // Second sink tries to overwrite with a different source_tag.
     let b2 = SQLiteBackend::new(env.clone());

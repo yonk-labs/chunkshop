@@ -116,8 +116,8 @@ mod tests {
     fn ndcg_gold_at_rank_3() {
         let ranked = vec![s("d2"), s("d3"), s("d1"), s("d4"), s("d5")];
         let scores = score_query(&ranked, "d1", &[1, 3, 5]);
-        assert_eq!(scores["ndcg_at_1"], 0.0);                       // out of top-1
-        let expected = 1.0_f64 / 4.0_f64.log2();                    // = 0.5
+        assert_eq!(scores["ndcg_at_1"], 0.0); // out of top-1
+        let expected = 1.0_f64 / 4.0_f64.log2(); // = 0.5
         assert!((scores["ndcg_at_3"] - expected).abs() < 1e-9);
         assert!((scores["ndcg_at_5"] - expected).abs() < 1e-9);
     }
@@ -128,7 +128,7 @@ mod tests {
         let scores = score_query(&ranked, "d1", &[1, 3, 5]);
         assert_eq!(scores["ndcg_at_1"], 0.0);
         assert_eq!(scores["ndcg_at_3"], 0.0);
-        let expected = 1.0_f64 / 6.0_f64.log2();                    // ≈ 0.3869
+        let expected = 1.0_f64 / 6.0_f64.log2(); // ≈ 0.3869
         assert!((scores["ndcg_at_5"] - expected).abs() < 1e-9);
     }
 

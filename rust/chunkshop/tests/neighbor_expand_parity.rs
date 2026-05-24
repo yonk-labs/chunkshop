@@ -74,8 +74,14 @@ fn rust_neighbor_expand_chunks_match_python() {
     assert_eq!(actual.len(), r.chunks.len(), "chunk count");
     for (i, (got, exp)) in actual.iter().zip(r.chunks.iter()).enumerate() {
         assert_eq!(got.seq_num, exp.seq_num, "chunk[{i}] seq_num");
-        assert_eq!(got.original_content, exp.original_content, "chunk[{i}] original");
-        assert_eq!(got.embedded_content, exp.embedded_content, "chunk[{i}] embedded");
+        assert_eq!(
+            got.original_content, exp.original_content,
+            "chunk[{i}] original"
+        );
+        assert_eq!(
+            got.embedded_content, exp.embedded_content,
+            "chunk[{i}] embedded"
+        );
         assert_eq!(got.metadata, exp.metadata, "chunk[{i}] metadata");
     }
 }

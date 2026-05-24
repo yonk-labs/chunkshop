@@ -4,8 +4,8 @@
 use chunkshop::backends::SQLiteBackend;
 use chunkshop::chunker::Chunk;
 use chunkshop::config::SqliteTargetConfig;
-use chunkshop::sinks::SqliteSink;
 use chunkshop::sinks::Sink;
+use chunkshop::sinks::SqliteSink;
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -14,19 +14,26 @@ fn cfg(dsn_env: &str, mode: &str, source_tag: &str) -> SqliteTargetConfig {
         dsn_env: dsn_env.to_string(),
         database_name: "ignored".into(),
         table: "chunks".into(),
-        overwrite: false, hnsw: false,
+        overwrite: false,
+        hnsw: false,
         mode: mode.into(),
         source_tag: Some(source_tag.into()),
-        promote_metadata: vec![], force_overwrite: false, delete_orphans: false,
+        promote_metadata: vec![],
+        force_overwrite: false,
+        delete_orphans: false,
     }
 }
 
 fn chunks(doc_id: &str, n: usize) -> Vec<Chunk> {
-    (0..n).map(|i| Chunk {
-        doc_id: doc_id.into(), seq_num: i,
-        original_content: format!("c{i}"), embedded_content: format!("c{i}"),
-        metadata: json!({}),
-    }).collect()
+    (0..n)
+        .map(|i| Chunk {
+            doc_id: doc_id.into(),
+            seq_num: i,
+            original_content: format!("c{i}"),
+            embedded_content: format!("c{i}"),
+            metadata: json!({}),
+        })
+        .collect()
 }
 
 fn embs(n: usize, dim: usize) -> Vec<Vec<f32>> {
@@ -42,8 +49,12 @@ async fn delete_document_removes_from_both_tables() {
     let sink = SqliteSink::new(cfg(&env, "overwrite", "t1"), b, 4);
     sink.create_table().await.unwrap();
 
-    sink.write_document("d1", &chunks("d1", 3), &embs(3, 4), &vec![vec![]; 3]).await.unwrap();
-    sink.write_document("d2", &chunks("d2", 2), &embs(2, 4), &vec![vec![]; 2]).await.unwrap();
+    sink.write_document("d1", &chunks("d1", 3), &embs(3, 4), &vec![vec![]; 3])
+        .await
+        .unwrap();
+    sink.write_document("d2", &chunks("d2", 2), &embs(2, 4), &vec![vec![]; 2])
+        .await
+        .unwrap();
 
     let n = sink.delete_document("d1").await.unwrap();
     assert_eq!(n, 3);
@@ -51,8 +62,18 @@ async fn delete_document_removes_from_both_tables() {
     let b2 = SQLiteBackend::new(env);
     let conn = b2.connect().await.unwrap();
     let g = conn.lock().await;
-    let n_main: i64 = g.query_row("SELECT COUNT(*) FROM chunks", [], |r: &rusqlite::Row| r.get(0)).unwrap();
-    let n_vec: i64 = g.query_row("SELECT COUNT(*) FROM chunks_vec", [], |r: &rusqlite::Row| r.get(0)).unwrap();
+    let n_main: i64 = g
+        .query_row("SELECT COUNT(*) FROM chunks", [], |r: &rusqlite::Row| {
+            r.get(0)
+        })
+        .unwrap();
+    let n_vec: i64 = g
+        .query_row(
+            "SELECT COUNT(*) FROM chunks_vec",
+            [],
+            |r: &rusqlite::Row| r.get(0),
+        )
+        .unwrap();
     assert_eq!(n_main, 2);
     assert_eq!(n_vec, 2);
 }
@@ -65,7 +86,10 @@ async fn delete_document_respects_source_tag_scope() {
     let b = SQLiteBackend::new(env.clone());
     let sink1 = SqliteSink::new(cfg(&env, "overwrite", "t1"), b, 4);
     sink1.create_table().await.unwrap();
-    sink1.write_document("d1", &chunks("d1", 2), &embs(2, 4), &vec![vec![]; 2]).await.unwrap();
+    sink1
+        .write_document("d1", &chunks("d1", 2), &embs(2, 4), &vec![vec![]; 2])
+        .await
+        .unwrap();
 
     // Different source_tag — must not delete t1's rows
     let b2 = SQLiteBackend::new(env.clone());
@@ -83,8 +107,14 @@ async fn count_docs_distinct() {
     let b = SQLiteBackend::new(env.clone());
     let sink = SqliteSink::new(cfg(&env, "overwrite", "t1"), b, 4);
     sink.create_table().await.unwrap();
-    sink.write_document("d1", &chunks("d1", 3), &embs(3, 4), &vec![vec![]; 3]).await.unwrap();
-    sink.write_document("d2", &chunks("d2", 1), &embs(1, 4), &vec![vec![]; 1]).await.unwrap();
-    sink.write_document("d1", &chunks("d1", 2), &embs(2, 4), &vec![vec![]; 2]).await.unwrap();
+    sink.write_document("d1", &chunks("d1", 3), &embs(3, 4), &vec![vec![]; 3])
+        .await
+        .unwrap();
+    sink.write_document("d2", &chunks("d2", 1), &embs(1, 4), &vec![vec![]; 1])
+        .await
+        .unwrap();
+    sink.write_document("d1", &chunks("d1", 2), &embs(2, 4), &vec![vec![]; 2])
+        .await
+        .unwrap();
     assert_eq!(sink.count_docs().await.unwrap(), 2);
 }

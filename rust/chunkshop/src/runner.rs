@@ -62,8 +62,8 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
         EmbedderConfig::Fastembed(ec) => FastembedEmbedder::new(ec)?,
     };
     let backend = crate::backends::load_backend(&cfg.target).context("load backend")?;
-    let sink = crate::sinks::load_sink(&cfg.target, backend, embedder.dim())
-        .context("load sink")?;
+    let sink =
+        crate::sinks::load_sink(&cfg.target, backend, embedder.dim()).context("load sink")?;
 
     info!("creating target table");
     use crate::sinks::Sink;
@@ -95,8 +95,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
             //   {**doc.metadata, **r.metadata, **c.metadata}
             // matching python/src/chunkshop/runner.py.
             let mut tags_per_chunk: Vec<Vec<String>> = Vec::with_capacity(chunks.len());
-            let mut chunks_with_meta: Vec<crate::chunker::Chunk> =
-                Vec::with_capacity(chunks.len());
+            let mut chunks_with_meta: Vec<crate::chunker::Chunk> = Vec::with_capacity(chunks.len());
             let doc_meta = doc.metadata.as_object().cloned().unwrap_or_default();
             for c in &chunks {
                 let r = extractor.extract(&c.original_content)?;
@@ -128,11 +127,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
             chunks_written += chunks_with_meta.len();
             docs_processed += 1;
             if docs_processed % heartbeat == 0 {
-                info!(
-                    docs = docs_processed,
-                    chunks = chunks_written,
-                    "heartbeat"
-                );
+                info!(docs = docs_processed, chunks = chunks_written, "heartbeat");
             }
         }
     }
@@ -142,7 +137,10 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     // would have `?`-bubbled out above) leaves the watermark unadvanced,
     // so the next run reselects the same sessions. No-op for non-memory
     // sources.
-    source.commit_processed().await.context("commit_processed")?;
+    source
+        .commit_processed()
+        .await
+        .context("commit_processed")?;
 
     let wall = start.elapsed().as_secs_f64();
     let embed_seconds = embedder.embed_seconds();

@@ -35,7 +35,11 @@ fn fq_table_parity() {
         let db = inp[0].as_str().unwrap();
         let table = inp[1].as_str().unwrap();
         let expected = case["out"].as_str().unwrap();
-        assert_eq!(b.fq_table(db, table), expected, "fq_table({db:?}, {table:?})");
+        assert_eq!(
+            b.fq_table(db, table),
+            expected,
+            "fq_table({db:?}, {table:?})"
+        );
     }
 }
 

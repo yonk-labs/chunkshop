@@ -27,11 +27,11 @@ use std::env;
 
 use anyhow::Result;
 use chunkshop::config::{
-    CellConfig, ClickhouseTableSourceConfig, ClickhouseTargetConfig, EmbedderConfig,
+    CellConfig, ChunkerConfig, ClickhouseTableSourceConfig, ClickhouseTargetConfig, EmbedderConfig,
     ExtractorConfig, FastembedEmbedderConfig, FramerConfig, IdentityFramerConfig,
     MariadbTableSourceConfig, MariadbTargetConfig, NoneExtractorConfig, PgTableSourceConfig,
     PostgresTargetConfig, RuntimeConfig, SentenceAwareChunkerConfig, SourceConfig,
-    SqliteTableSourceConfig, SqliteTargetConfig, TargetConfig, ChunkerConfig,
+    SqliteTableSourceConfig, SqliteTargetConfig, TargetConfig,
 };
 use chunkshop::runner::run_cell;
 use tempfile::TempDir;
@@ -178,11 +178,9 @@ fn seed_sqlite(path: &std::path::Path) -> Result<()> {
 
 fn count_sqlite(path: &std::path::Path, table: &str) -> Result<i64> {
     let conn = rusqlite::Connection::open(path)?;
-    let n: i64 = conn.query_row(
-        &format!(r#"SELECT COUNT(*) FROM "{table}""#),
-        [],
-        |r| r.get(0),
-    )?;
+    let n: i64 = conn.query_row(&format!(r#"SELECT COUNT(*) FROM "{table}""#), [], |r| {
+        r.get(0)
+    })?;
     Ok(n)
 }
 
@@ -235,9 +233,7 @@ async fn count_ch(database: &str, table: &str) -> Result<i64> {
         c: u64,
     }
     let mut cur = client
-        .query(&format!(
-            "SELECT count() AS c FROM `{database}`.`{table}`"
-        ))
+        .query(&format!("SELECT count() AS c FROM `{database}`.`{table}`"))
         .fetch::<CountRow>()?;
     let row = cur
         .next()
@@ -374,6 +370,7 @@ fn pg_target(schema: &str) -> TargetConfig {
         table: "chunks".to_string(),
         overwrite: false,
         hnsw: false,
+        vector_metric: "cosine".to_string(),
         mode: "overwrite".to_string(),
         source_tag: Some("xbm".to_string()),
         promote_metadata: vec![],
@@ -494,9 +491,7 @@ async fn cell_pg_table_to_mariadb() {
     let res = run_cell(cfg).await.expect("run_cell");
     assert_eq!(res.docs_processed, 1, "{cell}: docs_processed");
     assert!(res.chunks_written > 0, "{cell}: chunks_written>0");
-    let n = count_mariadb(&sink_db, "chunks")
-        .await
-        .expect("count sink");
+    let n = count_mariadb(&sink_db, "chunks").await.expect("count sink");
     assert_eq!(n as usize, res.chunks_written, "{cell}: sink count");
     drop_pg(&src_db).await;
     drop_mariadb(&sink_db).await;
@@ -579,9 +574,7 @@ async fn cell_mariadb_table_to_mariadb() {
     let res = run_cell(cfg).await.expect("run_cell");
     assert_eq!(res.docs_processed, 1, "{cell}: docs_processed");
     assert!(res.chunks_written > 0, "{cell}: chunks_written>0");
-    let n = count_mariadb(&sink_db, "chunks")
-        .await
-        .expect("count sink");
+    let n = count_mariadb(&sink_db, "chunks").await.expect("count sink");
     assert_eq!(n as usize, res.chunks_written, "{cell}: sink count");
     drop_mariadb(&src_db).await;
     drop_mariadb(&sink_db).await;
@@ -660,9 +653,7 @@ async fn cell_sqlite_table_to_mariadb() {
     let res = run_cell(cfg).await.expect("run_cell");
     assert_eq!(res.docs_processed, 1, "{cell}: docs_processed");
     assert!(res.chunks_written > 0, "{cell}: chunks_written>0");
-    let n = count_mariadb(&sink_db, "chunks")
-        .await
-        .expect("count sink");
+    let n = count_mariadb(&sink_db, "chunks").await.expect("count sink");
     assert_eq!(n as usize, res.chunks_written, "{cell}: sink count");
     drop_mariadb(&sink_db).await;
 }
@@ -739,9 +730,7 @@ async fn cell_clickhouse_table_to_mariadb() {
     let res = run_cell(cfg).await.expect("run_cell");
     assert_eq!(res.docs_processed, 1, "{cell}: docs_processed");
     assert!(res.chunks_written > 0, "{cell}: chunks_written>0");
-    let n = count_mariadb(&sink_db, "chunks")
-        .await
-        .expect("count sink");
+    let n = count_mariadb(&sink_db, "chunks").await.expect("count sink");
     assert_eq!(n as usize, res.chunks_written, "{cell}: sink count");
     drop_ch(&src_db).await;
     drop_mariadb(&sink_db).await;
@@ -774,7 +763,11 @@ async fn cell_clickhouse_table_to_clickhouse() {
     let src_db = format!("xbm_src_{cell}");
     let sink_db = format!("xbm_sink_{cell}");
     seed_ch(&src_db).await.expect("seed ch src");
-    let cfg = cell_config(cell, clickhouse_source(&src_db), clickhouse_target(&sink_db));
+    let cfg = cell_config(
+        cell,
+        clickhouse_source(&src_db),
+        clickhouse_target(&sink_db),
+    );
     let res = run_cell(cfg).await.expect("run_cell");
     assert_eq!(res.docs_processed, 1, "{cell}: docs_processed");
     assert!(res.chunks_written > 0, "{cell}: chunks_written>0");

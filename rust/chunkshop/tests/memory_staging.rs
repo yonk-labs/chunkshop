@@ -41,8 +41,13 @@ async fn cleanup(pool: &sqlx::PgPool, schema: &str) -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn ensure_creates_table_with_indices() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     let table = "staging";
     ensure_staging_table(&pool, &schema, table).await?;
@@ -69,8 +74,13 @@ async fn ensure_creates_table_with_indices() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn stage_event_idempotent_on_event_id() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     let table = "staging";
     ensure_staging_table(&pool, &schema, table).await?;
@@ -102,8 +112,13 @@ async fn stage_event_idempotent_on_event_id() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn stage_events_bulk_inserts_distinct_ids() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     let table = "staging";
     ensure_staging_table(&pool, &schema, table).await?;
@@ -140,8 +155,13 @@ async fn stage_events_bulk_inserts_distinct_ids() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn prune_only_drops_consolidated_older_than() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     let table = "staging";
     ensure_staging_table(&pool, &schema, table).await?;
@@ -182,17 +202,22 @@ async fn prune_only_drops_consolidated_older_than() -> anyhow::Result<()> {
 
     // Default behaviour: only_consolidated=true → drops ev_a only.
     let dropped = prune_staging(&pool, &schema, table, "2026-12-31T00:00:00Z", true).await?;
-    assert_eq!(dropped, 1, "only_consolidated=true must drop only consolidated rows");
+    assert_eq!(
+        dropped, 1,
+        "only_consolidated=true must drop only consolidated rows"
+    );
 
     let remaining: i64 = sqlx::query(&format!(r#"SELECT count(*) FROM "{schema}".staging"#))
         .fetch_one(&pool)
         .await?
         .try_get(0)?;
-    assert_eq!(remaining, 1, "ev_b (not yet consolidated) must survive prune");
+    assert_eq!(
+        remaining, 1,
+        "ev_b (not yet consolidated) must survive prune"
+    );
 
     // only_consolidated=false drops the rest unconditionally.
-    let dropped_all =
-        prune_staging(&pool, &schema, table, "2026-12-31T00:00:00Z", false).await?;
+    let dropped_all = prune_staging(&pool, &schema, table, "2026-12-31T00:00:00Z", false).await?;
     assert_eq!(dropped_all, 1);
     let n: i64 = sqlx::query(&format!(r#"SELECT count(*) FROM "{schema}".staging"#))
         .fetch_one(&pool)
@@ -206,8 +231,13 @@ async fn prune_only_drops_consolidated_older_than() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn ensure_staging_table_rejects_unsafe_identifiers() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(1).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&dsn)
+        .await?;
     // Don't even need a real schema for the rejection — validation runs first.
     let bad_table = "a\"; DROP TABLE other; --";
     let res = ensure_staging_table(&pool, "public", bad_table).await;

@@ -102,7 +102,10 @@ impl SQLiteBackend {
     /// in `sqlite_master`. Returns None when the partner table doesn't exist
     /// or doesn't have a FLOAT[N] column.
     pub async fn embedding_dim(
-        &self, conn: &SqliteConn, _db: &str, table: &str,
+        &self,
+        conn: &SqliteConn,
+        _db: &str,
+        table: &str,
     ) -> Result<Option<usize>> {
         let conn = conn.clone();
         let vec_table = format!("{table}_vec");
@@ -117,7 +120,8 @@ impl SQLiteBackend {
                 .ok();
             let Some(sql) = sql else { return Ok(None) };
             let re = regex::Regex::new(r"(?i)FLOAT\[(\d+)\]").unwrap();
-            Ok(re.captures(&sql)
+            Ok(re
+                .captures(&sql)
                 .and_then(|c| c.get(1))
                 .and_then(|m| m.as_str().parse().ok()))
         })
@@ -147,9 +151,15 @@ impl BackendDialect for SQLiteBackend {
     fn vector_type_ddl(&self, dim: usize) -> String {
         format!("FLOAT[{dim}]")
     }
-    fn json_type_ddl(&self) -> String { "TEXT".to_string() }
-    fn tags_array_type_ddl(&self) -> String { "TEXT".to_string() }
-    fn text_pk_type_ddl(&self) -> String { "TEXT".to_string() }
+    fn json_type_ddl(&self) -> String {
+        "TEXT".to_string()
+    }
+    fn tags_array_type_ddl(&self) -> String {
+        "TEXT".to_string()
+    }
+    fn text_pk_type_ddl(&self) -> String {
+        "TEXT".to_string()
+    }
     fn timestamp_now_default_ddl(&self) -> String {
         "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP".to_string()
     }
@@ -190,7 +200,10 @@ impl BackendDialect for SQLiteBackend {
     fn add_column_if_not_exists_sql(&self, fq: &str, col: &str, type_ddl: &str) -> String {
         // SQLite has no IF NOT EXISTS on ALTER TABLE; the sink catches the
         // duplicate-column error for idempotency.
-        format!("ALTER TABLE {fq} ADD COLUMN {} {type_ddl}", self.quote_ident(col))
+        format!(
+            "ALTER TABLE {fq} ADD COLUMN {} {type_ddl}",
+            self.quote_ident(col)
+        )
     }
 
     fn drop_table_sql(&self, fq: &str) -> String {
@@ -204,6 +217,7 @@ impl BackendDialect for SQLiteBackend {
         _hnsw: bool,
         dim: usize,
         _engine: Option<&str>,
+        _vector_metric: Option<&str>,
     ) -> Vec<String> {
         // Python parity: split the embedding column out into a vec0 virtual
         // table joined by id. The main table holds everything else.
@@ -254,7 +268,9 @@ mod tests {
     use super::*;
     use crate::backends::base::ColSpec;
 
-    fn backend() -> SQLiteBackend { SQLiteBackend::new("UNUSED".to_string()) }
+    fn backend() -> SQLiteBackend {
+        SQLiteBackend::new("UNUSED".to_string())
+    }
 
     #[test]
     fn quote_ident_wraps_in_double_quotes() {
@@ -278,13 +294,19 @@ mod tests {
     }
 
     #[test]
-    fn json_type_is_text() { assert_eq!(backend().json_type_ddl(), "TEXT"); }
+    fn json_type_is_text() {
+        assert_eq!(backend().json_type_ddl(), "TEXT");
+    }
 
     #[test]
-    fn tags_array_type_is_text() { assert_eq!(backend().tags_array_type_ddl(), "TEXT"); }
+    fn tags_array_type_is_text() {
+        assert_eq!(backend().tags_array_type_ddl(), "TEXT");
+    }
 
     #[test]
-    fn text_pk_type_is_text() { assert_eq!(backend().text_pk_type_ddl(), "TEXT"); }
+    fn text_pk_type_is_text() {
+        assert_eq!(backend().text_pk_type_ddl(), "TEXT");
+    }
 
     #[test]
     fn timestamp_default_is_current_timestamp() {
@@ -348,17 +370,46 @@ mod tests {
 
     fn canonical_cols(dim: usize) -> Vec<ColSpec> {
         vec![
-            ColSpec { name: "id", type_ddl: "TEXT".into(), nullable: false, default: None, is_primary_key: true },
-            ColSpec { name: "doc_id", type_ddl: "TEXT".into(), nullable: false, default: None, is_primary_key: false },
-            ColSpec { name: "seq_num", type_ddl: "INTEGER".into(), nullable: false, default: None, is_primary_key: false },
-            ColSpec { name: "embedding", type_ddl: format!("FLOAT[{dim}]"), nullable: false, default: None, is_primary_key: false },
+            ColSpec {
+                name: "id",
+                type_ddl: "TEXT".into(),
+                nullable: false,
+                default: None,
+                is_primary_key: true,
+            },
+            ColSpec {
+                name: "doc_id",
+                type_ddl: "TEXT".into(),
+                nullable: false,
+                default: None,
+                is_primary_key: false,
+            },
+            ColSpec {
+                name: "seq_num",
+                type_ddl: "INTEGER".into(),
+                nullable: false,
+                default: None,
+                is_primary_key: false,
+            },
+            ColSpec {
+                name: "embedding",
+                type_ddl: format!("FLOAT[{dim}]"),
+                nullable: false,
+                default: None,
+                is_primary_key: false,
+            },
         ]
     }
 
     #[test]
     fn emit_chunks_table_ddl_returns_three_statements() {
         let stmts = backend().emit_chunks_table_ddl(
-            "\"chunks\"", &canonical_cols(384), false, 384, None,
+            "\"chunks\"",
+            &canonical_cols(384),
+            false,
+            384,
+            None,
+            None,
         );
         assert_eq!(stmts.len(), 3, "main table + index + vec0 virtual table");
         assert!(stmts[0].starts_with("CREATE TABLE IF NOT EXISTS \"chunks\""));
@@ -375,8 +426,8 @@ mod tests {
     #[test]
     fn emit_chunks_table_ddl_hnsw_does_not_change_output() {
         // SQLite's HNSW is a no-op at the DDL level — same statements as without.
-        let no = backend().emit_chunks_table_ddl("\"c\"", &canonical_cols(8), false, 8, None);
-        let yes = backend().emit_chunks_table_ddl("\"c\"", &canonical_cols(8), true, 8, None);
+        let no = backend().emit_chunks_table_ddl("\"c\"", &canonical_cols(8), false, 8, None, None);
+        let yes = backend().emit_chunks_table_ddl("\"c\"", &canonical_cols(8), true, 8, None, None);
         assert_eq!(no, yes);
     }
 }

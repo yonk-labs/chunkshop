@@ -10,10 +10,16 @@ use tempfile::tempdir;
 
 fn cfg(env: &str) -> SqliteTargetConfig {
     SqliteTargetConfig {
-        dsn_env: env.to_string(), database_name: "ignored".into(), table: "chunks".into(),
-        overwrite: false, hnsw: false, mode: "overwrite".into(),
+        dsn_env: env.to_string(),
+        database_name: "ignored".into(),
+        table: "chunks".into(),
+        overwrite: false,
+        hnsw: false,
+        mode: "overwrite".into(),
         source_tag: Some("t1".into()),
-        promote_metadata: vec![], force_overwrite: false, delete_orphans: false,
+        promote_metadata: vec![],
+        force_overwrite: false,
+        delete_orphans: false,
     }
 }
 
@@ -26,11 +32,15 @@ async fn query_top_k_returns_ordered_distance_tuples() {
     let sink = SqliteSink::new(cfg(&env), b, 4);
     sink.create_table().await.unwrap();
 
-    let chunks: Vec<Chunk> = (0..5usize).map(|i| Chunk {
-        doc_id: "d1".into(), seq_num: i,
-        original_content: format!("c{i}"), embedded_content: format!("c{i}"),
-        metadata: json!({}),
-    }).collect();
+    let chunks: Vec<Chunk> = (0..5usize)
+        .map(|i| Chunk {
+            doc_id: "d1".into(),
+            seq_num: i,
+            original_content: format!("c{i}"),
+            embedded_content: format!("c{i}"),
+            metadata: json!({}),
+        })
+        .collect();
     let embs: Vec<Vec<f32>> = vec![
         vec![1.0, 0.0, 0.0, 0.0],
         vec![0.9, 0.1, 0.0, 0.0],
@@ -38,7 +48,9 @@ async fn query_top_k_returns_ordered_distance_tuples() {
         vec![0.0, 0.0, 1.0, 0.0],
         vec![0.0, 0.0, 0.0, 1.0],
     ];
-    sink.write_document("d1", &chunks, &embs, &vec![vec![]; 5]).await.unwrap();
+    sink.write_document("d1", &chunks, &embs, &vec![vec![]; 5])
+        .await
+        .unwrap();
 
     let q = vec![1.0_f32, 0.0, 0.0, 0.0];
     let results = sink.query_top_k(&q, 3).await.unwrap();

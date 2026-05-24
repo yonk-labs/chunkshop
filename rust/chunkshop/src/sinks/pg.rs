@@ -41,10 +41,7 @@ impl PgSink {
 /// is missing or an intermediate is not an object. Mirrors Python's
 /// `_jsonb_path_get`. Chunkshop-specific dict navigation, not SQL — lives here
 /// rather than on Backend.
-fn jsonb_path_get<'a>(
-    meta: &'a serde_json::Value,
-    path: &str,
-) -> Option<&'a serde_json::Value> {
+fn jsonb_path_get<'a>(meta: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
     let mut cur = meta;
     for seg in path.split('.') {
         let obj = cur.as_object()?;
@@ -56,26 +53,92 @@ fn jsonb_path_get<'a>(
 /// The chunkshop-canonical chunks-table column list, PG-typed via the backend.
 fn canonical_cols<B: BackendDialect>(b: &B, dim: usize) -> Vec<ColSpec> {
     vec![
-        ColSpec { name: "id", type_ddl: b.text_pk_type_ddl(), nullable: false, default: None, is_primary_key: true },
-        ColSpec { name: "doc_id", type_ddl: b.text_pk_type_ddl(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "seq_num", type_ddl: "int".to_string(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "original_content", type_ddl: "text".to_string(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "embedded_content", type_ddl: "text".to_string(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "tags", type_ddl: b.tags_array_type_ddl(), nullable: false, default: Some("'{}'"), is_primary_key: false },
-        ColSpec { name: "metadata", type_ddl: b.json_type_ddl(), nullable: false, default: Some("'{}'"), is_primary_key: false },
-        ColSpec { name: "embedding", type_ddl: b.vector_type_ddl(dim), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "source", type_ddl: "text".to_string(), nullable: true, default: None, is_primary_key: false },
-        ColSpec { name: "created_at", type_ddl: "timestamptz".to_string(), nullable: false, default: Some("now()"), is_primary_key: false },
+        ColSpec {
+            name: "id",
+            type_ddl: b.text_pk_type_ddl(),
+            nullable: false,
+            default: None,
+            is_primary_key: true,
+        },
+        ColSpec {
+            name: "doc_id",
+            type_ddl: b.text_pk_type_ddl(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "seq_num",
+            type_ddl: "int".to_string(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "original_content",
+            type_ddl: "text".to_string(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "embedded_content",
+            type_ddl: "text".to_string(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "tags",
+            type_ddl: b.tags_array_type_ddl(),
+            nullable: false,
+            default: Some("'{}'"),
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "metadata",
+            type_ddl: b.json_type_ddl(),
+            nullable: false,
+            default: Some("'{}'"),
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "embedding",
+            type_ddl: b.vector_type_ddl(dim),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "source",
+            type_ddl: "text".to_string(),
+            nullable: true,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "created_at",
+            type_ddl: "timestamptz".to_string(),
+            nullable: false,
+            default: Some("now()"),
+            is_primary_key: false,
+        },
     ]
 }
 
 impl PgSink {
     pub fn new(cfg: PostgresTargetConfig, backend: PostgresBackend, embed_dim: usize) -> Self {
-        Self { cfg, backend, embed_dim, id_namespace: None }
+        Self {
+            cfg,
+            backend,
+            embed_dim,
+            id_namespace: None,
+        }
     }
 
     fn fq(&self) -> String {
-        self.backend.fq_table(&self.cfg.database_name, &self.cfg.table)
+        self.backend
+            .fq_table(&self.cfg.database_name, &self.cfg.table)
     }
 
     /// RM-A: `MemorySink` (which wraps `PgSink`) needs the fq table name
@@ -100,7 +163,10 @@ impl PgSink {
     // --- mode dispatch helpers (private). Ported from PgVectorSink. ---
 
     async fn overwrite_create_in_tx(&self, tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-        if self.backend.table_exists(tx, &self.cfg.database_name, &self.cfg.table).await?
+        if self
+            .backend
+            .table_exists(tx, &self.cfg.database_name, &self.cfg.table)
+            .await?
             && !self.cfg.force_overwrite
         {
             let stmt = format!(
@@ -129,7 +195,11 @@ impl PgSink {
                 ));
             }
         }
-        if self.backend.table_exists(tx, &self.cfg.database_name, &self.cfg.table).await? {
+        if self
+            .backend
+            .table_exists(tx, &self.cfg.database_name, &self.cfg.table)
+            .await?
+        {
             sqlx::query(&self.backend.drop_table_sql(&self.fq()))
                 .execute(&mut **tx)
                 .await
@@ -139,25 +209,40 @@ impl PgSink {
     }
 
     async fn create_if_missing_in_tx(&self, tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-        if !self.backend.table_exists(tx, &self.cfg.database_name, &self.cfg.table).await? {
+        if !self
+            .backend
+            .table_exists(tx, &self.cfg.database_name, &self.cfg.table)
+            .await?
+        {
             return self.create_base_ddl_in_tx(tx).await;
         }
-        sqlx::query(&self.backend.add_column_if_not_exists_sql(&self.fq(), "source", "text"))
-            .execute(&mut **tx)
-            .await
-            .context("ADD COLUMN source")?;
+        sqlx::query(
+            &self
+                .backend
+                .add_column_if_not_exists_sql(&self.fq(), "source", "text"),
+        )
+        .execute(&mut **tx)
+        .await
+        .context("ADD COLUMN source")?;
         self.ensure_promote_columns_in_tx(tx).await
     }
 
     async fn append_preflight_in_tx(&self, tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-        if !self.backend.table_exists(tx, &self.cfg.database_name, &self.cfg.table).await? {
+        if !self
+            .backend
+            .table_exists(tx, &self.cfg.database_name, &self.cfg.table)
+            .await?
+        {
             return Err(anyhow!(
                 "append mode: table {}.{} does not exist. Use mode='create_if_missing' on the first cell.",
                 self.cfg.database_name,
                 self.cfg.table
             ));
         }
-        let current_dim = self.backend.embedding_dim(tx, &self.cfg.database_name, &self.cfg.table).await?;
+        let current_dim = self
+            .backend
+            .embedding_dim(tx, &self.cfg.database_name, &self.cfg.table)
+            .await?;
         let Some(d) = current_dim else {
             return Err(anyhow!(
                 "append mode: table {}.{} has no 'embedding' vector column. Not a chunkshop \
@@ -174,24 +259,23 @@ impl PgSink {
                 own = self.embed_dim,
             ));
         }
-        sqlx::query(&self.backend.add_column_if_not_exists_sql(&self.fq(), "source", "text"))
-            .execute(&mut **tx)
-            .await
-            .context("ADD COLUMN source")?;
+        sqlx::query(
+            &self
+                .backend
+                .add_column_if_not_exists_sql(&self.fq(), "source", "text"),
+        )
+        .execute(&mut **tx)
+        .await
+        .context("ADD COLUMN source")?;
         self.ensure_promote_columns_in_tx(tx).await
     }
 
-    async fn ensure_promote_columns_in_tx(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-    ) -> Result<()> {
+    async fn ensure_promote_columns_in_tx(&self, tx: &mut Transaction<'_, Postgres>) -> Result<()> {
         for pc in &self.cfg.promote_metadata {
             // pc.type_ is allowlisted in PromoteColumn::validate_type.
-            let stmt = self.backend.add_column_if_not_exists_sql(
-                &self.fq(),
-                &pc.column_name(),
-                &pc.type_,
-            );
+            let stmt =
+                self.backend
+                    .add_column_if_not_exists_sql(&self.fq(), &pc.column_name(), &pc.type_);
             sqlx::query(&stmt)
                 .execute(&mut **tx)
                 .await
@@ -202,7 +286,14 @@ impl PgSink {
 
     async fn create_base_ddl_in_tx(&self, tx: &mut Transaction<'_, Postgres>) -> Result<()> {
         let cols = canonical_cols(&self.backend, self.embed_dim);
-        for stmt in self.backend.emit_chunks_table_ddl(&self.fq(), &cols, self.cfg.hnsw, self.embed_dim, None) {
+        for stmt in self.backend.emit_chunks_table_ddl(
+            &self.fq(),
+            &cols,
+            self.cfg.hnsw,
+            self.embed_dim,
+            None,
+            Some(&self.cfg.vector_metric),
+        ) {
             sqlx::query(&stmt)
                 .execute(&mut **tx)
                 .await
@@ -273,8 +364,15 @@ impl Sink for PgSink {
             let n_base = 9; // id, doc_id, seq_num, original_content, embedded_content, tags, metadata, embedding, source
 
             let base_col_names: Vec<&str> = vec![
-                "id", "doc_id", "seq_num", "original_content", "embedded_content",
-                "tags", "metadata", "embedding", "source",
+                "id",
+                "doc_id",
+                "seq_num",
+                "original_content",
+                "embedded_content",
+                "tags",
+                "metadata",
+                "embedding",
+                "source",
             ];
             let mut all_cols: Vec<String> = base_col_names.iter().map(|c| c.to_string()).collect();
             for pc in promote {
@@ -300,8 +398,11 @@ impl Sink for PgSink {
 
             // Update cols: skip id, doc_id, seq_num AND source (write-once).
             let mut update_cols_owned: Vec<String> = vec![
-                "original_content".into(), "embedded_content".into(),
-                "tags".into(), "metadata".into(), "embedding".into(),
+                "original_content".into(),
+                "embedded_content".into(),
+                "tags".into(),
+                "metadata".into(),
+                "embedding".into(),
             ];
             for pc in promote {
                 update_cols_owned.push(pc.column_name());
@@ -383,7 +484,11 @@ impl Sink for PgSink {
                     "DELETE FROM {tbl} WHERE doc_id = $1 AND source = $2",
                     tbl = self.fq()
                 );
-                sqlx::query(&stmt).bind(doc_id).bind(tag).execute(pool).await?
+                sqlx::query(&stmt)
+                    .bind(doc_id)
+                    .bind(tag)
+                    .execute(pool)
+                    .await?
             } else {
                 let stmt = format!("DELETE FROM {tbl} WHERE doc_id = $1", tbl = self.fq());
                 sqlx::query(&stmt).bind(doc_id).execute(pool).await?
@@ -409,9 +514,10 @@ impl Sink for PgSink {
         async move {
             let pool = self.backend.pool().await?;
             let vec_lit = self.backend.vector_literal(query_vec);
+            let (op, _opclass) = PostgresBackend::vector_metric_sql(&self.cfg.vector_metric)?;
             let stmt = format!(
-                "SELECT doc_id, seq_num, embedding <=> $1::vector AS distance \
-                 FROM {tbl} ORDER BY embedding <=> $1::vector LIMIT $2",
+                "SELECT doc_id, seq_num, embedding {op} $1::vector AS distance \
+                 FROM {tbl} ORDER BY embedding {op} $1::vector LIMIT $2",
                 tbl = self.fq()
             );
             let rows = sqlx::query(&stmt)

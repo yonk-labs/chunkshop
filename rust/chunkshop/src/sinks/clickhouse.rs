@@ -55,17 +55,26 @@ impl ClickhouseSink {
         // opting into ReplacingMergeTree-style dedup. Silent on overwrite mode
         // (no duplicate risk) or when an explicit ReplacingMergeTree engine is set.
         if cfg.mode == "append"
-            && cfg.engine.as_deref().map(|e| !e.contains("ReplacingMergeTree")).unwrap_or(true)
+            && cfg
+                .engine
+                .as_deref()
+                .map(|e| !e.contains("ReplacingMergeTree"))
+                .unwrap_or(true)
         {
             APPEND_WITHOUT_REPLACING_WARNED.get_or_init(|| {
                 warn!("{APPEND_WITHOUT_REPLACING_MSG}");
             });
         }
-        Self { cfg, backend, embed_dim }
+        Self {
+            cfg,
+            backend,
+            embed_dim,
+        }
     }
 
     fn fq(&self) -> String {
-        self.backend.fq_table(&self.cfg.database_name, &self.cfg.table)
+        self.backend
+            .fq_table(&self.cfg.database_name, &self.cfg.table)
     }
 }
 
@@ -73,12 +82,14 @@ impl ClickhouseSink {
     async fn ensure_promote_columns(&self, client: &Client) -> Result<()> {
         for pc in &self.cfg.promote_metadata {
             let ch_type = pg_type_to_ch(&pc.type_);
-            let stmt = self.backend.add_column_if_not_exists_sql(
-                &self.fq(),
-                &pc.column_name(),
-                &ch_type,
-            );
-            client.query(&stmt).execute().await.context("ADD COLUMN promote_metadata")?;
+            let stmt =
+                self.backend
+                    .add_column_if_not_exists_sql(&self.fq(), &pc.column_name(), &ch_type);
+            client
+                .query(&stmt)
+                .execute()
+                .await
+                .context("ADD COLUMN promote_metadata")?;
         }
         Ok(())
     }
@@ -92,14 +103,22 @@ impl ClickhouseSink {
             self.cfg.hnsw,
             self.embed_dim,
             engine,
+            None,
         ) {
-            client.query(&stmt).execute().await.context("emit_chunks_table_ddl statement")?;
+            client
+                .query(&stmt)
+                .execute()
+                .await
+                .context("emit_chunks_table_ddl statement")?;
         }
         self.ensure_promote_columns(client).await
     }
 
     async fn overwrite_create(&self, client: &Client) -> Result<()> {
-        let exists = self.backend.table_exists(client, &self.cfg.database_name, &self.cfg.table).await?;
+        let exists = self
+            .backend
+            .table_exists(client, &self.cfg.database_name, &self.cfg.table)
+            .await?;
         if exists && !self.cfg.force_overwrite {
             // Foreign-tag safety: refuse to drop a table holding rows from a
             // different source_tag.
@@ -144,16 +163,30 @@ impl ClickhouseSink {
     }
 
     async fn create_if_missing(&self, client: &Client) -> Result<()> {
-        if !self.backend.table_exists(client, &self.cfg.database_name, &self.cfg.table).await? {
+        if !self
+            .backend
+            .table_exists(client, &self.cfg.database_name, &self.cfg.table)
+            .await?
+        {
             return self.create_base_ddl(client).await;
         }
-        let stmt = self.backend.add_column_if_not_exists_sql(&self.fq(), "source", "String");
-        client.query(&stmt).execute().await.context("ADD COLUMN source")?;
+        let stmt = self
+            .backend
+            .add_column_if_not_exists_sql(&self.fq(), "source", "String");
+        client
+            .query(&stmt)
+            .execute()
+            .await
+            .context("ADD COLUMN source")?;
         self.ensure_promote_columns(client).await
     }
 
     async fn append_preflight(&self, client: &Client) -> Result<()> {
-        if !self.backend.table_exists(client, &self.cfg.database_name, &self.cfg.table).await? {
+        if !self
+            .backend
+            .table_exists(client, &self.cfg.database_name, &self.cfg.table)
+            .await?
+        {
             return Err(anyhow!(
                 "append mode: table {}.{} does not exist. Use mode='create_if_missing' on the first cell.",
                 self.cfg.database_name,
@@ -181,14 +214,22 @@ impl ClickhouseSink {
             }
             _ => {}
         }
-        let stmt = self.backend.add_column_if_not_exists_sql(&self.fq(), "source", "String");
-        client.query(&stmt).execute().await.context("ADD COLUMN source")?;
+        let stmt = self
+            .backend
+            .add_column_if_not_exists_sql(&self.fq(), "source", "String");
+        client
+            .query(&stmt)
+            .execute()
+            .await
+            .context("ADD COLUMN source")?;
         self.ensure_promote_columns(client).await
     }
 
     pub async fn create_table_impl(&self) -> Result<()> {
         let client = self.backend.client().await?;
-        self.backend.with_create_lock(&client, &self.cfg.database_name).await?;
+        self.backend
+            .with_create_lock(&client, &self.cfg.database_name)
+            .await?;
         client
             .query(&self.backend.create_database_sql(&self.cfg.database_name))
             .execute()
@@ -373,7 +414,12 @@ impl ClickhouseSink {
                 "ALTER TABLE {} DELETE WHERE doc_id = ? AND source = ?",
                 self.fq()
             );
-            client.query(&stmt).bind(doc_id).bind(tag.clone()).execute().await?;
+            client
+                .query(&stmt)
+                .bind(doc_id)
+                .bind(tag.clone())
+                .execute()
+                .await?;
         } else {
             let stmt = format!("ALTER TABLE {} DELETE WHERE doc_id = ?", self.fq());
             client.query(&stmt).bind(doc_id).execute().await?;
@@ -393,7 +439,11 @@ impl ClickhouseSink {
         Ok(r.c as i64)
     }
 
-    pub async fn query_top_k_impl(&self, query_vec: &[f32], k: usize) -> Result<Vec<(String, i32, f64)>> {
+    pub async fn query_top_k_impl(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+    ) -> Result<Vec<(String, i32, f64)>> {
         #[derive(Row, serde::Deserialize)]
         struct Hit {
             doc_id: String,
@@ -423,16 +473,76 @@ impl ClickhouseSink {
 /// python/src/chunkshop/sinks/clickhouse.py::_canonical_cols.
 fn canonical_cols(_dim: usize) -> Vec<ColSpec> {
     vec![
-        ColSpec { name: "id", type_ddl: "String".into(), nullable: false, default: None, is_primary_key: true },
-        ColSpec { name: "doc_id", type_ddl: "String".into(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "seq_num", type_ddl: "Int32".into(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "original_content", type_ddl: "String".into(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "embedded_content", type_ddl: "String".into(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "tags", type_ddl: "Array(String)".into(), nullable: false, default: Some("[]"), is_primary_key: false },
-        ColSpec { name: "metadata", type_ddl: "String".into(), nullable: false, default: Some("'{}'"), is_primary_key: false },
-        ColSpec { name: "embedding", type_ddl: "Array(Float32)".into(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "source", type_ddl: "String".into(), nullable: true, default: None, is_primary_key: false },
-        ColSpec { name: "created_at", type_ddl: "DateTime64(6)".into(), nullable: false, default: Some("now64()"), is_primary_key: false },
+        ColSpec {
+            name: "id",
+            type_ddl: "String".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: true,
+        },
+        ColSpec {
+            name: "doc_id",
+            type_ddl: "String".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "seq_num",
+            type_ddl: "Int32".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "original_content",
+            type_ddl: "String".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "embedded_content",
+            type_ddl: "String".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "tags",
+            type_ddl: "Array(String)".into(),
+            nullable: false,
+            default: Some("[]"),
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "metadata",
+            type_ddl: "String".into(),
+            nullable: false,
+            default: Some("'{}'"),
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "embedding",
+            type_ddl: "Array(Float32)".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "source",
+            type_ddl: "String".into(),
+            nullable: true,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "created_at",
+            type_ddl: "DateTime64(6)".into(),
+            nullable: false,
+            default: Some("now64()"),
+            is_primary_key: false,
+        },
     ]
 }
 
@@ -493,7 +603,10 @@ impl Sink for ClickhouseSink {
         embeddings: &[Vec<f32>],
         tags_per_chunk: &[Vec<String>],
     ) -> impl Future<Output = Result<()>> + Send {
-        async move { self.write_document_impl(doc_id, chunks, embeddings, tags_per_chunk).await }
+        async move {
+            self.write_document_impl(doc_id, chunks, embeddings, tags_per_chunk)
+                .await
+        }
     }
 
     fn delete_document(&self, doc_id: &str) -> impl Future<Output = Result<i64>> + Send {

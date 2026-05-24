@@ -4,7 +4,9 @@ use chunkshop::backends::SQLiteBackend;
 use std::sync::Arc;
 use tempfile::tempdir;
 
-fn unique_env(name: &str) -> String { format!("CHUNKSHOP_R3_TEST_{name}_{}", std::process::id()) }
+fn unique_env(name: &str) -> String {
+    format!("CHUNKSHOP_R3_TEST_{name}_{}", std::process::id())
+}
 
 #[tokio::test]
 async fn connect_opens_writable_db_with_wal() {
@@ -43,7 +45,10 @@ async fn table_exists_finds_virtual_tables() {
     let conn = b.connect().await.unwrap();
     {
         let g = conn.lock().await;
-        g.execute_batch("CREATE VIRTUAL TABLE v USING vec0(id TEXT PRIMARY KEY, embedding FLOAT[4])").unwrap();
+        g.execute_batch(
+            "CREATE VIRTUAL TABLE v USING vec0(id TEXT PRIMARY KEY, embedding FLOAT[4])",
+        )
+        .unwrap();
     }
     assert!(b.table_exists(&conn, "ignored", "v").await.unwrap());
 }
@@ -59,7 +64,8 @@ async fn embedding_dim_reads_dim_from_vec_partner() {
         g.execute_batch(
             "CREATE TABLE chunks (id TEXT PRIMARY KEY); \
              CREATE VIRTUAL TABLE chunks_vec USING vec0(id TEXT PRIMARY KEY, embedding FLOAT[768])",
-        ).unwrap();
+        )
+        .unwrap();
     }
     let d = b.embedding_dim(&conn, "ignored", "chunks").await.unwrap();
     assert_eq!(d, Some(768));
@@ -92,6 +98,12 @@ async fn arc_mutex_connection_is_shareable_across_tasks() {
     });
     h.await.unwrap();
     let g = conn.lock().await;
-    let n: i64 = g.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='t'", [], |r| r.get(0)).unwrap();
+    let n: i64 = g
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name='t'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(n, 1);
 }

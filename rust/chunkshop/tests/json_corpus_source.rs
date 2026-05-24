@@ -64,5 +64,8 @@ fn errors_when_documents_key_missing() {
     cfg.documents_key = "rows_typo".to_string();
     let source = JsonCorpusSource::new(cfg);
     let err = source.iter_documents().unwrap_err().to_string();
-    assert!(err.contains("rows_typo"), "expected key name in error: {err}");
+    assert!(
+        err.contains("rows_typo"),
+        "expected key name in error: {err}"
+    );
 }

@@ -41,7 +41,9 @@ async fn acquire_create_lock_and_introspection() -> anyhow::Result<()> {
         .await?;
 
     let mut tx = pool.begin().await?;
-    backend.acquire_create_lock(&mut tx, "chunkshop_r1_test").await?;
+    backend
+        .acquire_create_lock(&mut tx, "chunkshop_r1_test")
+        .await?;
 
     sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
         .execute(&mut *tx)

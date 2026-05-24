@@ -91,11 +91,16 @@ async fn append_mode_rejects_missing_table() -> anyhow::Result<()> {
     );
     let raw: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
     let target: chunkshop::config::TargetConfig = serde_yaml_ng::from_value(raw).unwrap();
-    let chunkshop::config::TargetConfig::Clickhouse(cfg) = target else { unreachable!() };
+    let chunkshop::config::TargetConfig::Clickhouse(cfg) = target else {
+        unreachable!()
+    };
 
     let sink = ClickhouseSink::new(cfg, ClickhouseBackend::new(DSN_ENV.to_string()), 384);
     let err = sink.create_table_impl().await.unwrap_err();
-    assert!(format!("{err:#}").contains("does not exist"), "got: {err:#}");
+    assert!(
+        format!("{err:#}").contains("does not exist"),
+        "got: {err:#}"
+    );
 
     Ok(())
 }

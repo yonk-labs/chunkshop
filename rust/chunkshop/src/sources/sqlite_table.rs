@@ -39,7 +39,9 @@ impl SqliteTableSource {
             .map(|c| self.backend.quote_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
-        let fq = self.backend.fq_table(&self.cfg.database_name, &self.cfg.table);
+        let fq = self
+            .backend
+            .fq_table(&self.cfg.database_name, &self.cfg.table);
         let mut select = format!("SELECT {cols_sql} FROM {fq}");
         if let Some(w) = &self.cfg.where_clause {
             select.push_str(&format!(" WHERE {w}"));

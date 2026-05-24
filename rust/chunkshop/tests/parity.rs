@@ -81,12 +81,11 @@ async fn ingest_fixture_to_pgvector() {
         .connect(&dsn)
         .await
         .expect("connect");
-    let row_count: i64 =
-        sqlx::query("SELECT COUNT(*) FROM chunkshop_rust_parity.rust_out")
-            .fetch_one(&pool)
-            .await
-            .expect("count")
-            .get(0);
+    let row_count: i64 = sqlx::query("SELECT COUNT(*) FROM chunkshop_rust_parity.rust_out")
+        .fetch_one(&pool)
+        .await
+        .expect("count")
+        .get(0);
     assert!(row_count > 0, "expected rows in output table");
 
     let first_embedded: String =

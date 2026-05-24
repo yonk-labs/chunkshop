@@ -61,11 +61,7 @@ impl MemorySink {
     /// Underscore-prefixed metadata keys (e.g. `_episode_events`) are stripped
     /// before insert because they don't belong in the persisted jsonb.
     fn stamp(&self, c: &Chunk) -> Chunk {
-        let mut m = c
-            .metadata
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
+        let mut m = c.metadata.as_object().cloned().unwrap_or_default();
         // Strip underscore-prefixed keys (transient per-stage data).
         m.retain(|k, _| !k.starts_with('_'));
         // Default kind=episode for back-compat with chunkers that don't stamp it.
@@ -73,11 +69,17 @@ impl MemorySink {
         m.entry("retracted").or_insert(Value::Bool(false));
         m.insert("tier".into(), Value::String(self.tier_str().into()));
         m.insert("namespace".into(), Value::String(self.namespace.clone()));
-        m.insert("recorded_at".into(), Value::String(self.recorded_at.clone()));
+        m.insert(
+            "recorded_at".into(),
+            Value::String(self.recorded_at.clone()),
+        );
         // effective_from <- ISO of episode_end_ts when present.
         if !m.contains_key("effective_from") {
             if let Some(epoch) = m.get("episode_end_ts").and_then(|v| v.as_f64()) {
-                m.insert("effective_from".into(), Value::String(iso_from_epoch(epoch)));
+                m.insert(
+                    "effective_from".into(),
+                    Value::String(iso_from_epoch(epoch)),
+                );
             }
         }
         Chunk {
@@ -169,7 +171,7 @@ impl Sink for MemorySink {
                 }
                 let subject = match meta.get("subject").and_then(|v| v.as_str()) {
                     Some(s) if !s.is_empty() => s,
-                    _ => continue,                            // sparse triple → no-op
+                    _ => continue, // sparse triple → no-op
                 };
                 let predicate = match meta.get("predicate").and_then(|v| v.as_str()) {
                     Some(s) if !s.is_empty() => s,
@@ -177,7 +179,7 @@ impl Sink for MemorySink {
                 };
                 let effective_from = match meta.get("effective_from").and_then(|v| v.as_str()) {
                     Some(s) if !s.is_empty() => s,
-                    _ => continue,                            // need timestamp to compare
+                    _ => continue, // need timestamp to compare
                 };
                 sqlx::query(&format!(
                     "UPDATE {fq} \

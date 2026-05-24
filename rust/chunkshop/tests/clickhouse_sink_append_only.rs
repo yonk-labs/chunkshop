@@ -157,9 +157,27 @@ async fn query_top_k_returns_nearest_chunks() -> anyhow::Result<()> {
 
     // Insert 3 chunks with distinct vectors. Query for [1,0,0,0], expect doc-1::0 first.
     let chunks = vec![
-        Chunk { doc_id: "doc-1".into(), seq_num: 0, original_content: "a".into(), embedded_content: "a".into(), metadata: json!({}) },
-        Chunk { doc_id: "doc-2".into(), seq_num: 0, original_content: "b".into(), embedded_content: "b".into(), metadata: json!({}) },
-        Chunk { doc_id: "doc-3".into(), seq_num: 0, original_content: "c".into(), embedded_content: "c".into(), metadata: json!({}) },
+        Chunk {
+            doc_id: "doc-1".into(),
+            seq_num: 0,
+            original_content: "a".into(),
+            embedded_content: "a".into(),
+            metadata: json!({}),
+        },
+        Chunk {
+            doc_id: "doc-2".into(),
+            seq_num: 0,
+            original_content: "b".into(),
+            embedded_content: "b".into(),
+            metadata: json!({}),
+        },
+        Chunk {
+            doc_id: "doc-3".into(),
+            seq_num: 0,
+            original_content: "c".into(),
+            embedded_content: "c".into(),
+            metadata: json!({}),
+        },
     ];
     let embs = vec![
         vec![1.0_f32, 0.0, 0.0, 0.0],
@@ -167,9 +185,12 @@ async fn query_top_k_returns_nearest_chunks() -> anyhow::Result<()> {
         vec![0.0_f32, 0.0, 1.0, 0.0],
     ];
     let tags = vec![vec![], vec![], vec![]];
-    sink.write_document_impl("doc-1", &chunks[..1], &embs[..1], &tags[..1]).await?;
-    sink.write_document_impl("doc-2", &chunks[1..2], &embs[1..2], &tags[1..2]).await?;
-    sink.write_document_impl("doc-3", &chunks[2..3], &embs[2..3], &tags[2..3]).await?;
+    sink.write_document_impl("doc-1", &chunks[..1], &embs[..1], &tags[..1])
+        .await?;
+    sink.write_document_impl("doc-2", &chunks[1..2], &embs[1..2], &tags[1..2])
+        .await?;
+    sink.write_document_impl("doc-3", &chunks[2..3], &embs[2..3], &tags[2..3])
+        .await?;
 
     let hits = sink.query_top_k_impl(&[1.0, 0.0, 0.0, 0.0], 3).await?;
     assert_eq!(hits.len(), 3);

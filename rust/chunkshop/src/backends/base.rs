@@ -65,6 +65,7 @@ pub trait BackendDialect {
         hnsw: bool,
         dim: usize,
         engine: Option<&str>,
+        vector_metric: Option<&str>,
     ) -> Vec<String>;
 }
 

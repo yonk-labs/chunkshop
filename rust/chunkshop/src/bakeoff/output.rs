@@ -101,11 +101,7 @@ pub fn write_report_md(
     lines.push("|---|---|---|---|---|---|".into());
     for c in &ranked {
         for pq in &c.per_query {
-            let top1 = pq
-                .top_k
-                .first()
-                .map(|h| h.doc_id.as_str())
-                .unwrap_or("-");
+            let top1 = pq.top_k.first().map(|h| h.doc_id.as_str()).unwrap_or("-");
             let mrr = fmt_f3(pq.scores.get("mrr").copied().unwrap_or(0.0));
             lines.push(format!(
                 "| `{chunker}` | `{embedder}` | {query} | `{gold}` | `{top1}` | {mrr} |",
@@ -135,10 +131,8 @@ pub fn write_report_md(
         lines.push("| Embedder | total_s | per_query_ms |".into());
         lines.push("|---|---|---|".into());
         // Sort by total time ascending (fastest first).
-        let mut entries: Vec<(&String, &f64)> = results
-            .query_embed_seconds_by_embedder
-            .iter()
-            .collect();
+        let mut entries: Vec<(&String, &f64)> =
+            results.query_embed_seconds_by_embedder.iter().collect();
         entries.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
         for (k, total) in entries {
             let per_q_ms = (total / n) * 1000.0;
@@ -190,7 +184,11 @@ pub fn write_recommended_yaml(
         .matrix
         .chunkers
         .iter()
-        .find(|c| chunker_key(c).map(|k| k == top.chunker_key).unwrap_or(false))
+        .find(|c| {
+            chunker_key(c)
+                .map(|k| k == top.chunker_key)
+                .unwrap_or(false)
+        })
         .ok_or_else(|| anyhow::anyhow!("winner chunker not found in matrix"))?;
     let winner_embedder = cfg
         .matrix
@@ -207,13 +205,9 @@ pub fn write_recommended_yaml(
     let chunker_yaml = chunker_to_yaml_value(winner_chunker)?;
     let embedder_yaml = embedder_to_yaml_value(winner_embedder);
     let source_yaml = source_to_yaml_value(&cfg.source);
-    let framer_yaml = framer_to_yaml_value(
-        cfg.framer
-            .as_ref()
-            .unwrap_or(&crate::config::FramerConfig::Identity(
-                crate::config::IdentityFramerConfig {},
-            )),
-    );
+    let framer_yaml = framer_to_yaml_value(cfg.framer.as_ref().unwrap_or(
+        &crate::config::FramerConfig::Identity(crate::config::IdentityFramerConfig {}),
+    ));
 
     let note = format!(
         "Top combo from bakeoff '{}' (MRR={:.3}, r@1={:.3}). Point `source` \
@@ -227,9 +221,9 @@ pub fn write_recommended_yaml(
     // target shape. For legacy single-PG, use the legacy target. The
     // recommended.yaml is a starting point — users tweak per-deployment.
     let targets = cfg.effective_targets()?;
-    let first_target = targets.first().ok_or_else(|| {
-        anyhow::anyhow!("no targets resolved for recommended.yaml")
-    })?;
+    let first_target = targets
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("no targets resolved for recommended.yaml"))?;
     let target_yaml = match first_target {
         super::config::BakeoffTargetEntry::Postgres(t) => json!({
             "type": "postgres",
@@ -478,7 +472,10 @@ fn framer_to_yaml_value(f: &crate::config::FramerConfig) -> Value {
             if let Some(p) = &r.title_pattern {
                 m.insert("title_pattern".into(), json!(p));
             }
-            m.insert("body_starts_with_match".into(), json!(r.body_starts_with_match));
+            m.insert(
+                "body_starts_with_match".into(),
+                json!(r.body_starts_with_match),
+            );
             Value::Object(m)
         }
         F::Jsonpath(j) => {
