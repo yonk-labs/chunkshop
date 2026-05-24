@@ -1,0 +1,27 @@
+input: .llm-judge-inputs/v05-audited.jsonl
+profile: chunkshop-e1e8
+out: .llm-judge-runs/chunkshop-accurate-local
+mode: accurate
+cache_dir: .llm-judge-cache
+resume: true
+concurrency: 4
+retries: 2
+parse_retries: 1
+timeout: 180
+temperature: 0
+max_tokens: 1200
+strict_json_fallback: true
+
+judges:
+  - provider: openai-compatible
+    base_url: http://192.168.1.193:8000/v1
+    model: Intel/Qwen3-Coder-Next-int4-AutoRound
+  - provider: openai-compatible
+    base_url: http://192.168.1.133:8000/v1
+    model: cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit
+  # Optional third judge. Enable by setting OPENAI_API_KEY in the environment
+  # and uncommenting this block. Do not write API keys into this file.
+  # - provider: openai-compatible
+  #   base_url: https://api.openai.com/v1
+  #   api_key_env: OPENAI_API_KEY
+  #   model: gpt-4.1-mini

@@ -1,0 +1,7 @@
+input: .llm-judge-inputs/v05-audited.jsonl
+profile: chunkshop-e1e8
+out: .llm-judge-runs/chunkshop-smoke
+mode: quick
+cache_dir: .llm-judge-cache
+resume: true
+concurrency: 4
