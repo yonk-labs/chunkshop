@@ -15,11 +15,25 @@ from pathlib import Path
 import yaml
 
 from chunkshop.bakeoff.config import BakeoffConfig, BakeoffResults, ComboResult
-from chunkshop.bakeoff.keys import chunker_key, embedder_key
+from chunkshop.bakeoff.keys import chunker_key, embedder_key, target_display_keys
 
 
-_BACKEND_ORDER = ["postgres", "mariadb", "sqlite"]
-_BACKEND_SHORT = {"postgres": "PG", "mariadb": "MD", "sqlite": "SQ"}
+_BACKEND_ORDER = ["postgres", "mariadb", "sqlite", "clickhouse"]
+_BACKEND_SHORT = {"postgres": "PG", "mariadb": "MD", "sqlite": "SQ", "clickhouse": "CH"}
+
+
+def _combo_target_key(combo: ComboResult) -> str:
+    return combo.target_key or combo.backend
+
+
+def _target_short(key: str) -> str:
+    if key == "postgres_cosine":
+        return "PG cos"
+    if key == "postgres_inner_product":
+        return "PG ip"
+    if key == "postgres_l2":
+        return "PG l2"
+    return _BACKEND_SHORT.get(key, key[:2].upper())
 
 
 def write_results_json(results: BakeoffResults, out_dir: Path) -> Path:
@@ -29,24 +43,30 @@ def write_results_json(results: BakeoffResults, out_dir: Path) -> Path:
     return out
 
 
-def _backends_present(results: BakeoffResults) -> list[str]:
-    """Return the list of backends that actually appear in `results.combos`,
-    in the canonical _BACKEND_ORDER order (any extras appended)."""
-    seen = {c.backend for c in results.combos}
-    ordered = [b for b in _BACKEND_ORDER if b in seen]
-    extras = sorted(seen - set(ordered))
+def _targets_present(results: BakeoffResults) -> list[str]:
+    """Return target keys that appear in `results.combos`, preserving result order."""
+    seen = []
+    seen_set = set()
+    for combo in results.combos:
+        key = _combo_target_key(combo)
+        if key not in seen_set:
+            seen.append(key)
+            seen_set.add(key)
+    ordered = [b for b in _BACKEND_ORDER if b in seen_set]
+    ordered += [b for b in seen if b not in ordered]
+    extras = sorted(seen_set - set(ordered))
     return ordered + extras
 
 
-def _combos_for_backend(results: BakeoffResults, backend: str) -> list[ComboResult]:
-    return [c for c in results.combos if c.backend == backend]
+def _combos_for_target(results: BakeoffResults, target_key: str) -> list[ComboResult]:
+    return [c for c in results.combos if _combo_target_key(c) == target_key]
 
 
 def _per_backend_leaderboard_lines(
-    cfg: BakeoffConfig, combos: list[ComboResult], backend: str
+    cfg: BakeoffConfig, combos: list[ComboResult], target_key: str
 ) -> list[str]:
     if not combos:
-        return [f"_(no combos for {backend})_", ""]
+        return [f"_(no combos for {target_key})_", ""]
     ranked = sorted(combos, key=lambda c: -c.aggregate.get("mrr", 0))
     header_cols = " | ".join(f"r@{k}" for k in cfg.scoring.k)
     sep_cells = "|".join(["---"] * (len(cfg.scoring.k) + 8))
@@ -67,14 +87,14 @@ def _per_backend_leaderboard_lines(
 
 
 def _cross_backend_table_lines(
-    results: BakeoffResults, backends: list[str]
+    results: BakeoffResults, target_keys: list[str]
 ) -> list[str]:
-    """One row per (chunker, embedder) combo. Columns: per-backend MRR + ingest_s + query_s."""
-    # Build (chunker_key, embedder_key) -> {backend: combo} index
+    """One row per (chunker, embedder) combo. Columns: per-target MRR + ingest_s + query_s."""
+    # Build (chunker_key, embedder_key) -> {target_key: combo} index
     index: dict[tuple[str, str], dict[str, ComboResult]] = {}
     for c in results.combos:
         key = (c.chunker_key, c.embedder_key)
-        index.setdefault(key, {})[c.backend] = c
+        index.setdefault(key, {})[_combo_target_key(c)] = c
     if not index:
         return ["_(no combos)_", ""]
 
@@ -86,7 +106,7 @@ def _cross_backend_table_lines(
         index.keys(), key=lambda k: -_best_mrr(index[k])
     )
 
-    short = [_BACKEND_SHORT.get(b, b[:2].upper()) for b in backends]
+    short = [_target_short(b) for b in target_keys]
     header = (
         ["Chunker", "Embedder"]
         + [f"{s} MRR" for s in short]
@@ -99,13 +119,13 @@ def _cross_backend_table_lines(
         by_b = index[key]
         sample = next(iter(by_b.values()))
         cells = [f"`{sample.chunker_label}`", f"`{sample.embedder_label}`"]
-        for b in backends:
+        for b in target_keys:
             c = by_b.get(b)
             cells.append(f"{c.aggregate.get('mrr', 0):.3f}" if c else "—")
-        for b in backends:
+        for b in target_keys:
             c = by_b.get(b)
             cells.append(f"{c.ingest_wall_seconds:.2f}" if c else "—")
-        for b in backends:
+        for b in target_keys:
             c = by_b.get(b)
             cells.append(f"{c.query_wall_seconds:.3f}" if c else "—")
         lines.append(f"| {' | '.join(cells)} |")
@@ -115,59 +135,59 @@ def _cross_backend_table_lines(
 def write_report_md(
     cfg: BakeoffConfig, results: BakeoffResults, out_dir: Path
 ) -> Path:
-    """Render side-by-side multi-backend report."""
-    backends = _backends_present(results)
-    n_backends = max(len(backends), 1)
-    combos_per_backend = results.n_combos // n_backends
+    """Render side-by-side multi-target report."""
+    target_keys = _targets_present(results)
+    n_targets = max(len(target_keys), 1)
+    combos_per_target = results.n_combos // n_targets
 
     lines: list[str] = [
-        f"# Bakeoff report: {results.run_name} (multi-backend)",
+        f"# Bakeoff report: {results.run_name} (multi-target)",
         "",
         f"- Run: {results.started_at}",
         f"- Corpus: {results.corpus_label}",
         f"- Queries: {results.n_queries}",
-        f"- Backends: {', '.join(backends) if backends else '(none)'}",
-        f"- Combos per backend: {combos_per_backend}",
+        f"- Targets: {', '.join(target_keys) if target_keys else '(none)'}",
+        f"- Combos per target: {combos_per_target}",
         f"- Total cells: {results.n_combos}",
         "",
-        "## Cross-backend comparison",
+        "## Cross-target comparison",
         "",
-        "For each (chunker, embedder), MRR + ingest/query wall time per backend. "
-        "Chunks and vectors are identical across backends, so MRR should match; "
-        "differences in ingest_s and query_s reflect the backend itself.",
+        "For each (chunker, embedder), MRR + ingest/query wall time per target. "
+        "When the targets differ only by Postgres `vector_metric`, chunks and "
+        "vectors are identical and MRR changes isolate the pgvector operator.",
         "",
     ]
-    lines += _cross_backend_table_lines(results, backends)
+    lines += _cross_backend_table_lines(results, target_keys)
 
-    # Per-backend leaderboards
-    for b in backends:
-        combos = _combos_for_backend(results, b)
+    # Per-target leaderboards
+    for target_key in target_keys:
+        combos = _combos_for_target(results, target_key)
         lines += [
             "",
-            f"## {b.capitalize()} leaderboard",
+            f"## {target_key} leaderboard",
             "",
         ]
-        lines += _per_backend_leaderboard_lines(cfg, combos, b)
+        lines += _per_backend_leaderboard_lines(cfg, combos, target_key)
 
-    # Per-query detail across backends
+    # Per-query detail across targets
     lines += [
         "",
-        "## Per-query detail (top-1 hit per backend × combo)",
+        "## Per-query detail (top-1 hit per target × combo)",
         "",
-        "| Backend | Chunker | Embedder | Query | Gold | Top-1 | MRR |",
-        "|---|---|---|---|---|---|---|",
+        "| Target | Backend | Chunker | Embedder | Query | Gold | Top-1 | MRR |",
+        "|---|---|---|---|---|---|---|---|",
     ]
-    # Same ordering as the per-backend leaderboard: best MRR first within backend.
-    for b in backends:
+    # Same ordering as the per-target leaderboard: best MRR first within target.
+    for target_key in target_keys:
         combos = sorted(
-            _combos_for_backend(results, b),
+            _combos_for_target(results, target_key),
             key=lambda c: -c.aggregate.get("mrr", 0),
         )
         for c in combos:
             for pq in c.per_query:
                 top1 = pq["top_k"][0]["doc_id"] if pq.get("top_k") else "-"
                 lines.append(
-                    f"| {b} | `{c.chunker_label}` | `{c.embedder_label}` | "
+                    f"| {target_key} | {c.backend} | `{c.chunker_label}` | `{c.embedder_label}` | "
                     f"{pq['query']} | `{pq['gold_doc_id']}` | "
                     f"`{top1}` | {pq.get('mrr', 0):.3f} |"
                 )
@@ -242,14 +262,18 @@ def write_recommended_yaml(
     winner_embedder = next(
         e for e in cfg.matrix.embedders if embedder_key(e) == top.embedder_key
     )
+    target_keys = target_display_keys(cfg.targets)
+    top_target_key = _combo_target_key(top)
     winner_target = next(
-        t for t in cfg.targets if t.type == top.backend
+        t for key, t in zip(target_keys, cfg.targets)
+        if key == top_target_key and t.type == top.backend
     )
 
     recommended = {
         "# NOTE": (
-            f"Top combo from multi-backend bakeoff '{results.run_name}' "
-            f"(backend={top.backend}, MRR={top.aggregate.get('mrr', 0):.3f}, "
+            f"Top combo from multi-target bakeoff '{results.run_name}' "
+            f"(target={top_target_key}, backend={top.backend}, "
+            f"MRR={top.aggregate.get('mrr', 0):.3f}, "
             f"r@1={top.aggregate.get('recall_at_1', 0):.3f}). "
             "Point `source` at your real corpus before running `chunkshop ingest`."
         ),
@@ -264,6 +288,11 @@ def write_recommended_yaml(
             "database": winner_target.database_name,
             "table": f"{results.run_name}_production",
             "mode": "overwrite",
+            **(
+                {"vector_metric": winner_target.vector_metric}
+                if top.backend == "postgres"
+                else {}
+            ),
         },
     }
     out = out_dir / "recommended.yaml"

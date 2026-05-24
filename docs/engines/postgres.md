@@ -102,8 +102,8 @@ A full sample lives at [`docs/samples/sample.yaml`](../samples/sample.yaml).
 
 ## Querying
 
-After ingest, query directly with pgvector's cosine operator. Top-5 from
-a Python client:
+After ingest, query directly with pgvector. The default metric is cosine
+distance. Top-5 from a Python client:
 
 ```python
 import psycopg
@@ -124,6 +124,39 @@ with psycopg.connect(os.environ["CHUNKSHOP_DSN"]) as conn:
 
 Or via the sink's `query_top_k(query_vec, k)` method from either language.
 See [`docs/query-clients.md`](../query-clients.md) for full client examples.
+
+### Vector metrics
+
+Postgres targets support all three primary pgvector metrics:
+
+| `target.vector_metric` | pgvector operator | HNSW opclass | Score conversion in `chunkshop.search` |
+|---|---|---|---|
+| `cosine` (default) | `<=>` | `vector_cosine_ops` | `1 - distance` |
+| `inner_product` | `<#>` | `vector_ip_ops` | `-distance` (pgvector returns negative inner product) |
+| `l2` | `<->` | `vector_l2_ops` | `-distance` |
+
+Set the metric in YAML:
+
+```yaml
+target:
+  type: postgres
+  vector_metric: inner_product  # cosine | inner_product | l2
+```
+
+For one-off comparisons without changing YAML, use:
+
+```bash
+chunkshop search --config cell.yaml --query "vector search" --vector-metric l2
+```
+
+When `hnsw: true`, chunkshop creates the matching pgvector opclass. Non-default
+metrics use metric-specific index names so cosine, inner-product, and L2
+bakeoffs do not accidentally reuse an index built for a different operator.
+
+To compare all three metrics in a full bakeoff, add three Postgres target rows
+with the same corpus/matrix and different `vector_metric` values. The checked-in
+template is `docs/samples/bakeoff-pgvector-metrics.yaml`; its report labels the
+three target rows as `postgres_cosine`, `postgres_inner_product`, and `postgres_l2`.
 
 ## Benefits
 

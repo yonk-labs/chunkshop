@@ -102,7 +102,8 @@ class PgSink:
             return
         from chunkshop.search import ensure_fts
         ensure_fts(self.cfg.resolve_dsn(), schema=schema,
-                   table=self.cfg.table, language=self.cfg.fts.language)
+                   table=self.cfg.table, language=self.cfg.fts.language,
+                   include_metadata_paths=self.cfg.fts.include_metadata_paths)
 
     def _create_base_ddl(self, cur) -> None:
         for stmt in self.backend.emit_chunks_table_ddl(
@@ -110,6 +111,7 @@ class PgSink:
             cols=_canonical_cols(self.embed_dim),
             hnsw=self.cfg.hnsw,
             dim=self.embed_dim,
+            vector_metric=self.cfg.vector_metric,
         ):
             cur.execute(stmt)
         self._ensure_promote_columns(cur)
@@ -245,12 +247,13 @@ class PgSink:
     def query_top_k(
         self, query_vec: np.ndarray, k: int
     ) -> list[tuple[str, int, float]]:
-        """pgvector cosine top-K. Returns (doc_id, seq_num, distance) tuples."""
+        """pgvector top-K. Returns (doc_id, seq_num, operator-distance) tuples."""
         vec_lit = self.backend.vector_literal(query_vec)
+        op, _opclass = self.backend.vector_metric_sql(self.cfg.vector_metric)
         with self.backend.connect() as conn, conn.cursor() as cur:
             cur.execute(
-                f"SELECT doc_id, seq_num, embedding <=> %s::vector AS distance "
-                f"FROM {self._fq()} ORDER BY embedding <=> %s::vector LIMIT %s",
+                f"SELECT doc_id, seq_num, embedding {op} %s::vector AS distance "
+                f"FROM {self._fq()} ORDER BY embedding {op} %s::vector LIMIT %s",
                 (vec_lit, vec_lit, k),
             )
             return [(r[0], r[1], float(r[2])) for r in cur.fetchall()]

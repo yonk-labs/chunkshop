@@ -70,3 +70,56 @@ def test_table_name_validated(tmp_path):
         """))
     with pytest.raises(ValueError, match="table"):
         load_config(yaml)
+
+
+def test_target_vector_metric_defaults_to_cosine(tmp_path):
+    yaml = tmp_path / "c.yaml"
+    yaml.write_text(textwrap.dedent("""
+        cell_name: metric_default
+        source: {type: json_corpus, path: /x}
+        chunker: {type: sentence_aware}
+        embedder: {type: fastembed, model_name: x, dim: 1}
+        target:
+          type: postgres
+          dsn_env: X
+          database: factorial
+          table: ok
+        """))
+    cfg = load_config(yaml)
+    assert cfg.target.vector_metric == "cosine"
+
+
+def test_target_accepts_pgvector_metric(tmp_path):
+    yaml = tmp_path / "c.yaml"
+    yaml.write_text(textwrap.dedent("""
+        cell_name: metric_ip
+        source: {type: json_corpus, path: /x}
+        chunker: {type: sentence_aware}
+        embedder: {type: fastembed, model_name: x, dim: 1}
+        target:
+          type: postgres
+          dsn_env: X
+          database: factorial
+          table: ok
+          vector_metric: inner_product
+        """))
+    cfg = load_config(yaml)
+    assert cfg.target.vector_metric == "inner_product"
+
+
+def test_target_rejects_unknown_vector_metric(tmp_path):
+    yaml = tmp_path / "c.yaml"
+    yaml.write_text(textwrap.dedent("""
+        cell_name: bad_metric
+        source: {type: json_corpus, path: /x}
+        chunker: {type: sentence_aware}
+        embedder: {type: fastembed, model_name: x, dim: 1}
+        target:
+          type: postgres
+          dsn_env: X
+          database: factorial
+          table: ok
+          vector_metric: manhattan
+        """))
+    with pytest.raises(ValueError, match="vector_metric"):
+        load_config(yaml)

@@ -53,10 +53,12 @@ class _BakeoffTargetBase(_Base):
 
     dsn_env: str
     database_name: str = Field(alias="database")
+    label: Optional[str] = None
 
 
 class PostgresBakeoffTarget(_BakeoffTargetBase):
     type: Literal["postgres"]
+    vector_metric: Literal["cosine", "inner_product", "l2"] = "cosine"
 
 
 class MariadbBakeoffTarget(_BakeoffTargetBase):
@@ -113,6 +115,10 @@ class ComboResult(_Base):
     """Scored outcome for one (backend, chunker, embedder) cell."""
 
     backend: str  # "postgres" / "mariadb" / "sqlite"
+    # Human/report key for this target row. Differs from `backend` when a
+    # bakeoff includes multiple targets of the same backend, e.g.
+    # postgres_cosine / postgres_inner_product / postgres_l2.
+    target_key: str = ""
     chunker_key: str
     embedder_key: str
     chunker_label: str

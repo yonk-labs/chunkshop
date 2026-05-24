@@ -108,9 +108,16 @@ class SQLiteBackend:
         return f"ON CONFLICT ({keys}) DO UPDATE SET {sets}"
 
     def emit_chunks_table_ddl(
-        self, fq: str, cols: list, hnsw: bool, dim: int, engine: str | None = None,
+        self,
+        fq: str,
+        cols: list,
+        hnsw: bool,
+        dim: int,
+        engine: str | None = None,
+        vector_metric: str = "cosine",
     ) -> list[str]:
         del engine
+        del vector_metric
         main_cols = [c for c in cols if c.name != "embedding"]
         embed_cols = [c for c in cols if c.name == "embedding"]
         if not embed_cols:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
 import psycopg
 import pytest
 
@@ -161,6 +162,43 @@ def test_ensure_fts_rejects_bad_language(corpus_dsn):
         search.ensure_fts(corpus_dsn, schema=SCHEMA, table=TABLE, language="english'; DROP")
 
 
+def test_ensure_fts_can_include_metadata_paths(corpus_dsn):
+    schema = "chunkshop_search_metadata_fts_test"
+    table = "chunks"
+    with psycopg.connect(corpus_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        cur.execute(f"CREATE SCHEMA {schema}")
+        cur.execute(
+            f"CREATE TABLE {schema}.{table} ("
+            "id text primary key, original_content text not null, metadata jsonb not null)"
+        )
+        cur.execute(
+            f"INSERT INTO {schema}.{table} VALUES (%s, %s, %s::jsonb)",
+            ("1", "ordinary body", '{"lede_report": {"search_text": "secretfact"}}'),
+        )
+        conn.commit()
+
+    try:
+        search.ensure_fts(
+            corpus_dsn,
+            schema=schema,
+            table=table,
+            include_metadata_paths=["lede_report.search_text"],
+        )
+
+        with psycopg.connect(corpus_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT id FROM {schema}.{table} "
+                "WHERE search_vector @@ to_tsquery('english', %s)",
+                ("secretfact",),
+            )
+            assert cur.fetchall() == [("1",)]
+    finally:
+        with psycopg.connect(corpus_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+            conn.commit()
+
+
 def test_keyword_search_finds_distinctive_term(corpus_dsn):
     hits = search.keyword_search(corpus_dsn, schema=SCHEMA, table=TABLE, query="espresso", k=5)
     assert hits, "expected a keyword hit for 'espresso'"
@@ -219,6 +257,74 @@ def test_semantic_search_returns_similarities(corpus_dsn, embedder):
     # Sorted descending.
     scores = [h.score for h in hits]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_semantic_search_supports_pgvector_metrics(corpus_dsn):
+    metric_table = "metric_chunks"
+    with psycopg.connect(corpus_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP TABLE IF EXISTS {SCHEMA}.{metric_table}")
+        cur.execute(
+            f"""
+            CREATE TABLE {SCHEMA}.{metric_table} (
+              id text PRIMARY KEY,
+              doc_id text NOT NULL,
+              seq_num int NOT NULL,
+              original_content text NOT NULL,
+              embedded_content text NOT NULL,
+              tags text[] NOT NULL DEFAULT '{{}}',
+              metadata jsonb NOT NULL DEFAULT '{{}}',
+              embedding vector(2) NOT NULL,
+              source text
+            )
+            """
+        )
+        cur.executemany(
+            f"""
+            INSERT INTO {SCHEMA}.{metric_table}
+              (id, doc_id, seq_num, original_content, embedded_content, embedding)
+            VALUES (%s, %s, 0, %s, %s, %s::vector)
+            """,
+            [
+                ("a::0", "doc_a", "large x", "large x", "[2,0]"),
+                ("b::0", "doc_b", "unit x", "unit x", "[1,0]"),
+                ("c::0", "doc_c", "diagonal", "diagonal", "[1,1]"),
+            ],
+        )
+        conn.commit()
+
+    q = np.array([1.0, 0.0], dtype=np.float32)
+
+    ip = search.semantic_search(
+        corpus_dsn, schema=SCHEMA, table=metric_table, query_vec=q, k=3,
+        vector_metric="inner_product",
+    )
+    assert [h.doc_id for h in ip[:2]] == ["doc_a", "doc_b"]
+    assert ip[0].score == pytest.approx(2.0)
+
+    l2 = search.semantic_search(
+        corpus_dsn, schema=SCHEMA, table=metric_table, query_vec=q, k=3,
+        vector_metric="l2",
+    )
+    assert [h.doc_id for h in l2[:2]] == ["doc_b", "doc_a"]
+    assert l2[0].score == pytest.approx(-0.0)
+
+    cosine = search.semantic_search(
+        corpus_dsn, schema=SCHEMA, table=metric_table,
+        query_vec=np.array([1.0, 1.0], dtype=np.float32), k=3,
+        vector_metric="cosine",
+    )
+    assert cosine[0].doc_id == "doc_c"
+    assert cosine[0].score == pytest.approx(1.0, abs=1e-5)
+
+
+def test_hybrid_semantic_leg_accepts_vector_metric(corpus_dsn, embedder):
+    qv = _embed(embedder, "approximate nearest neighbor vector similarity search")
+    hits = search.hybrid_search(
+        corpus_dsn, schema=SCHEMA, table=TABLE,
+        query_vec=qv, k=3, legs=("semantic",), vector_metric="l2",
+    )
+    assert hits
+    assert all(h.legs == ("semantic",) for h in hits)
 
 
 def test_hybrid_rrf_boosts_dual_match(corpus_dsn, embedder):

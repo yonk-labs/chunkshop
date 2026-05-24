@@ -631,6 +631,36 @@ class LedeTopTermsExtractor(_Base):
         return v
 
 
+class LedeReportExtractor(_Base):
+    type: Literal["lede_report"]
+    max_chars: int = Field(default=4000, ge=1)
+    max_facts: int = Field(default=40, ge=1)
+    backend: Literal["regex", "spacy", "auto"] = "regex"
+    keep_headings: bool = True
+    include_toc: bool = True
+    tag_sources: tuple[
+        Literal[
+            "attributes",
+            "key_facts",
+            "fact_records",
+            "dates",
+            "amounts",
+            "entities",
+            "spacy_phrases",
+            "search_text",
+        ],
+        ...,
+    ] = ("attributes", "key_facts", "dates", "amounts", "entities")
+    max_tag_chars: int = Field(default=240, ge=20)
+
+    @field_validator("tag_sources")
+    @classmethod
+    def _tag_sources_nonempty(cls, v):
+        if not v:
+            raise ValueError("tag_sources must be non-empty")
+        return v
+
+
 class CompositeExtractor(_Base):
     type: Literal["composite"]
     extractors: list["ExtractorConfig"] = Field(default_factory=list)
@@ -644,6 +674,7 @@ ExtractorConfig = Annotated[
         KeyBertPhrasesExtractor,
         SpacyEntitiesExtractor,
         LedeTopTermsExtractor,
+        LedeReportExtractor,
         CompositeExtractor,
     ],
     Field(discriminator="type"),
@@ -733,6 +764,7 @@ class FtsConfig(_Base):
 
     enabled: bool = False
     language: str = "english"
+    include_metadata_paths: list[str] = Field(default_factory=list)
 
     @field_validator("language")
     @classmethod
@@ -743,12 +775,26 @@ class FtsConfig(_Base):
             )
         return v
 
+    @field_validator("include_metadata_paths")
+    @classmethod
+    def _metadata_paths_safe(cls, v: list[str]) -> list[str]:
+        for path in v:
+            if not path or not all(_PATH_SEGMENT.match(seg) for seg in path.split(".")):
+                raise ValueError(
+                    "fts.include_metadata_paths segments must match "
+                    f"^[A-Za-z_][A-Za-z0-9_]*$ separated by '.', got {path!r}"
+                )
+        return v
+
 
 class TargetConfig(_DsnResolvable):
     type: Literal["postgres", "sqlite", "mariadb", "clickhouse"]
     database_name: str = Field(alias="database")
     table: str
     hnsw: bool = True
+    # Postgres/pgvector semantic-search metric. Ignored by non-Postgres
+    # backends, which currently expose their own fixed native distance.
+    vector_metric: Literal["cosine", "inner_product", "l2"] = "cosine"
     mode: Literal["overwrite", "append", "create_if_missing"] = "overwrite"
     source_tag: Optional[str] = None
     promote_metadata: list[PromoteColumn] = Field(default_factory=list)

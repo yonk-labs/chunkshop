@@ -433,6 +433,10 @@ Below ~1k rows HNSW is slower than a sequential scan. Above ~10k rows it's drama
 faster. The sample config turns it off because 8 rows don't need it; your real corpus
 probably does.
 
+Postgres also supports `target.vector_metric: cosine` (default),
+`inner_product`, or `l2`. chunkshop maps those to pgvector's `<=>`, `<#>`, and
+`<->` operators and picks the matching HNSW opclass.
+
 ## Troubleshooting
 
 ### "no files matched glob: ..."

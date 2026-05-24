@@ -136,6 +136,16 @@ def test_search_text_output(search_cell):
     assert r.output.strip()  # prints something
 
 
+def test_search_accepts_vector_metric_override(search_cell):
+    r = CliRunner().invoke(cli, [
+        "search", "--config", str(search_cell),
+        "--query", "alpha", "--k", "3", "--vector-metric", "l2", "--json",
+    ])
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert "chunks" in data
+
+
 def test_search_summary_plus_chunks(search_cell):
     r = CliRunner().invoke(cli, [
         "search", "--config", str(search_cell),

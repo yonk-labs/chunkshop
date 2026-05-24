@@ -109,6 +109,11 @@ ORDER BY embedding <=> '[0.123, ...]'::vector
 LIMIT 10;
 ```
 
+Postgres targets default to cosine (`<=>`). You can set
+`target.vector_metric` to `inner_product` (`<#>`) or `l2` (`<->`) when the
+embedding model recommends a different metric; chunkshop uses the matching HNSW
+opclass when `target.hnsw` is enabled.
+
 Return `original_content` to the user — that's the clean text. The
 `embedded_content` may have a heading prefix or neighbor splice that's just
 noise outside the retrieval context.
