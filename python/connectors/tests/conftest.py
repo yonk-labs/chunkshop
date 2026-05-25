@@ -18,6 +18,7 @@ from chunkshop_connectors.testing.mocks.blob import blob_mock  # noqa: F401
 from chunkshop_connectors.testing.mocks.dropbox import dropbox_mock  # noqa: F401
 from chunkshop_connectors.testing.mocks.gdrive import gdrive_mock  # noqa: F401
 from chunkshop_connectors.testing.mocks.github import github_mock  # noqa: F401
+from chunkshop_connectors.testing.mocks.gitlab import gitlab_mock  # noqa: F401
 from chunkshop_connectors.testing.mocks.notion import notion_mock  # noqa: F401
 from chunkshop_connectors.testing.mocks.rss import rss_mock  # noqa: F401
 

@@ -27,11 +27,11 @@ its current implementation status.
 | github    | verified     | implemented | PAT (classic or fine-grained) | httpx-backed REST walker. Cursor = `{after_commit_sha}`. See `docs/connectors/github.md`. |
 | notion    | verified     | implemented | integration token          | httpx-backed v1 REST walker. Cursor = `{after_last_edited_time}` via database `last_edited_time` filter. Block-tree walked to plain text. See `docs/connectors/notion.md`. |
 | dropbox   | verified     | implemented | OAuth bearer / PAT         | httpx-backed v2 REST walker. Cursor = Dropbox's own `{cursor}` via `/files/list_folder/continue`. Text-extension allow-list. See `docs/connectors/dropbox.md`. |
+| gitlab    | verified     | implemented | PAT / project token        | httpx-backed v4 REST walker. Cursor = `{after_commit_sha}` via `/repository/compare`. Mirrors the github connector. See `docs/connectors/gitlab.md`. |
 | slack     | verified     | planned     | OAuth (slack)              | Needs `oauth/slack.py` provider (Task 10). |
 | confluence| experimental | stub        | OAuth or API token         | Real impl deferred. |
 | jira      | experimental | stub        | OAuth or API token         | Real impl deferred. |
 | box       | experimental | stub        | OAuth                      | Real impl deferred. |
-| gitlab    | experimental | stub        | OAuth or PAT               | Real impl deferred. |
 | bitbucket | experimental | stub        | OAuth or app password      | Real impl deferred. |
 | gmail     | experimental | stub        | OAuth (google)             | Real impl deferred. |
 | imap      | experimental | stub        | basic / app-password       | Real impl deferred. |

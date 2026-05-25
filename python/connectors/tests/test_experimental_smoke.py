@@ -28,7 +28,6 @@ EXPERIMENTAL = [
     "confluence",
     "jira",
     "box",
-    "gitlab",
     "bitbucket",
     "gmail",
     "imap",
