@@ -13,6 +13,7 @@ from chunkshop.chunkers.semantic import SemanticChunker
 from chunkshop.chunkers.summary_embed import SummaryEmbedChunker
 from chunkshop.chunkers.hierarchical_summary import HierarchicalSummaryChunker
 from chunkshop.chunkers.consolidation import ConsolidationChunker
+from chunkshop.chunkers.symbol_aware import SymbolAwareChunker
 from chunkshop.config import (
     ChunkerConfig,
     EmbedderConfig,
@@ -23,6 +24,7 @@ from chunkshop.config import (
     SemanticChunker as SemanticCfg,
     SentenceAwareChunker as SentCfg,
     SummaryEmbedChunker as SummaryEmbedCfg,
+    SymbolAwareChunker as SymbolAwareCfg,
     HierarchicalSummaryChunker as HierSummaryCfg,
     ConsolidationChunker as ConsolidationCfg,
 )
@@ -94,6 +96,8 @@ def load_chunker(
         return ConsolidationChunker(cfg, base, build_chunker=_build)
     if isinstance(cfg, CodeAwareCfg):
         return CodeAwareChunker(cfg, build_chunker=_build)
+    if isinstance(cfg, SymbolAwareCfg):
+        return SymbolAwareChunker(cfg, build_chunker=_build)
     if isinstance(cfg, SemanticCfg):
         main_model_name = getattr(main_embedder, "model_name", None) if main_embedder else None
         # Only pass shared_boundary_model when the chunker actually wants "same".

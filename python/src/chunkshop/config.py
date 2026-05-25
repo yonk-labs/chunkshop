@@ -511,6 +511,46 @@ class CodeAwareChunker(_Base):
         return self.max_chars
 
 
+class SymbolAwareChunker(_Base):
+    """Multi-language code chunker that splits at symbol boundaries via codeparse.
+
+    Generalises :class:`CodeAwareChunker` (Python-only, stdlib ``ast``) to any
+    language ``chunkshop.codeparse.parse_file`` understands (Python, Java, Go,
+    TypeScript, JavaScript). For each top-level symbol in the file, emits one
+    chunk whose ``original_content`` is the raw source slice and whose
+    ``embedded_content`` optionally prepends the file's import block so an
+    embedder sees framing context like "this function imports bs4".
+
+    Granularity:
+
+    - ``function`` (default) — one chunk per top-level function AND per
+      top-level class. Methods inside a class are bundled into the class
+      chunk (the class is the boundary).
+    - ``class`` — one chunk per top-level class; free top-level functions are
+      grouped into a single ``module_block`` chunk per file.
+    - ``module`` — one chunk per file regardless of symbol count. Useful for
+      very small or dotfile-style sources where per-symbol splitting is
+      overkill. The chunk still carries a deterministic ``node_id``.
+
+    Falls back to :class:`SentenceAwareChunker` when codeparse can't parse the
+    document (unknown extension / no path metadata / Python syntax error /
+    zero symbols). Fallback chunks are tagged ``strategy='symbol_aware_fallback'``
+    with a ``fallback_reason`` metadata field.
+    """
+    type: Literal["symbol_aware"]
+    granularity: Literal["function", "class", "module"] = "function"
+    include_imports: bool = True
+    max_chars: int = 8000
+    if_oversize: Optional["ChunkerConfig"] = None
+    # Restrict the chunker to specific codeparse language tags
+    # ({"python","java","go","typescript","javascript"}). When None (default),
+    # the chunker infers the language from doc.metadata.path / source_path.
+    languages: Optional[list[str]] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        return self.max_chars
+
+
 class HierarchicalSummaryChunker(_Base):
     """Emit base (fine) chunks plus coarse summary chunks linked by group_id."""
     type: Literal["hierarchical_summary"]
@@ -557,6 +597,7 @@ ChunkerConfig = Annotated[
         HierarchicalSummaryChunker,
         SemanticChunker,
         CodeAwareChunker,
+        SymbolAwareChunker,
     ],
     Field(discriminator="type"),
 ]
@@ -569,6 +610,7 @@ SummaryEmbedChunker.model_rebuild()
 ConsolidationChunker.model_rebuild()
 HierarchicalSummaryChunker.model_rebuild()
 CodeAwareChunker.model_rebuild()
+SymbolAwareChunker.model_rebuild()
 
 
 class IdentityFramerConfig(_Base):
