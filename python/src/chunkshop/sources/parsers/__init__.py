@@ -4,6 +4,7 @@ Importing parser *classes* is safe: backing libs (pypdf, python-docx, etc.)
 import lazily inside each parser's `parse()` method, so this module loads
 with zero parser extras installed.
 """
+
 from __future__ import annotations
 
 from chunkshop.sources.parsers.base import FileParser, ParserError
@@ -35,9 +36,7 @@ DEFAULT_PARSERS: dict[str, FileParser] = {
 }
 
 
-def get_parser(
-    ext: str, parsers: dict[str, FileParser] | None = None
-) -> FileParser:
+def get_parser(ext: str, parsers: dict[str, FileParser] | None = None) -> FileParser:
     """Return the parser for `ext` (case-insensitive, leading dot tolerated).
 
     Falls back to a TextParser when the extension is unknown. Custom parser

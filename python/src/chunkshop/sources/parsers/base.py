@@ -2,6 +2,7 @@
 FilesSource wraps that into a Document. Parsers raise ParserError on a file
 they recognize but cannot read, and a RuntimeError with an install hint when
 their optional library is missing."""
+
 from __future__ import annotations
 
 from pathlib import Path
