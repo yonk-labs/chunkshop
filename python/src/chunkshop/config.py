@@ -74,6 +74,43 @@ class FilesSource(_Base):
     encoding: str = "utf-8"
 
 
+class CommentExtractsSource(_Base):
+    """Globs source-code files and emits comments as Documents.
+
+    Pairs with ``chunkshop.codeparse.comments``. One Document per
+    comment block (default), per line, or per file — choose with
+    ``granularity``. Languages are auto-detected by extension when
+    ``languages`` is None; pass an explicit list to allowlist.
+
+    The cell that consumes this source is otherwise unremarkable —
+    sentence_aware chunker, prose embedder, your sink of choice. The
+    point is to land code-comment rationale ("why batch_size=64?")
+    in a docs KB rather than embedding it with the surrounding code.
+    """
+    type: Literal["comment_extracts"]
+    glob: str
+    # When None, auto-detect by extension. When set, drop files whose
+    # detected language isn't in this allowlist. Useful for "only
+    # Python comments from a polyglot repo".
+    languages: Optional[list[str]] = None
+    # Drop comment blocks shorter than this many characters. Default 20
+    # filters ``# noqa``, ``// TODO``, single-word breadcrumbs etc.
+    min_chars: int = 20
+    # How to combine adjacent comments.
+    #   "block"    — consecutive comment lines and each /* */ become one Document
+    #   "per_line" — explode multi-line line-comment blocks into one Document per line
+    #   "per_file" — one Document per file with all blocks concatenated by ``\\n\\n``
+    granularity: Literal["block", "per_line", "per_file"] = "block"
+    # Include Python module / class / function docstrings? Set False to
+    # drop them when you've already indexed docstrings via another path.
+    include_docstrings: bool = True
+    # Skip pragma-style lines: shebangs (``#!``), encoding declarations
+    # (``# -*- coding: utf-8 -*-``), tooling directives (``# noqa``,
+    # ``# type: ignore``, ``// @ts-ignore``, ``// eslint-disable``,
+    # ``//go:build``, etc.). When True (default), they don't reach the KB.
+    skip_pragmas: bool = True
+
+
 class JsonCorpusSource(_Base):
     type: Literal["json_corpus"]
     path: str
@@ -244,9 +281,9 @@ class ConnectorSource(_Base):
 
 
 SourceConfig = Annotated[
-    Union[FilesSource, JsonCorpusSource, SessionStagingSource, PgTableSource, SqliteTableSource,
-          MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource,
-          ConnectorSource],
+    Union[FilesSource, CommentExtractsSource, JsonCorpusSource, SessionStagingSource,
+          PgTableSource, SqliteTableSource, MariaDbTableSource, ClickhouseTableSource,
+          HttpSource, S3Source, InlineSource, ConnectorSource],
     Field(discriminator="type"),
 ]
 
