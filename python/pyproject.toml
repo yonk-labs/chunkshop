@@ -45,6 +45,18 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 [project.scripts]
 chunkshop = "chunkshop.cli:cli"
 
+# Connector plugins register source types under the "chunkshop.sources"
+# entry-point group. chunkshop core ships NONE; install a plugin (e.g.
+# chunkshop-connectors) to add sources. An entry-point value is a factory
+# callable with signature (config: dict) -> Source. See
+# docs/cookbook/authoring-connectors.md.
+#
+# Example (in the PLUGIN package's pyproject.toml, not here):
+# [project.entry-points."chunkshop.sources"]
+# gdrive = "chunkshop_connectors.gdrive:factory"
+#
+# The S3 RawStore backend (raw_store: type: s3) requires the [s3] extra.
+
 [project.urls]
 Homepage = "https://github.com/yonk-labs/chunkshop"
 Issues = "https://github.com/yonk-labs/chunkshop/issues"

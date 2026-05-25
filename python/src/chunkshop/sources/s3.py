@@ -22,14 +22,19 @@ from __future__ import annotations
 from typing import Iterator
 
 from chunkshop.config import S3Source as Cfg
-from chunkshop.sources.base import Document
+from chunkshop.sources.base import Document, SyncMode
 
 
 class S3Source:
+    # Exposed as CURSOR: the cursor is the full {key: etag} map. Unchanged ETags
+    # are skipped on re-sync (FINGERPRINT semantics, surfaced as a cursor so
+    # consumers persist a single opaque dict between runs).
+    sync_mode = SyncMode.CURSOR
+
     def __init__(self, cfg: Cfg):
         self.cfg = cfg
 
-    def iter_documents(self) -> Iterator[Document]:
+    def _client(self):
         try:
             import boto3
         except ImportError as exc:
@@ -37,29 +42,43 @@ class S3Source:
                 "S3 source requires boto3. Install with `pip install chunkshop[s3]` "
                 "or `uv sync --extra s3`."
             ) from exc
+        return boto3.client("s3", endpoint_url=self.cfg.endpoint_url)
 
-        client = boto3.client("s3", endpoint_url=self.cfg.endpoint_url)
-
+    def _list(self, client):
         # Paginate the listing — buckets can have >1000 keys.
         paginator = client.get_paginator("list_objects_v2")
-        keys: list[tuple[str, int, str]] = []
         for page in paginator.paginate(Bucket=self.cfg.bucket, Prefix=self.cfg.prefix):
             for obj in page.get("Contents") or []:
-                keys.append((obj["Key"], int(obj.get("Size", 0)), obj.get("ETag", "")))
+                yield obj["Key"], obj.get("ETag", ""), int(obj.get("Size", 0))
 
-        out: list[Document] = []
-        for key, size, etag in keys:
-            resp = client.get_object(Bucket=self.cfg.bucket, Key=key)
-            body = resp["Body"].read().decode("utf-8", errors="replace")
-            out.append(Document(
-                id=f"s3://{self.cfg.bucket}/{key}",
-                content=body,
-                title=None,
-                metadata={
-                    "bucket": self.cfg.bucket,
-                    "key": key,
-                    "size": size,
-                    "etag": etag,
-                },
-            ))
-        return iter(out)
+    def _fetch(self, client, key, etag, size) -> Document:
+        body = client.get_object(Bucket=self.cfg.bucket, Key=key)["Body"].read()
+        return Document(
+            id=f"s3://{self.cfg.bucket}/{key}",
+            content=body.decode("utf-8", errors="replace"),
+            title=None,
+            metadata={"bucket": self.cfg.bucket, "key": key, "size": size, "etag": etag},
+            fingerprint=etag,
+        )
+
+    def iter_documents(self) -> Iterator[Document]:
+        client = self._client()
+        for key, etag, size in list(self._list(client)):
+            yield self._fetch(client, key, etag, size)
+
+    def empty_cursor(self) -> dict:
+        return {}
+
+    def iter_changes_since(self, cursor: dict) -> Iterator[Document]:
+        client = self._client()
+        for key, etag, size in list(self._list(client)):
+            if cursor.get(key) != etag:
+                yield self._fetch(client, key, etag, size)
+
+    def cursor_from(self, last_document: Document) -> dict:
+        # The canonical S3 cursor is the full key→etag map; the consumer
+        # accumulates fingerprints across the batch and persists that map.
+        # This per-doc helper supports batch checkpointing — the consumer
+        # merges each returned single-key dict into the running cursor.
+        meta = last_document.metadata or {}
+        return {meta.get("key", last_document.id): last_document.fingerprint}

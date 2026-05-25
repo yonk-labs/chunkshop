@@ -107,6 +107,11 @@ class PgTableSource(_DsnResolvable):
     content_column: str
     title_column: Optional[str] = None
     where: Optional[str] = None
+    # Optional timestamp column enabling cursor-based incremental sync. When set,
+    # the source implements IncrementalSource with a tuple cursor of shape
+    # {"after_ts": "<iso ts>", "after_id": "<id>"} so rows sharing a boundary
+    # timestamp aren't silently dropped. See PgTableSource.iter_changes_since.
+    updated_at_column: Optional[str] = None
     # Extra columns to pull alongside id/content/title and put into each
     # Document's metadata dict (key = column name, value = psycopg return).
     # Pair with `target.promote_metadata` to surface specific keys as typed
@@ -179,9 +184,55 @@ class InlineSource(_Base):
     type: Literal["inline"]
 
 
+class LocalRawStoreConfig(_Base):
+    type: Literal["local"]
+    root: str
+
+
+class S3RawStoreConfig(_Base):
+    type: Literal["s3"]
+    bucket: str
+    prefix: str = ""
+    endpoint_url: Optional[str] = None
+
+
+RawStoreConfig = Annotated[
+    Union[LocalRawStoreConfig, S3RawStoreConfig],
+    Field(discriminator="type"),
+]
+
+
+class SyncSettings(_Base):
+    """Declares how a connector source detects changes. Consumer-driven —
+    chunkshop does not schedule; these values inform the consumer's orchestrator."""
+    mode: Literal["full_resync", "cursor", "fingerprint"] = "full_resync"
+    refresh_freq_seconds: Optional[int] = Field(default=None, ge=1)
+    prune_freq_seconds: Optional[int] = Field(default=None, ge=1)
+
+
+class ConnectorSource(_Base):
+    """Generic plugin-source kind. Resolved at load time against the
+    ``chunkshop.sources`` entry-point registry. The ``config`` dict is opaque
+    to core — the plugin validates it. ``extra='forbid'`` still applies to the
+    top-level keys here (type/connector/config/sync/raw_store)."""
+    type: Literal["connector"]
+    connector: str
+    config: dict = Field(default_factory=dict)
+    sync: Optional[SyncSettings] = None
+    raw_store: Optional[RawStoreConfig] = None
+
+    @field_validator("connector")
+    @classmethod
+    def _safe_name(cls, v):
+        if not re.match(r"^[a-z_][a-z0-9_]*$", v):
+            raise ValueError(f"connector name must match ^[a-z_][a-z0-9_]*$, got {v!r}")
+        return v
+
+
 SourceConfig = Annotated[
     Union[FilesSource, JsonCorpusSource, SessionStagingSource, PgTableSource, SqliteTableSource,
-          MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource],
+          MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource,
+          ConnectorSource],
     Field(discriminator="type"),
 ]
 
