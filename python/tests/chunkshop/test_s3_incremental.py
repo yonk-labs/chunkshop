@@ -2,15 +2,8 @@
 import sys, types, pytest
 from chunkshop.config import S3Source as Cfg
 from chunkshop.sources.base import IncrementalSource, SyncMode
-from chunkshop.testing import assert_cursor_advances, assert_idempotent_on_re_emit
-
-
-def _merge_cursor(source, prev, docs):
-    """Reference consumer merge: start from prev, fold each doc's delta in order."""
-    nxt = dict(prev)
-    for d in docs:
-        nxt.update(source.cursor_from(d))
-    return nxt
+from chunkshop.testing import (assert_cursor_advances,
+                               assert_idempotent_on_re_emit, merge_cursor)
 
 
 class _FakeS3:
@@ -52,7 +45,7 @@ def test_s3_cursor_skips_unchanged_etags(fake_boto3):
     first = list(src.iter_changes_since(cursor))
     assert {d.id for d in first} == {"s3://b/k1", "s3://b/k2"}
     # Build the next cursor via the REAL merge of cursor_from over emitted docs.
-    cursor = _merge_cursor(src, cursor, first)
+    cursor = merge_cursor(src, cursor, first)
     assert cursor == {"k1": '"e1"', "k2": '"e2"'}, "merge must accumulate full manifest"
     # nothing changed → no re-emit
     assert list(src.iter_changes_since(cursor)) == []
@@ -61,7 +54,7 @@ def test_s3_cursor_skips_unchanged_etags(fake_boto3):
     changed = list(src.iter_changes_since(cursor))
     assert {d.id for d in changed} == {"s3://b/k2"}
     # merging the changed delta into the running cursor preserves k1 (unchanged)
-    cursor = _merge_cursor(src, cursor, changed)
+    cursor = merge_cursor(src, cursor, changed)
     assert cursor == {"k1": '"e1"', "k2": '"e2x"'}
 
 

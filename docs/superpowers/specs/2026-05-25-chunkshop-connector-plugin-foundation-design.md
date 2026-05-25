@@ -121,7 +121,7 @@ The structural change that makes connectors plugins.
       def exists(self, doc_id: str, fingerprint: str | None = None) -> bool: ...
       def delete(self, doc_id: str) -> None: ...
   ```
-- `local.py` — filesystem backend, **zero-dep, the default**. Layout: `<root>/<doc_id>/<fingerprint>`.
+- `local.py` — filesystem backend, **zero-dep, the default**. Layout: `<root>/<sha256(doc_id)>/{blob,meta.json}` — the doc_id is hashed (so arbitrary ids like `s3://…` or paths containing `..` cannot traverse outside root) and the original is recorded in `meta.json` alongside the fingerprint. Single artifact per doc_id; a later `put()` overwrites — the use case is "have I already fetched this fingerprint?" not version history.
 - `s3.py` — reuses the existing `[s3]` extra (boto3).
 - `db.py` — blob column on an existing backend. **Experimental tier** for v1 (land local + s3 solid first).
 - `RawStoreConfig` discriminated union in `config.py` + `load_raw_store(cfg)` factory mirroring `load_sink`.

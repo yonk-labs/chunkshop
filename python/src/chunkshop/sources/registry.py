@@ -11,6 +11,7 @@ cached; adding a connector requires NO edit to chunkshop core.
 """
 from __future__ import annotations
 
+import warnings
 from importlib.metadata import entry_points
 from typing import Callable
 
@@ -28,9 +29,27 @@ def _iter_entry_points():
 
 
 def _registry() -> dict[str, Callable]:
+    """Load all registered connector factories, per-plugin isolated.
+
+    If one plugin's entry point fails to load (broken transitive dep, syntax
+    error, ImportError), it must NOT prevent other healthy plugins from
+    resolving. We warn and skip the broken one so the rest of the registry
+    remains usable.
+    """
     global _cache
     if _cache is None:
-        _cache = {ep.name: ep.load() for ep in _iter_entry_points()}
+        loaded: dict[str, Callable] = {}
+        for ep in _iter_entry_points():
+            try:
+                loaded[ep.name] = ep.load()
+            except Exception as exc:  # noqa: BLE001 -- intentional: any plugin failure is isolated
+                warnings.warn(
+                    f"failed to load chunkshop.sources entry point {ep.name!r} "
+                    f"({ep.value}): {type(exc).__name__}: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        _cache = loaded
     return _cache
 
 

@@ -46,3 +46,32 @@ def test_unknown_connector_lists_installed(fake_eps):
 
 def test_available_connectors(fake_eps):
     assert registry.available_connectors() == ["dummy"]
+
+
+class _BrokenEP:
+    """Entry point that raises on load — e.g. missing transitive dep."""
+    name = "broken"
+    value = "chunkshop_broken_plugin:factory"
+    def load(self):
+        raise ImportError("missing transitive dep 'somelib'")
+
+
+def test_broken_plugin_does_not_kill_registry(monkeypatch):
+    """A single failing plugin must NOT prevent other healthy plugins from
+    resolving — chunkshop is designed for third-party plugins, so one broken
+    extra can't take down the whole registry."""
+    import warnings
+    eps = [_BrokenEP(), _FakeEP("dummy", _dummy_factory)]
+    monkeypatch.setattr(registry, "_iter_entry_points", lambda: eps)
+    registry.clear_cache()
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            assert registry.available_connectors() == ["dummy"]
+            assert any("broken" in str(w.message) for w in caught), (
+                "expected a RuntimeWarning naming the broken entry point")
+        # Healthy plugin still resolves.
+        src = registry.load_connector("dummy", {"id": "x"})
+        assert list(src.iter_documents())[0].id == "x"
+    finally:
+        registry.clear_cache()

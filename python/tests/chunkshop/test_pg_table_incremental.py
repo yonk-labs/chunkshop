@@ -68,7 +68,7 @@ def test_pg_table_handles_row_inserted_at_cursor_boundary(table):
     from datetime import datetime, timezone
 
     from chunkshop.sources.pg_table import PgTableSource as Src
-    from chunkshop.testing import _merge_cursor
+    from chunkshop.testing import merge_cursor
     schema, name = table
     boundary = datetime.now(timezone.utc)
     # Sync 1: row c1 exists at the boundary timestamp.
@@ -78,7 +78,7 @@ def test_pg_table_handles_row_inserted_at_cursor_boundary(table):
     src = Src(_cfg(*table))
     first = list(src.iter_changes_since(src.empty_cursor()))
     assert {d.id for d in first} == {"a", "b", "c1"}
-    cursor = _merge_cursor(src, src.empty_cursor(), first)
+    cursor = merge_cursor(src, src.empty_cursor(), first)
     # Concurrent writer commits c2 at the SAME boundary timestamp as c1 —
     # mimics the realistic race: their SELECT happened before our cursor advance.
     with psycopg.connect(DSN) as conn, (c := conn.cursor()):
