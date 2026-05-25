@@ -15,6 +15,7 @@ import socket
 import pytest
 
 from chunkshop_connectors.testing.mocks.blob import blob_mock  # noqa: F401
+from chunkshop_connectors.testing.mocks.gdrive import gdrive_mock  # noqa: F401
 from chunkshop_connectors.testing.mocks.github import github_mock  # noqa: F401
 from chunkshop_connectors.testing.mocks.rss import rss_mock  # noqa: F401
 

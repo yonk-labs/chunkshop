@@ -23,7 +23,7 @@ dev = [
     "pytest-asyncio>=0.21",
     "pytest_httpserver>=1.0",
 ]
-gdrive = []
+gdrive = ["httpx>=0.26"]
 github = ["httpx>=0.26"]
 slack = []
 blob = ["boto3>=1.28"]
@@ -60,6 +60,7 @@ all = [
 blob = "chunkshop_connectors.blob:factory"
 rss = "chunkshop_connectors.rss:factory"
 github = "chunkshop_connectors.github:factory"
+gdrive = "chunkshop_connectors.gdrive:factory"
 # Experimental tier — registered as stubs (raise StubError on iter);
 # real implementations land in follow-ups. See docs/connectors/_status.md.
 notion = "chunkshop_connectors.notion:factory"
