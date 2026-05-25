@@ -8,7 +8,6 @@ use chunkshop::config::load_config;
 use chunkshop::memory::{ensure_staging_table, stage_events, StagedEvent};
 use chunkshop::run_cell;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::Row;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
