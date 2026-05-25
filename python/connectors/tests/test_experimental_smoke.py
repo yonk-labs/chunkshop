@@ -1,6 +1,6 @@
 """Bulk smoke for every experimental-tier connector.
 
-Verifies that all 23 experimental connectors are:
+Verifies that the remaining experimental connectors are:
 
 1. importable as ``chunkshop_connectors.<name>``,
 2. expose ``Connector`` + ``factory`` symbols,
@@ -8,6 +8,10 @@ Verifies that all 23 experimental connectors are:
 4. registered in chunkshop's :mod:`chunkshop.sources.registry`, and
 5. raise :class:`StubError` (with the connector name in the message)
    when their ``iter_documents`` is exercised.
+
+``notion``, ``dropbox``, and ``gitlab`` were promoted to verified-tier;
+their behavioural tests live in ``test_notion_connector.py``,
+``test_dropbox_connector.py``, and ``test_gitlab_connector.py``.
 """
 from __future__ import annotations
 
@@ -21,12 +25,9 @@ from chunkshop_connectors._stub import StubError
 from chunkshop_connectors._tier import tier_of
 
 EXPERIMENTAL = [
-    "notion",
     "confluence",
     "jira",
-    "dropbox",
     "box",
-    "gitlab",
     "bitbucket",
     "gmail",
     "imap",
