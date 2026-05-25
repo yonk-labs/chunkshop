@@ -128,6 +128,10 @@ def _cell_yaml(corpus_glob: str, dsn: str) -> dict:
                 {"path": "summary", "type": "text"},
                 {"path": "start_line", "type": "int"},
                 {"path": "end_line", "type": "int"},
+                # Promoted so code_edges.{src,dst}_node_id can FK back to
+                # chunks.node_id with ON DELETE CASCADE — see
+                # docs/cookbook/code-search.md §"enforce referential integrity".
+                {"path": "node_id", "type": "text"},
             ],
         },
     }

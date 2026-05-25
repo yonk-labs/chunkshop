@@ -67,6 +67,7 @@ target:
     - {path: summary,     type: text}
     - {path: start_line,  type: int}
     - {path: end_line,    type: int}
+    - {path: node_id,     type: text}    # joinable from code_edges.{src,dst}_node_id
 ```
 
 Each `promote_metadata` entry turns a jsonb-metadata key into a real column
@@ -76,6 +77,33 @@ on the chunks table. `symbol_name` becomes a `TEXT` column (the predicate
 `promote_metadata` the chunker still stamps the metadata — but it sits in
 jsonb where you'd have to query it with a `WHERE metadata @> '...'::jsonb`
 clause; the CLI filter expects a real column.
+
+### Optional: enforce referential integrity between chunks and code_edges
+
+Promoting `node_id` makes it FK-target-able from `code_edges.src_node_id` /
+`dst_node_id`. Add the constraints once the tables exist (run after the
+first ingest):
+
+```sql
+ALTER TABLE <schema>.chunks
+    ADD CONSTRAINT chunks_node_id_unique UNIQUE (node_id);
+
+ALTER TABLE <schema>.code_edges
+    ADD CONSTRAINT code_edges_src_fk
+    FOREIGN KEY (src_node_id) REFERENCES <schema>.chunks(node_id)
+    ON DELETE CASCADE;
+
+ALTER TABLE <schema>.code_edges
+    ADD CONSTRAINT code_edges_dst_fk
+    FOREIGN KEY (dst_node_id) REFERENCES <schema>.chunks(node_id)
+    ON DELETE CASCADE;
+```
+
+With these in place, deleting a chunk row auto-deletes any edges that
+reference it as source or target — no orphan-edge cleanup script needed.
+Skip this if you intentionally want edges to outlive their chunks (e.g.,
+when chunks are re-ingested with new node_ids and you want a transitional
+period where both old and new edges coexist).
 
 ## Ingest
 
