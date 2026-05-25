@@ -1,0 +1,128 @@
+# KB template: codebase / developer docs corpus.
+#
+# Intended use:
+# - source repositories
+# - API references
+# - READMEs and design docs
+# - generated docs where path/symbol metadata matters
+#
+# This is a target profile/template sample. Some `kb`/`profiles` fields are
+# planned product surface and may not be accepted by the current ingest CLI yet.
+
+kb:
+  id: codebase
+  template: codebase
+  description: Code and documentation KB with path/symbol/language metadata.
+  profile:
+    default: code_context
+    summary_source: chunk
+    allow_auto_fallback: true
+
+source:
+  type: files
+  glob: /path/to/repo/**/*.{py,rs,md,toml,yaml,yml,json}
+  id_from: path
+
+chunker:
+  type: sentence_aware
+  max_chars: 2400
+  overlap_chars: 200
+  if_oversize:
+    type: fixed_overlap
+    window_words: 180
+    step_words: 140
+    max_chars: 2200
+
+embedder:
+  type: fastembed
+  model_name: BAAI/bge-base-en-v1.5
+  dim: 768
+  threads: 4
+
+extractor:
+  type: lede_report
+  max_chars: 3000
+  max_facts: 30
+  backend: regex
+  keep_headings: true
+  include_toc: true
+
+target:
+  type: postgres
+  dsn_env: CHUNKSHOP_TEST_DSN
+  database: chunkshop_codebase
+  table: chunks
+  mode: overwrite
+  hnsw: true
+  vector_metric: cosine
+  promote_metadata:
+    - path: path
+      type: text
+    - path: language
+      type: text
+    - path: symbol
+      type: text
+    - path: package
+      type: text
+    - path: heading
+      type: text
+  fts:
+    enabled: true
+    language: english
+    include_metadata_paths:
+      - lede_report.search_text
+      - path
+      - symbol
+  documents:
+    enabled: true
+    table: documents
+    store_full_content: true
+    store_lede_report: true
+    promote_metadata:
+      - path: path
+        type: text
+      - path: language
+        type: text
+      - path: symbol
+        type: text
+      - path: package
+        type: text
+    fts:
+      enabled: true
+      language: english
+
+profiles:
+  default: code_context
+  aliases:
+    cheap:
+      packing: chunk_summary_facts
+      top_k: 20
+      summary_source: chunk
+      include_facts: true
+      include_headings: true
+      top_n_raw: 0
+    code_context:
+      packing: summary_toc_facts_plus_top5
+      top_k: 25
+      summary_source: chunk
+      include_facts: true
+      include_headings: true
+      top_n_raw: 5
+    accurate:
+      packing: summary_toc_facts_plus_top10
+      top_k: 50
+      summary_source: chunk
+      include_facts: true
+      include_headings: true
+      top_n_raw: 10
+    raw:
+      packing: classic_chunks
+      top_k: 25
+      top_n_raw: 25
+
+evaluation:
+  workload: codebase_qa
+  primary_metric: llm_judge_pass_rate
+  compare_against:
+    - classic_chunks
+    - summary_toc_facts_plus_top5

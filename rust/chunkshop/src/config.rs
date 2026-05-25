@@ -969,6 +969,21 @@ impl TargetConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct DocumentStoreConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+fn validate_no_document_store(documents: &Option<DocumentStoreConfig>) -> Result<()> {
+    if documents.as_ref().is_some_and(|d| d.enabled) {
+        return Err(anyhow!(
+            "target.documents is currently Python/Postgres-only; Rust does not write the companion document table yet"
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PostgresTargetConfig {
     #[serde(default = "default_dsn_env")]
@@ -1005,6 +1020,11 @@ pub struct PostgresTargetConfig {
     /// Python `chunkshop.config.TargetConfig.memory`.
     #[serde(default)]
     pub memory: Option<MemoryConfig>,
+    /// Python/Postgres-only document table config. Rust rejects enabled
+    /// document stores explicitly so cross-language YAMLs cannot silently
+    /// ingest chunks without the companion document rows.
+    #[serde(default)]
+    pub documents: Option<DocumentStoreConfig>,
 }
 
 impl PostgresTargetConfig {
@@ -1017,6 +1037,7 @@ impl PostgresTargetConfig {
                 "target.mode='append' requires target.source_tag to identify this cell"
             ));
         }
+        validate_no_document_store(&self.documents)?;
         Ok(())
     }
 }
@@ -1044,6 +1065,8 @@ pub struct MariadbTargetConfig {
     pub force_overwrite: bool,
     #[serde(default)]
     pub delete_orphans: bool,
+    #[serde(default)]
+    pub documents: Option<DocumentStoreConfig>,
 }
 
 impl MariadbTargetConfig {
@@ -1053,6 +1076,7 @@ impl MariadbTargetConfig {
                 "target.mode='append' requires target.source_tag to identify this cell"
             ));
         }
+        validate_no_document_store(&self.documents)?;
         Ok(())
     }
 }
@@ -1086,6 +1110,8 @@ pub struct ClickhouseTargetConfig {
     /// to Python which interpolates the field raw.
     #[serde(default)]
     pub engine: Option<String>,
+    #[serde(default)]
+    pub documents: Option<DocumentStoreConfig>,
 }
 
 impl ClickhouseTargetConfig {
@@ -1106,6 +1132,7 @@ impl ClickhouseTargetConfig {
                 ));
             }
         }
+        validate_no_document_store(&self.documents)?;
         Ok(())
     }
 }
@@ -1139,6 +1166,8 @@ pub struct SqliteTargetConfig {
     /// Mirror PostgresTargetConfig.delete_orphans. Same per-doc-shrink semantics.
     #[serde(default)]
     pub delete_orphans: bool,
+    #[serde(default)]
+    pub documents: Option<DocumentStoreConfig>,
 }
 
 impl SqliteTargetConfig {
@@ -1148,6 +1177,7 @@ impl SqliteTargetConfig {
                 "target.mode='append' requires target.source_tag to identify this cell"
             ));
         }
+        validate_no_document_store(&self.documents)?;
         Ok(())
     }
 }
@@ -1394,6 +1424,32 @@ target: { type: postgres, dsn_env: D, database: s, table: t, mode: append, hnsw:
         assert!(
             err.contains("source_tag"),
             "expected source_tag mention, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_enabled_document_store_until_rust_parity_exists() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: postgres
+  dsn_env: D
+  database: s
+  table: chunks
+  mode: overwrite
+  hnsw: false
+  documents:
+    enabled: true
+    table: documents
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("Python/Postgres-only") && err.contains("target.documents"),
+            "expected document-store parity complaint, got: {err}"
         );
     }
 

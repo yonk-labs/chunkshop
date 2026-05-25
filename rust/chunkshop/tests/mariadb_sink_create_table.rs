@@ -31,6 +31,7 @@ async fn create_table_overwrite_mode() -> anyhow::Result<()> {
         promote_metadata: vec![],
         force_overwrite: false,
         delete_orphans: false,
+        documents: None,
     };
     let backend = MariadbBackend::new(DSN_ENV.to_string());
     let sink = MariadbSink::new(cfg, backend, 8);

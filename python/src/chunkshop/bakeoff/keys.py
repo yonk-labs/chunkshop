@@ -11,6 +11,7 @@ import re
 
 from chunkshop.config import (
     ChunkerConfig,
+    ConsolidationChunker,
     FastembedEmbedder,
     FixedOverlapChunker,
     HierarchicalSummaryChunker,
@@ -54,6 +55,8 @@ def chunker_key(cfg: ChunkerConfig) -> str:
         return f"summary_embed_over_{chunker_key(cfg.base)}"
     if isinstance(cfg, HierarchicalSummaryChunker):
         return f"hierarchical_summary_over_{chunker_key(cfg.base)}"
+    if isinstance(cfg, ConsolidationChunker):
+        return f"consolidation_over_{chunker_key(cfg.base)}"
     raise ValueError(f"unknown chunker type for key derivation: {type(cfg).__name__}")
 
 

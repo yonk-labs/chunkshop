@@ -146,6 +146,72 @@ def test_emit_chunks_table_ddl_returns_create_table_then_indexes(be):
     assert any("USING hnsw" in s and "vector_cosine_ops" in s for s in out[1:])
 
 
+def test_emit_plain_table_ddl_has_no_vector_indexes(be):
+    out = be.emit_plain_table_ddl(
+        fq='"db"."documents"',
+        cols=[
+            ColSpec("doc_id", "text", nullable=False, is_primary_key=True),
+            ColSpec("metadata", "jsonb", nullable=False, default="'{}'"),
+            ColSpec("updated_at", "timestamptz", nullable=False, default="now()"),
+        ],
+    )
+    assert out == [
+        'CREATE TABLE IF NOT EXISTS "db"."documents" (\n'
+        '  "doc_id" text NOT NULL,\n'
+        '  "metadata" jsonb DEFAULT \'{}\' NOT NULL,\n'
+        '  "updated_at" timestamptz DEFAULT now() NOT NULL,\n'
+        '  PRIMARY KEY ("doc_id")\n'
+        ')'
+    ]
+
+
+@pytest.mark.parametrize(
+    ("metric", "operator", "opclass"),
+    [
+        ("cosine", "<=>", "vector_cosine_ops"),
+        ("inner_product", "<#>", "vector_ip_ops"),
+        ("l2", "<->", "vector_l2_ops"),
+    ],
+)
+def test_vector_metric_sql(be, metric, operator, opclass):
+    assert be.vector_metric_sql(metric) == (operator, opclass)
+
+
+@pytest.mark.parametrize(
+    ("metric", "opclass"),
+    [
+        ("cosine", "vector_cosine_ops"),
+        ("inner_product", "vector_ip_ops"),
+        ("l2", "vector_l2_ops"),
+    ],
+)
+def test_emit_chunks_table_ddl_hnsw_metric_opclass(be, metric, opclass):
+    out = be.emit_chunks_table_ddl(
+        fq='"db"."chunks"', cols=_canonical_cols(), hnsw=True, dim=384,
+        vector_metric=metric,
+    )
+    assert any("USING hnsw" in s and opclass in s for s in out[1:])
+
+
+def test_emit_chunks_table_ddl_non_default_metric_uses_distinct_index(be):
+    out = be.emit_chunks_table_ddl(
+        fq='"db"."chunks"', cols=_canonical_cols(), hnsw=True, dim=384,
+        vector_metric="inner_product",
+    )
+    assert any('"chunks_emb_hnsw_inner_product_idx"' in s for s in out[1:])
+
+
+def test_vector_metric_rejects_unknown(be):
+    with pytest.raises(ValueError, match="vector_metric"):
+        be.vector_metric_sql("manhattan")
+
+
+def test_vector_score_converts_to_higher_is_better(be):
+    assert be.vector_score(0.25, "cosine") == pytest.approx(0.75)
+    assert be.vector_score(-0.8, "inner_product") == pytest.approx(0.8)
+    assert be.vector_score(2.5, "l2") == pytest.approx(-2.5)
+
+
 def test_emit_chunks_table_ddl_hnsw_false_omits_hnsw_index(be):
     out = be.emit_chunks_table_ddl(
         fq='"db"."chunks"', cols=_canonical_cols(), hnsw=False, dim=384,

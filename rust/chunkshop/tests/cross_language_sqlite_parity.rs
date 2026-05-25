@@ -120,6 +120,7 @@ print("OK")
         promote_metadata: vec![],
         force_overwrite: false,
         delete_orphans: false,
+        documents: None,
     };
     let sink = SqliteSink::new(cfg, backend, 4);
     sink.create_table().await.unwrap();

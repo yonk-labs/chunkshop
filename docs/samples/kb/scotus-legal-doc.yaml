@@ -1,0 +1,120 @@
+# KB template: self-contained legal/document corpus.
+#
+# Intended use:
+# - SCOTUS opinions
+# - legal memos
+# - policy documents
+# - reports where most answers live inside one coherent parent document
+#
+# This is a target profile/template sample. Some `kb`/`profiles` fields are
+# planned product surface and may not be accepted by the current ingest CLI yet.
+
+kb:
+  id: scotus
+  template: legal_doc
+  description: Self-contained legal opinions with promoted legal metadata.
+  profile:
+    default: legal_doc
+    summary_source: doc
+    allow_auto_fallback: false
+
+source:
+  type: files
+  glob: /home/yonk/yonk-tools/pg-raggraph/benchmarks/scotus/*.md
+  id_from: stem
+
+chunker:
+  type: hierarchy
+  if_oversize:
+    type: fixed_overlap
+    window_words: 200
+    step_words: 160
+    max_chars: 2000
+
+embedder:
+  type: fastembed
+  model_name: BAAI/bge-large-en-v1.5
+  dim: 1024
+  threads: 4
+
+extractor:
+  type: lede_report
+  max_chars: 4000
+  max_facts: 40
+  backend: regex
+  keep_headings: true
+  include_toc: true
+
+target:
+  type: postgres
+  dsn_env: CHUNKSHOP_TEST_DSN
+  database: chunkshop_scotus
+  table: chunks
+  mode: overwrite
+  hnsw: true
+  vector_metric: cosine
+  promote_metadata:
+    - path: lede_report.attributes.term.value
+      type: text
+    - path: lede_report.attributes.docket_number.value
+      type: text
+    - path: lede_report.attributes.citation.value
+      type: text
+    - path: lede_report.attributes.case_name.value
+      type: text
+    - path: lede_report.attributes.author.value
+      type: text
+  fts:
+    enabled: true
+    language: english
+    include_metadata_paths:
+      - lede_report.search_text
+  documents:
+    enabled: true
+    table: documents
+    store_full_content: true
+    store_lede_report: true
+    promote_metadata:
+      - path: lede_report.attributes.term.value
+        type: text
+      - path: lede_report.attributes.docket_number.value
+        type: text
+      - path: lede_report.attributes.citation.value
+        type: text
+      - path: lede_report.attributes.case_name.value
+        type: text
+      - path: lede_report.attributes.author.value
+        type: text
+    fts:
+      enabled: true
+      language: english
+
+profiles:
+  default: legal_doc
+  aliases:
+    legal_doc:
+      packing: doc_summary_facts
+      top_k: 25
+      summary_source: doc
+      include_facts: true
+      include_headings: true
+      top_n_raw: 0
+    balanced:
+      packing: doc_and_chunk_summary_toc_facts_plus_top5
+      top_k: 25
+      summary_source: doc
+      include_facts: true
+      include_headings: true
+      top_n_raw: 5
+    raw:
+      packing: classic_chunks
+      top_k: 25
+      top_n_raw: 25
+
+evaluation:
+  workload: scotus_50_buckets
+  primary_metric: llm_judge_pass_rate
+  compare_against:
+    - classic_chunks
+    - doc_summary_facts
+    - doc_and_chunk_summary_toc_facts_plus_top5

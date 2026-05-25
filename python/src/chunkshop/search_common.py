@@ -331,6 +331,7 @@ def search(
     summary_expand=None,
     summary_max_length: int = 1200,
     language: str = "english",
+    vector_metric: str = "cosine",
 ) -> SearchResult:
     """Hybrid search with optional summarization — the chunkshop read entry point.
 
@@ -359,6 +360,8 @@ def search(
             expansion of hints via lede_spacy.
         summary_max_length: forwarded as ``max_length`` to ``summarize_hits``.
         language: FTS language, forwarded to ``hybrid_search``.
+        vector_metric: Postgres/pgvector semantic metric (``"cosine"``,
+            ``"inner_product"``, or ``"l2"``), forwarded to ``hybrid_search``.
 
     Returns:
         ``SearchResult(chunks, summary, query)``.
@@ -375,6 +378,7 @@ def search(
         where=where,
         fusion=fusion,
         language=language,
+        vector_metric=vector_metric,
     )
 
     if return_mode == "chunks":

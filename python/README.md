@@ -1,6 +1,6 @@
 # chunkshop (Python)
 
-Reference implementation of the chunkshop ingest tool. v0.2.0, alpha.
+Reference implementation of the chunkshop ingest tool. v0.5.0 beta.
 
 **New here?** Start with the [**end-to-end tutorial**](../docs/tutorial.md) — a guided
 walkthrough from zero (no Postgres) to a running semantic query.
@@ -12,18 +12,19 @@ For the high-level shape and mermaid diagram, see the [top-level README](../READ
 
 ## Install
 
-From source — required for the 0.4.x modular backends (also gets the
-sample corpora and dev tooling, which the wheel doesn't ship):
+From source when you want sample corpora, dev tooling, or unreleased branch
+work:
 
 ```bash
 git clone https://github.com/yonk-labs/chunkshop && cd chunkshop/python
 uv sync --extra dev --extra all-backends
 ```
 
-> `pip install chunkshop` works, but PyPI currently serves the 0.3.x
-> Postgres-only line. For 0.4.x modular backends until the PyPI publish
-> lands, pin the immutable tag:
-> `pip install 'chunkshop[all-backends] @ git+https://github.com/yonk-labs/chunkshop.git@v0.4.1#subdirectory=python'`
+Published package:
+
+```bash
+pip install 'chunkshop[all-backends]'
+```
 
 As a path dependency from another project:
 
@@ -41,7 +42,8 @@ Optional extras:
 | `spacy`      | `spacy` for the `spacy_entities` NER extractor.                      |
 | `lang`       | `langdetect` for the `lang_detect` extractor.                        |
 | `nlp`        | Umbrella: `keybert` + `spacy` + `lang` in one install.               |
-| `lede`      | Sibling `extractive_summary` repo as a path dep — enables `summary_embed` with `lede.tfidf.summarize`. |
+| `lede`      | `lede>=0.4.5` for `summary_embed`, query hints, and `lede_report` document metadata. |
+| `lede-spacy`| `lede-spacy>=0.4.5` for optional spaCy-backed lede hint expansion. |
 | `sumy`       | `sumy` + NLTK corpora for the sumy adapter shim (`chunkshop.summarizers.sumy`). |
 | `quantize`   | `onnx` for on-the-fly quantization scratch.                          |
 | `dev`        | `pytest`, `pytest-asyncio`, `onnx`.                                  |
@@ -50,8 +52,9 @@ Python ≥ 3.12 required.
 
 ## Prerequisites
 
-- **Postgres ≥ 14** with the `pgvector` extension installed
-  (`CREATE EXTENSION vector;` must succeed in your target DB).
+- **One supported target backend:** Postgres ≥ 14 + pgvector, MariaDB 11.7+,
+  SQLite + sqlite-vec, or ClickHouse 24.10+.
+- For Postgres, `CREATE EXTENSION vector;` must succeed in your target DB.
 - **Disk space for model cache** in `~/.cache/fastembed/` — ~85 MB for int8 `bge-base`,
   ~550 MB for `nomic`.
 - **An env var holding your DSN.** The target config references it by name, not by value.
@@ -252,6 +255,32 @@ RAKE downloads NLTK corpora (`stopwords`, `punkt`) on first use to `~/nltk_data/
 | `force_overwrite`  | no                   | `false`                  | Bypasses the "refuse to drop a table that holds rows from a foreign `source_tag`" safety check in `overwrite` mode.                               |
 | `overwrite`        | no (soft-deprecated) | `false`                  | Legacy boolean. Still honored when `mode=overwrite` (acts as the DROP+CREATE switch). Prefer the new `mode` field for new configs.                |
 | `hnsw`             | no                   | `true`                   | `false` for tiny test tables where HNSW is slower than seq scan.                                                                                  |
+
+#### `target.documents` (Python/Postgres only)
+
+For Postgres targets in the Python implementation, `target.documents.enabled:
+true` writes a companion one-row-per-document table next to the chunk table.
+It is off by default for compatibility.
+
+```yaml
+target:
+  type: postgres
+  dsn_env: CHUNKSHOP_DSN
+  database: mydata
+  table: chunks
+  documents:
+    enabled: true
+    table: documents
+    store_full_content: true
+    store_lede_report: true
+```
+
+Current support boundary:
+
+- Python + Postgres: supported.
+- Python + SQLite/MariaDB/ClickHouse: rejected at config load.
+- Rust: rejected at config load when `documents.enabled: true`; Rust does not
+  write the companion document table yet.
 
 ### Multi-source ingest
 

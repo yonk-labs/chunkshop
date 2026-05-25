@@ -46,7 +46,7 @@ For every release, follow this loop:
 
 ```bash
 # 1. Pick the next version (semver). Both packages move together.
-NEW="0.4.0"
+NEW="0.5.0"
 
 # 2. Bump source-of-truth versions. Both must match the tag exactly.
 #    Python: edit python/pyproject.toml, change [project].version.
@@ -107,7 +107,7 @@ new patch.
 - Source distribution (sdist) + wheel from `python/`
 - Excludes: tests, samples, the rust/ tree
 - Optional extras: `extractors`, `keybert`, `spacy`, `lang`, `nlp`,
-  `quantize`, `lede`, `sumy`, `s3`, `dev`
+  `quantize`, `lede`, `lede-spacy`, `sumy`, `s3`, `dev`
 
 **crates.io (`chunkshop-rs` crate):**
 - The library + the `chunkshop-rs` binary, from `rust/chunkshop/`
@@ -128,20 +128,35 @@ package roots.
 Before pushing the tag:
 
 ```bash
+# Confirm the branch is clean and the PR/release checks are green.
+git status --short
+gh pr checks <pr-number> --repo yonk-labs/chunkshop
+
 # Python: build cleanly into dist/.
-cd python && uv build --sdist --wheel && ls dist/
+(cd python && uv build --sdist --wheel && ls dist/)
 # Should produce chunkshop-$VERSION.tar.gz and chunkshop-$VERSION-py3-*.whl.
 
 # Rust: package + dry-run publish.
-cd rust && cargo publish --dry-run -p chunkshop-rs
+(cd rust && cargo publish --dry-run -p chunkshop-rs)
 # Should end with "warning: aborting upload due to dry run".
 
 # Run full test suites once more.
-cd python && uv run pytest -q
-cd ../rust && cargo test --workspace --lib
+(cd python && uv run pytest -q)
+(cd rust && cargo test --workspace --lib)
+
+# Dependency audits. Current Rust upstream waivers are documented in the
+# dependency-audit workflow and MariaDB engine docs.
+(cd python && uv export --frozen --all-extras --no-hashes --no-emit-project \
+  --output-file /tmp/chunkshop-pip-audit.txt)
+(cd python && uv run --with pip-audit pip-audit -r /tmp/chunkshop-pip-audit.txt \
+  --no-deps --disable-pip --skip-editable)
+(cd rust && cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436)
+
+# Confirm feature-support docs match implementation before release:
+# target.documents is Python/Postgres-only until Rust/Postgres parity lands.
 
 # Lint sample YAMLs (every YAML in docs/samples/ should parse).
-cd python && uv run python -c "
+(cd python && uv run python -c "
 import yaml, glob
 from chunkshop.config import CellConfig
 from chunkshop.bakeoff.config import BakeoffConfig
@@ -150,7 +165,7 @@ for p in sorted(glob.glob('../docs/samples/**/*.yaml', recursive=True)):
     if not data: continue
     name = list(data.keys())[0] if isinstance(data, dict) else '?'
     print(p, '... ok')
-"
+")
 ```
 
 If all four pass, push the tag.

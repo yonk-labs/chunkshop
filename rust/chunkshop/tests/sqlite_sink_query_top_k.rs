@@ -13,7 +13,7 @@ fn cfg(env: &str) -> SqliteTargetConfig {
         dsn_env: env.to_string(), database_name: "ignored".into(), table: "chunks".into(),
         overwrite: false, hnsw: false, mode: "overwrite".into(),
         source_tag: Some("t1".into()),
-        promote_metadata: vec![], force_overwrite: false, delete_orphans: false,
+        promote_metadata: vec![], force_overwrite: false, delete_orphans: false, documents: None,
     }
 }
 

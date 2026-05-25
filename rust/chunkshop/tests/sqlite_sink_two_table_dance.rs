@@ -22,6 +22,7 @@ fn cfg(dsn_env: &str, delete_orphans: bool) -> SqliteTargetConfig {
         promote_metadata: vec![],
         force_overwrite: false,
         delete_orphans,
+        documents: None,
     }
 }
 

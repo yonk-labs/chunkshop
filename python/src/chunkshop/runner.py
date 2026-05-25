@@ -90,6 +90,10 @@ def run_cell(cfg: CellConfig) -> CellResult:
                 chunks = chunker.chunk(doc)
                 if not chunks:
                     continue
+                doc_record_metadata = dict(doc.metadata or {})
+                if cfg.target.documents.enabled and getattr(cfg.extractor, "type", None) == "lede_report":
+                    doc_extract = extractor.extract(doc.content)
+                    doc_record_metadata = {**doc_record_metadata, **doc_extract.metadata}
                 texts = [c.embedded_content for c in chunks]
                 embeddings = embedder.embed(texts)
                 results = [extractor.extract(c.original_content) for c in chunks]
@@ -105,6 +109,15 @@ def run_cell(cfg: CellConfig) -> CellResult:
                     _replace(c, metadata={**doc_meta, **r.metadata, **c.metadata})
                     for c, r in zip(chunks, results)
                 ]
+                write_doc_record = getattr(sink, "write_document_record", None)
+                if write_doc_record is not None:
+                    write_doc_record(
+                        doc_id=doc.id,
+                        title=doc.title,
+                        content=doc.content,
+                        metadata=doc_record_metadata,
+                        chunk_count=len(chunks),
+                    )
                 sink.write_document(doc.id, chunks, embeddings, tags)
                 chunks_written += len(chunks)
             # `docs_processed` counts RAW docs (what the source yielded), not framed docs.

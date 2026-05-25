@@ -1,0 +1,127 @@
+# KB template: news / multi-hop / cross-document corpus.
+#
+# Intended use:
+# - MHR-style news workloads
+# - event timelines
+# - cross-source comparison questions
+# - corpora where answers often span many parent documents
+#
+# This is a target profile/template sample. Some `kb`/`profiles` fields are
+# planned product surface and may not be accepted by the current ingest CLI yet.
+
+kb:
+  id: mhr_news
+  template: news_multihop
+  description: Cross-document news corpus with source/date/entity metadata.
+  profile:
+    default: cross_doc
+    summary_source: chunk
+    allow_auto_fallback: true
+
+source:
+  type: files
+  glob: /path/to/news-corpus/*.md
+  id_from: stem
+
+chunker:
+  type: hierarchy
+  if_oversize:
+    type: fixed_overlap
+    window_words: 220
+    step_words: 180
+    max_chars: 2200
+
+embedder:
+  type: fastembed
+  model_name: BAAI/bge-large-en-v1.5
+  dim: 1024
+  threads: 4
+
+extractor:
+  type: lede_report
+  max_chars: 4000
+  max_facts: 40
+  backend: regex
+  keep_headings: true
+  include_toc: true
+
+target:
+  type: postgres
+  dsn_env: CHUNKSHOP_TEST_DSN
+  database: chunkshop_mhr_news
+  table: chunks
+  mode: overwrite
+  hnsw: true
+  vector_metric: cosine
+  promote_metadata:
+    - path: lede_report.attributes.source.value
+      type: text
+    - path: lede_report.attributes.published_at.value
+      type: text
+    - path: lede_report.attributes.date.value
+      type: text
+    - path: lede_report.attributes.url.value
+      type: text
+    - path: lede_report.attributes.topic.value
+      type: text
+  fts:
+    enabled: true
+    language: english
+    include_metadata_paths:
+      - lede_report.search_text
+  documents:
+    enabled: true
+    table: documents
+    store_full_content: true
+    store_lede_report: true
+    promote_metadata:
+      - path: lede_report.attributes.source.value
+        type: text
+      - path: lede_report.attributes.published_at.value
+        type: text
+      - path: lede_report.attributes.date.value
+        type: text
+      - path: lede_report.attributes.url.value
+        type: text
+      - path: lede_report.attributes.topic.value
+        type: text
+    fts:
+      enabled: true
+      language: english
+
+profiles:
+  default: cross_doc
+  aliases:
+    cheap:
+      packing: chunk_summary_facts
+      top_k: 25
+      summary_source: chunk
+      include_facts: true
+      include_headings: false
+      top_n_raw: 0
+    cross_doc:
+      packing: chunk_summary_toc_facts_plus_top5
+      top_k: 25
+      summary_source: chunk
+      include_facts: true
+      include_headings: true
+      top_n_raw: 5
+    accurate:
+      packing: doc_and_chunk_summary_toc_facts_plus_top10
+      top_k: 50
+      summary_source: chunk
+      include_facts: true
+      include_headings: true
+      top_n_raw: 10
+    raw:
+      packing: classic_chunks
+      top_k: 25
+      top_n_raw: 25
+
+evaluation:
+  workload: mhr_news
+  primary_metric: llm_judge_pass_rate
+  compare_against:
+    - classic_chunks
+    - chunk_summary_toc_facts_plus_top5
+    - doc_summary_facts
