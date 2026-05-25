@@ -107,6 +107,9 @@ class PgTableSource(_DsnResolvable):
     content_column: str
     title_column: Optional[str] = None
     where: Optional[str] = None
+    # Optional timestamp column enabling cursor-based incremental sync. When set,
+    # the source implements IncrementalSource (cursor = {"after": "<iso ts>"}).
+    updated_at_column: Optional[str] = None
     # Extra columns to pull alongside id/content/title and put into each
     # Document's metadata dict (key = column name, value = psycopg return).
     # Pair with `target.promote_metadata` to surface specific keys as typed

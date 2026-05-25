@@ -8,7 +8,7 @@ from psycopg import sql
 
 from chunkshop.backends.postgres import PostgresBackend
 from chunkshop.config import PgTableSource as Cfg
-from chunkshop.sources.base import Document
+from chunkshop.sources.base import Document, SyncMode
 
 
 def _json_safe(v: Any) -> Any:
@@ -24,6 +24,10 @@ def _json_safe(v: Any) -> Any:
 
 
 class PgTableSource:
+    # Effective only when cfg.updated_at_column is set; otherwise the cursor
+    # methods fall back to a full resync (FULL_RESYNC semantics).
+    sync_mode = SyncMode.CURSOR
+
     def __init__(self, cfg: Cfg):
         self.cfg = cfg
         self.backend = PostgresBackend(**cfg.backend_dsn_kwargs())
@@ -57,3 +61,51 @@ class PgTableSource:
                     title=row[title_idx] if title_idx is not None else None,
                     metadata=metadata if metadata else None,
                 )
+
+    def empty_cursor(self) -> dict:
+        return {}
+
+    def iter_changes_since(self, cursor: dict) -> Iterator[Document]:
+        if not self.cfg.updated_at_column:
+            # no cursor column → behave as full resync
+            yield from self.iter_documents()
+            return
+        cols = [self.cfg.id_column, self.cfg.content_column]
+        title_idx = None
+        if self.cfg.title_column:
+            title_idx = len(cols)
+            cols.append(self.cfg.title_column)
+        ua_idx = len(cols)
+        cols.append(self.cfg.updated_at_column)
+        meta_start = len(cols)
+        cols.extend(self.cfg.metadata_columns)
+        ident = [sql.Identifier(c) for c in cols]
+        q = sql.SQL("SELECT {c} FROM {s}.{t}").format(
+            c=sql.SQL(", ").join(ident),
+            s=sql.Identifier(self.cfg.database_name),
+            t=sql.Identifier(self.cfg.table),
+        )
+        params = []
+        after = cursor.get("after")
+        if after is not None:
+            q = q + sql.SQL(" WHERE ") + sql.Identifier(self.cfg.updated_at_column) + sql.SQL(" > %s")
+            params.append(after)
+        q = q + sql.SQL(" ORDER BY ") + sql.Identifier(self.cfg.updated_at_column)
+        with self.backend.connect() as conn, conn.cursor() as cur:
+            cur.execute(q, params)
+            for row in cur:
+                meta = {
+                    self.cfg.metadata_columns[i]: _json_safe(row[meta_start + i])
+                    for i in range(len(self.cfg.metadata_columns))
+                }
+                meta["_updated_at"] = _json_safe(row[ua_idx])
+                yield Document(
+                    id=str(row[0]),
+                    content=row[1],
+                    title=row[title_idx] if title_idx is not None else None,
+                    metadata=meta,
+                )
+
+    def cursor_from(self, last_document: Document) -> dict:
+        ua = (last_document.metadata or {}).get("_updated_at")
+        return {"after": ua}
