@@ -21,31 +21,43 @@ SP-2 (chunkshop-connectors bulk port) shipped:
   `docs/connectors/README.md`).
 - Attribution CI guard (`tests/test_attribution.py`).
 
+## Done in this session
+
+- **verified `github` connector** (`74d51f3`) — PAT auth, cursor on
+  branch HEAD SHA, `/compare` for incremental diffs, `StaleCursorError`
+  on 422. Hermetic mock via `pytest_httpserver`.
+- **`GoogleOAuthProvider`** (`46b8517`) — first concrete OAuth provider
+  module under `chunkshop_connectors.oauth.google`. Hermetic tests
+  cover authorize URL, code exchange, refresh, scope validation.
+- **verified `gdrive` connector** (`0126bda`) — OAuth bearer auth,
+  cursor via Drive v3 changes API (`page_token`), text-shaped MIME
+  filter with UserWarning skips. Hermetic mock via `httpx.MockTransport`.
+- **end-to-end user-expectation tests + demos** (this session) —
+  `python/connectors/tests/test_e2e_user_expectations.py` (5 sections,
+  15 tests covering gdrive / github / S3 / URL-depth / DB) plus six
+  runnable demo scripts in `python/connectors/examples/`. Each demo
+  verifies one user expectation against the live or mocked surface.
+  `make_gdrive_mock()` factored out of the pytest fixture so demos
+  can drive the Drive mock outside pytest.
+
 ## Intentionally out-of-scope for SP-2 (this session)
 
 These were on the SP-2 plan but were not pulled into this session.
 Each is queued for its own follow-up.
 
-### 1. Verified OAuth-backed connectors (Task 10)
+### 1. Slack OAuth provider (Task 10 — remainder)
 
-- `gdrive`, `github`, `slack` are listed in `_status.md` with
-  `Status: planned` and **are not yet registered**. Implementing
-  them requires per-provider OAuth modules in
-  `chunkshop_connectors/oauth/{google,github,slack}.py`.
-- Why deferred: the OAuth providers are a non-trivial design surface
-  (token refresh, scope validation, refresh-token rotation, secure
-  storage hooks). They warrant their own SP-2.1 plan rather than
-  being rolled into the bulk-stub session.
+Google is done (`46b8517`), GitHub uses PAT (no OAuth needed for
+verified-tier). **Slack** still needs `chunkshop_connectors.oauth.slack`
+plus the hermetic mock — same pattern as Google.
 
 Reference: chunkshop#22 (OAuth interfaces), SP-1 spec §4.3 (concrete
 providers live in plugin, not core).
 
-### 2. Per-provider OAuth mocks (Task 11)
+### 2. Per-provider OAuth mocks (Task 11) — slack
 
-Hermetic mocks for the OAuth flow itself (authorize → callback →
-token exchange → refresh) belong in
-`chunkshop_connectors/testing/mocks/oauth_<provider>.py`. Deferred
-with Task 10.
+`oauth/google.py` has its mock (`tests/test_google_oauth_provider.py`).
+The Slack equivalent is deferred with the Slack provider above.
 
 ### 3. Behavioural lifts for experimental tier
 
