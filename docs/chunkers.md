@@ -37,7 +37,7 @@ config.
 
 ## At a glance
 
-All seven chunkers, side by side. The first five emit one chunk per chunk; the
+All eight chunkers, side by side. The first six emit one chunk per chunk; the
 last two are layers that wrap any base chunker.
 
 | Chunker                 | One-line job                                                                | Best for                                                                | Key knobs                                                                                  | Layer? | Cross-language byte-identical? |
@@ -45,6 +45,7 @@ last two are layers that wrap any base chunker.
 | `sentence_aware`        | Pack paragraphs/sentences into ≤ `max_chars` chunks, paragraph-respecting   | Plain prose, no headings; code with `doc_type: code`                    | `doc_type` (`prose` / `code`), `max_chars`, `min_chars`                                    |   no   |               ✅               |
 | `hierarchy` (**default**) | Split on `#…` markdown headings; prepend the heading to `embedded_content` | Markdown with structure; the bakeoff-winning default                    | `prefix_heading`, `min_section_chars`, `max_chars`                                         |   no   |               ✅               |
 | `fixed_overlap`         | Sliding word window with stride                                             | QA / FAQ rows; baseline / control in any bakeoff                        | `window_words`, `step_words`                                                               |   no   |               ✅               |
+| `code_aware`            | Split Python at function/class boundaries via stdlib `ast`; non-Python falls back to `sentence_aware` | Source-code corpora — chunkshop's own tree, GitHub mirrors, vendor SDKs | `max_chars`, `include_imports`, `language` (`python`/`auto`)                            |   no   |    Python-only (no Rust port yet)   |
 | `semantic`              | Boundary detection via sentence-embedding similarity drops                  | Transcripts, interviews, auto-captioned audio — anything with no headings | `boundary_model`, `breakpoint_percentile`, `min_sentences_per_chunk`, `max_chunk_chars`    |   no   |    algorithm-only (Rust drift ~1e-3 cos)    |
 | `neighbor_expand`       | Wraps any base; glues ±N neighbors into each row's `embedded_content`       | Boost top-k recall when answers span chunks                             | `base`, `window`                                                                           |  yes   |               ✅               |
 | `summary_embed`         | Wraps any base; replaces `embedded_content` with a summary                  | Match-summary / return-raw retrieval; long docs where raw embeds dilute | `base`, `summarizer` (external / callable / passthrough)                                    |  yes   |   ✅ (passthrough/external; Rust callable currently passthrough-only) |
@@ -63,11 +64,13 @@ flowchart TB
     Q{What does your source look like?}
     Q --> HAS_HEADINGS[Markdown with<br/># / ## / ### headings]
     Q --> PROSE[Plain prose<br/>no structure]
-    Q --> CODE[Code or logs<br/>line-based]
+    Q --> CODE_PY[Python source code]
+    Q --> CODE[Other code or logs<br/>line-based]
     Q --> QA[QA / FAQ / turns<br/>short discrete items]
     Q --> UNSTRUCTURED[Transcript / interview /<br/>auto-transcribed audio]
     HAS_HEADINGS --> H[hierarchy<br/>default; prepends heading]
     PROSE --> SA[sentence_aware<br/>paragraph-respecting]
+    CODE_PY --> CA[code_aware<br/>splits at function/class via AST]
     CODE --> SA_CODE[sentence_aware<br/>doc_type: code]
     QA --> FO[fixed_overlap<br/>window/step by word count]
     UNSTRUCTURED --> SEM[semantic<br/>embedding-drift boundaries]
@@ -292,6 +295,67 @@ context).
 
 A 900-word doc with defaults (300/150): 5 chunks at word offsets 0, 150, 300, 450, 600. The
 last chunk only has 300 words if 600 + 300 ≤ 900; otherwise it's whatever's left.
+
+## 3.5. `code_aware` — split Python at function/class boundaries
+
+Source: `python/src/chunkshop/chunkers/code_aware.py`
+
+```yaml
+chunker:
+  type: code_aware
+  max_chars: 4000
+  include_imports: true        # prepend the import block to embedded_content
+  language: auto               # "auto" sniffs by extension; "python" forces AST path
+```
+
+### What it does
+
+Parses each `.py` document with the stdlib `ast` module and emits one chunk
+per top-level function or class. Module-level statements (imports, constants,
+`__all__`, etc.) gather into a leading `module_block` chunk so they don't get
+sliced mid-statement. Non-Python documents delegate to the configured
+`if_oversize` chunker (or a default `sentence_aware`) — `code_aware` is safe
+to use as the chunker for a mixed corpus.
+
+Each chunk's `original_content` is the raw source segment from
+`ast.get_source_segment`. With `include_imports=true` (default), the file's
+import block plus a `# Definition: <name>` marker is prepended to
+`embedded_content` so the vector embeds the function with its dependency
+context — a chunk that calls `BeautifulSoup(...)` embeds as code that
+obviously uses `bs4`, even when the import statement is 200 lines away.
+
+Malformed Python (`ast.parse` raises `SyntaxError`) is logged and emitted as
+one fallback chunk with `strategy="code_aware_fallback"`.
+
+### Knobs
+
+| YAML key | Default | Notes |
+|----------|---------|-------|
+| `max_chars` | `4000` | Soft cap. A single oversize function stays whole unless `if_oversize` is set. |
+| `min_chars` | `100` | Floor for small module-level blocks. |
+| `include_imports` | `true` | Prepend the file's import block + `# Definition: <name>` to each `embedded_content`. `original_content` is never touched. |
+| `language` | `"auto"` | `"auto"` sniffs `.py` by extension; `"python"` forces the AST path. |
+| `if_oversize` | `null` | Fallback for oversize chunks and for non-Python documents. |
+
+### When to pick it
+
+- The corpus is source code (your own repos, GitHub mirrors, vendor SDKs).
+- You want chunks that read like coherent units — one function, one class —
+  rather than 300-word windows that bisect signatures.
+- You want each chunk's embedding to "know" what library it uses.
+
+### When not to
+
+- The corpus is not source code.
+- The corpus is non-Python source. `code_aware` falls back to
+  `sentence_aware` for those, which works but provides no semantic boundary
+  benefit over picking `sentence_aware` directly.
+
+### Sample output
+
+See [`cookbook/code-aware-chunking.md`](cookbook/code-aware-chunking.md) and
+the demo at `python/examples/chunk_python_code.py`, which runs `code_aware`
+over chunkshop's own source tree.
 
 ## 4. `neighbor_expand` — wrap another chunker, glue neighbors at embed time
 
