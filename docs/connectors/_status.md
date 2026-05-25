@@ -25,8 +25,8 @@ its current implementation status.
 | rss       | verified     | implemented | none                       | feedparser-backed. GUID → fingerprint. |
 | gdrive    | verified     | implemented | OAuth (google)             | httpx-backed Drive v3 walker. Cursor = `{page_token}` via `/changes` API. Text-shaped MIMEs + Google Docs (exported as text); others skipped with `UserWarning`. See `docs/connectors/gdrive.md`. |
 | github    | verified     | implemented | PAT (classic or fine-grained) | httpx-backed REST walker. Cursor = `{after_commit_sha}`. See `docs/connectors/github.md`. |
+| notion    | verified     | implemented | integration token          | httpx-backed v1 REST walker. Cursor = `{after_last_edited_time}` via database `last_edited_time` filter. Block-tree walked to plain text. See `docs/connectors/notion.md`. |
 | slack     | verified     | planned     | OAuth (slack)              | Needs `oauth/slack.py` provider (Task 10). |
-| notion    | experimental | stub        | OAuth (notion)             | Real impl deferred. |
 | confluence| experimental | stub        | OAuth or API token         | Real impl deferred. |
 | jira      | experimental | stub        | OAuth or API token         | Real impl deferred. |
 | dropbox   | experimental | stub        | OAuth                      | Real impl deferred. |

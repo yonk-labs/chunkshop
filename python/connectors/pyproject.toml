@@ -44,7 +44,7 @@ github = ["httpx>=0.26"]
 slack = []
 blob = ["boto3>=1.28"]
 rss = ["feedparser>=6.0"]
-notion = []
+notion = ["httpx>=0.26"]
 confluence = []
 jira = []
 dropbox = []
@@ -77,9 +77,9 @@ blob = "chunkshop_connectors.blob:factory"
 rss = "chunkshop_connectors.rss:factory"
 github = "chunkshop_connectors.github:factory"
 gdrive = "chunkshop_connectors.gdrive:factory"
+notion = "chunkshop_connectors.notion:factory"
 # Experimental tier — registered as stubs (raise StubError on iter);
 # real implementations land in follow-ups. See docs/connectors/_status.md.
-notion = "chunkshop_connectors.notion:factory"
 confluence = "chunkshop_connectors.confluence:factory"
 jira = "chunkshop_connectors.jira:factory"
 dropbox = "chunkshop_connectors.dropbox:factory"
