@@ -179,6 +179,14 @@ class InlineSource(_Base):
     type: Literal["inline"]
 
 
+class SyncSettings(_Base):
+    """Declares how a connector source detects changes. Consumer-driven —
+    chunkshop does not schedule; these values inform the consumer's orchestrator."""
+    mode: Literal["full_resync", "cursor", "fingerprint"] = "full_resync"
+    refresh_freq_seconds: Optional[int] = Field(default=None, ge=1)
+    prune_freq_seconds: Optional[int] = Field(default=None, ge=1)
+
+
 SourceConfig = Annotated[
     Union[FilesSource, JsonCorpusSource, SessionStagingSource, PgTableSource, SqliteTableSource,
           MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource],
