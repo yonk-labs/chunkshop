@@ -26,6 +26,44 @@ def _jsonb_path_get(meta: dict, path: str):
     return cur
 
 
+def _promote_value(meta: dict, pc, backend: PostgresBackend):
+    value = _jsonb_path_get(meta, pc.path)
+    if value is None:
+        return None
+    if pc.type == "jsonb":
+        return backend.json_literal(value)
+    if pc.type == "text":
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        return str(value)
+    if pc.type == "text[]":
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return [str(value)]
+    if pc.type in {"int", "bigint"}:
+        return int(value)
+    if pc.type == "boolean":
+        return bool(value)
+    return value
+
+
+def _promote_placeholders(promote) -> list[str]:
+    return ["%s::jsonb" if pc.type == "jsonb" else "%s" for pc in promote]
+
+
+def _text_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        for key in ("summary", "text", "value"):
+            if value.get(key) is not None:
+                return str(value[key])
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value)
+    return str(value)
+
+
 def _canonical_cols(dim: int) -> list[ColSpec]:
     """The chunkshop-canonical chunks-table column list, PG-typed."""
     return [
@@ -284,7 +322,7 @@ class PgSink:
     ) -> tuple[str, tuple[Any, ...]]:
         lede_report = metadata.get("lede_report") if isinstance(metadata.get("lede_report"), dict) else {}
         attrs = lede_report.get("attributes") if isinstance(lede_report, dict) else {}
-        lede_summary = lede_report.get("summary") if isinstance(lede_report, dict) else None
+        lede_summary = _text_value(lede_report.get("summary")) if isinstance(lede_report, dict) else None
         lede_toc = lede_report.get("toc") if isinstance(lede_report.get("toc"), list) else []
         facts = []
         if isinstance(lede_report, dict):
@@ -332,7 +370,7 @@ class PgSink:
             "%s", "%s", "%s", "%s", "%s", "%s",
             "%s", "%s::jsonb", "%s", "%s::jsonb", "%s::jsonb",
             "%s::jsonb", "%s", "%s", "%s", "%s",
-        ] + ["%s"] * len(promote)
+        ] + _promote_placeholders(promote)
         vals_sql = ", ".join(placeholders)
         stmt = f"INSERT INTO {self._doc_fq()} ({cols_sql}) VALUES ({vals_sql}) {upsert_sql}"
 
@@ -354,7 +392,7 @@ class PgSink:
             max(1, math.ceil(len(content) / 4)),
             chunk_count,
         ]
-        promote_values = [_jsonb_path_get(metadata, pc.path) for pc in promote]
+        promote_values = [_promote_value(metadata, pc, self.backend) for pc in promote]
 
         return stmt, tuple(base_values + promote_values)
 
@@ -385,7 +423,11 @@ class PgSink:
 
         cols_sql = ", ".join(self.backend.quote_ident(c) for c in all_col_names)
         # PG-specific value placeholders: jsonb cast, vector cast
-        placeholders = ["%s"] * 5 + ["%s", "%s::jsonb", "%s::vector", "%s"] + ["%s"] * len(promote)
+        placeholders = (
+            ["%s"] * 5
+            + ["%s", "%s::jsonb", "%s::vector", "%s"]
+            + _promote_placeholders(promote)
+        )
         vals_sql = ", ".join(placeholders)
 
         stmt = f"INSERT INTO {self._fq()} ({cols_sql}) VALUES ({vals_sql}) {upsert_sql}"
@@ -403,7 +445,7 @@ class PgSink:
                 self.backend.vector_literal(emb),
                 self.cfg.source_tag,
             ]
-            promote_values = [_jsonb_path_get(c.metadata, pc.path) for pc in promote]
+            promote_values = [_promote_value(c.metadata, pc, self.backend) for pc in promote]
             rows.append(tuple(base_values + promote_values))
 
         pending_record = self._pending_document_records.pop(doc_id, None)

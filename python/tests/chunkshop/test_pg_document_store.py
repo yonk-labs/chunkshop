@@ -65,6 +65,7 @@ def test_write_document_record_upserts_document_metadata(monkeypatch):
             "store_lede_report": True,
             "promote_metadata": [
                 {"path": "lede_report.attributes.term.value", "type": "text"},
+                {"path": "lede_report.attributes.term", "type": "text"},
             ],
         },
     )
@@ -81,7 +82,7 @@ def test_write_document_record_upserts_document_metadata(monkeypatch):
         metadata={
             "uri": "file:///tmp/snyder.md",
             "lede_report": {
-                "summary": "The Court considered Snyder.",
+                "summary": {"summary": "The Court considered Snyder."},
                 "toc": ["Syllabus", "Opinion"],
                 "key_facts": ["Term: 2023"],
                 "fact_records": [{"predicate": "term", "object": "2023"}],
@@ -125,8 +126,9 @@ def test_write_document_record_upserts_document_metadata(monkeypatch):
         "Term: 2023",
         {"predicate": "term", "object": "2023"},
     ]
-    assert json.loads(params[11])["summary"] == "The Court considered Snyder."
-    assert params[-1] == "2023"
+    assert json.loads(params[11])["summary"]["summary"] == "The Court considered Snyder."
+    assert params[-2] == "2023"
+    assert json.loads(params[-1]) == {"value": "2023"}
     assert len(conn.cursor_obj.executemany_calls) == 1
 
 
