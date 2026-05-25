@@ -14,6 +14,7 @@ from chunkshop.config import (
     SqliteTableSource as SqliteCfg,
     MariaDbTableSource as MariaDbCfg,
     ClickhouseTableSource as ChCfg,
+    ConnectorSource as ConnectorCfg,
     HttpSource as HttpCfg,
     S3Source as S3Cfg,
     SessionStagingSource as SessionStagingCfg,
@@ -50,6 +51,9 @@ def load_source(cfg: SourceConfig) -> Source:
         return S3Source(cfg)
     if isinstance(cfg, SessionStagingCfg):
         return SessionStagingSource(cfg)
+    if isinstance(cfg, ConnectorCfg):
+        from chunkshop.sources.registry import load_connector
+        return load_connector(cfg.connector, cfg.config)
     if isinstance(cfg, InlineCfg):
         raise RuntimeError(
             "inline source has no auto-iterator: drive ingest from your app "
