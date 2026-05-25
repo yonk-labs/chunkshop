@@ -40,6 +40,7 @@ sqlite = ["sqlite-vec>=0.1.6"]
 mariadb = ["PyMySQL>=1.1"]
 clickhouse = ["clickhouse-connect>=0.7"]
 all-backends = ["chunkshop[sqlite,mariadb,clickhouse]"]
+pdf = ["pypdf>=4.0"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 
 [project.scripts]
