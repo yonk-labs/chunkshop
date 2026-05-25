@@ -646,6 +646,24 @@ def main(argv: list[str] | None = None) -> int:
         f"\n  Persisting via Source -> Chunker({args.chunker}) -> "
         f"Extractor({args.extractor}) -> Embedder -> pgvector ({args.dsn})..."
     )
+    # Pre-flight the heavy embedder import so a missing fastembed surfaces
+    # with an actionable hint BEFORE we burn the user's time partway through.
+    try:
+        import fastembed  # noqa: F401
+    except ImportError:
+        print(
+            "\n  ERROR: pgvector sink requires `fastembed` (the embedder backing the\n"
+            "  default Xenova/bge-small-en-v1.5-int8 model). It's not installed in this\n"
+            "  Python env. Install it OR re-run with --no-pgvector to skip the sink.\n\n"
+            "  Quick install (system Python):\n"
+            "      pip install fastembed\n\n"
+            "  Or use the chunkshop project's pre-baked venv:\n"
+            "      cd /Users/matt.yonkovit/yonk-tools/chunkshop/python\n"
+            "      uv run --no-sync python connectors/examples/e2e_gdrive_real_flow.py \\\n"
+            "          <URL>\n",
+            file=sys.stderr,
+        )
+        return 1
     print("  loading fastembed model on first run (Xenova/bge-small-en-v1.5-int8, ~30 MB)...")
     t0 = time.time()
     n_docs, n_chunks, schema, table = persist_to_pgvector(
