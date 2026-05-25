@@ -59,6 +59,31 @@ all = [
 # Verified tier — behaviourally tested with hermetic mocks.
 blob = "chunkshop_connectors.blob:factory"
 rss = "chunkshop_connectors.rss:factory"
+# Experimental tier — registered as stubs (raise StubError on iter);
+# real implementations land in follow-ups. See docs/connectors/_status.md.
+notion = "chunkshop_connectors.notion:factory"
+confluence = "chunkshop_connectors.confluence:factory"
+jira = "chunkshop_connectors.jira:factory"
+dropbox = "chunkshop_connectors.dropbox:factory"
+box = "chunkshop_connectors.box:factory"
+gitlab = "chunkshop_connectors.gitlab:factory"
+bitbucket = "chunkshop_connectors.bitbucket:factory"
+gmail = "chunkshop_connectors.gmail:factory"
+imap = "chunkshop_connectors.imap:factory"
+discord = "chunkshop_connectors.discord:factory"
+airtable = "chunkshop_connectors.airtable:factory"
+asana = "chunkshop_connectors.asana:factory"
+zendesk = "chunkshop_connectors.zendesk:factory"
+sharepoint = "chunkshop_connectors.sharepoint:factory"
+teams = "chunkshop_connectors.teams:factory"
+r2 = "chunkshop_connectors.r2:factory"
+gcs = "chunkshop_connectors.gcs:factory"
+oci = "chunkshop_connectors.oci:factory"
+seafile = "chunkshop_connectors.seafile:factory"
+webdav = "chunkshop_connectors.webdav:factory"
+moodle = "chunkshop_connectors.moodle:factory"
+dingtalk = "chunkshop_connectors.dingtalk:factory"
+rest_api = "chunkshop_connectors.rest_api:factory"
 
 [project.urls]
 Homepage = "https://github.com/yonk-labs/chunkshop"
