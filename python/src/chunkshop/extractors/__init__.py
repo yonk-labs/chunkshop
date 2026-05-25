@@ -3,6 +3,7 @@ from chunkshop.config import (
     ExtractorConfig,
     KeyBertPhrasesExtractor as KeyBertCfg,
     LangDetectExtractor as LangDetectCfg,
+    LedeReportExtractor as LedeReportCfg,
     LedeTopTermsExtractor as LedeTopTermsCfg,
     NoneExtractor as NoneCfg,
     RakeKeywordsExtractor as RakeCfg,
@@ -12,6 +13,7 @@ from chunkshop.extractors.base import Extractor
 from chunkshop.extractors.composite import CompositeExtractor
 from chunkshop.extractors.keybert_phrases import KeyBertPhrasesExtractor
 from chunkshop.extractors.lang_detect import LangDetectExtractor
+from chunkshop.extractors.lede_report import LedeReportExtractor
 from chunkshop.extractors.lede_top_terms import LedeTopTermsExtractor
 from chunkshop.extractors.none_provider import NoneExtractor
 from chunkshop.extractors.rake_keywords import RakeKeywordsExtractor
@@ -32,6 +34,8 @@ def load_extractor(cfg: ExtractorConfig) -> Extractor:
         return SpacyEntitiesExtractor(cfg)
     if isinstance(cfg, LedeTopTermsCfg):
         return LedeTopTermsExtractor(cfg)
+    if isinstance(cfg, LedeReportCfg):
+        return LedeReportExtractor(cfg)
     if isinstance(cfg, CompositeCfg):
         return CompositeExtractor(cfg)
     raise ValueError(f"unknown extractor type: {type(cfg).__name__}")

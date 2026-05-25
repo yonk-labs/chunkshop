@@ -631,6 +631,36 @@ class LedeTopTermsExtractor(_Base):
         return v
 
 
+class LedeReportExtractor(_Base):
+    type: Literal["lede_report"]
+    max_chars: int = Field(default=4000, ge=1)
+    max_facts: int = Field(default=40, ge=1)
+    backend: Literal["regex", "spacy", "auto"] = "regex"
+    keep_headings: bool = True
+    include_toc: bool = True
+    tag_sources: tuple[
+        Literal[
+            "attributes",
+            "key_facts",
+            "fact_records",
+            "dates",
+            "amounts",
+            "entities",
+            "spacy_phrases",
+            "search_text",
+        ],
+        ...,
+    ] = ("attributes", "key_facts", "dates", "amounts", "entities")
+    max_tag_chars: int = Field(default=240, ge=20)
+
+    @field_validator("tag_sources")
+    @classmethod
+    def _tag_sources_nonempty(cls, v):
+        if not v:
+            raise ValueError("tag_sources must be non-empty")
+        return v
+
+
 class CompositeExtractor(_Base):
     type: Literal["composite"]
     extractors: list["ExtractorConfig"] = Field(default_factory=list)
@@ -644,6 +674,7 @@ ExtractorConfig = Annotated[
         KeyBertPhrasesExtractor,
         SpacyEntitiesExtractor,
         LedeTopTermsExtractor,
+        LedeReportExtractor,
         CompositeExtractor,
     ],
     Field(discriminator="type"),
@@ -733,6 +764,7 @@ class FtsConfig(_Base):
 
     enabled: bool = False
     language: str = "english"
+    include_metadata_paths: list[str] = Field(default_factory=list)
 
     @field_validator("language")
     @classmethod
@@ -743,12 +775,50 @@ class FtsConfig(_Base):
             )
         return v
 
+    @field_validator("include_metadata_paths")
+    @classmethod
+    def _metadata_paths_safe(cls, v: list[str]) -> list[str]:
+        for path in v:
+            if not path or not all(_PATH_SEGMENT.match(seg) for seg in path.split(".")):
+                raise ValueError(
+                    "fts.include_metadata_paths segments must match "
+                    f"^[A-Za-z_][A-Za-z0-9_]*$ separated by '.', got {path!r}"
+                )
+        return v
+
+
+class DocumentStoreConfig(_Base):
+    """Optional 1:M document table beside the chunks table.
+
+    This is initially implemented by the Postgres sink. Other backends may
+    accept the config and ignore it until parity support lands.
+    """
+
+    enabled: bool = False
+    table: str = "documents"
+    store_full_content: bool = True
+    store_lede_report: bool = True
+    promote_metadata: list[PromoteColumn] = Field(default_factory=list)
+    fts: Optional[FtsConfig] = None
+
+    @field_validator("table")
+    @classmethod
+    def _safe_table(cls, v: str) -> str:
+        if not re.match(r"^[a-z_][a-z0-9_]*$", v):
+            raise ValueError(
+                f"documents.table must match ^[a-z_][a-z0-9_]*$, got {v!r}"
+            )
+        return v
+
 
 class TargetConfig(_DsnResolvable):
     type: Literal["postgres", "sqlite", "mariadb", "clickhouse"]
     database_name: str = Field(alias="database")
     table: str
     hnsw: bool = True
+    # Postgres/pgvector semantic-search metric. Ignored by non-Postgres
+    # backends, which currently expose their own fixed native distance.
+    vector_metric: Literal["cosine", "inner_product", "l2"] = "cosine"
     mode: Literal["overwrite", "append", "create_if_missing"] = "overwrite"
     source_tag: Optional[str] = None
     promote_metadata: list[PromoteColumn] = Field(default_factory=list)
@@ -764,6 +834,10 @@ class TargetConfig(_DsnResolvable):
     # Postgres→GIN tsvector index, SQLite→FTS5 external-content table,
     # MariaDB→FULLTEXT index, ClickHouse→tokenbf_v1 data-skipping index.
     fts: Optional[FtsConfig] = None
+    # Optional document-level table. In Postgres this creates a
+    # `{database}.{documents.table}` table with one row per source document and
+    # lede summary/facts/TOC fields, linked to chunks by doc_id.
+    documents: DocumentStoreConfig = Field(default_factory=DocumentStoreConfig)
 
     @field_validator("table", "database_name", "source_tag")
     @classmethod
@@ -780,6 +854,10 @@ class TargetConfig(_DsnResolvable):
     def _append_requires_source_tag(self):
         if self.mode == "append" and not self.source_tag:
             raise ValueError("source_tag is required when mode='append'")
+        if self.documents.enabled and self.type != "postgres":
+            raise ValueError("target.documents is currently supported only for postgres targets")
+        if self.documents.enabled and self.documents.table == self.table:
+            raise ValueError("target.documents.table must differ from target.table")
         return self
 
 

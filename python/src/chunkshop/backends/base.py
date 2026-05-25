@@ -67,6 +67,7 @@ class Backend(Protocol):
         hnsw: bool,
         dim: int,
         engine: str | None = None,
+        vector_metric: str = "cosine",
     ) -> list[str]: ...
 
     # Introspection

@@ -61,6 +61,43 @@ class PostgresBackend:
     def vector_literal(self, arr: np.ndarray) -> str:
         return "[" + ",".join(f"{x:.6f}" for x in arr) + "]"
 
+    @staticmethod
+    def vector_metric_sql(metric: str) -> tuple[str, str]:
+        """Return pgvector (operator, HNSW opclass) for a supported metric.
+
+        pgvector exposes nearest-neighbor search through different operators:
+
+        - cosine distance: ``<=>`` with ``vector_cosine_ops``
+        - inner product: ``<#>`` with ``vector_ip_ops``; the operator returns
+          negative inner product so ascending ORDER BY means larger IP wins.
+        - L2/Euclidean distance: ``<->`` with ``vector_l2_ops``
+        """
+        if metric == "cosine":
+            return "<=>", "vector_cosine_ops"
+        if metric == "inner_product":
+            return "<#>", "vector_ip_ops"
+        if metric == "l2":
+            return "<->", "vector_l2_ops"
+        raise ValueError(
+            "vector_metric must be one of 'cosine', 'inner_product', or 'l2', "
+            f"got {metric!r}"
+        )
+
+    @staticmethod
+    def vector_score(distance: float, metric: str) -> float:
+        """Convert a pgvector distance/operator value to higher-is-better score."""
+        if metric == "cosine":
+            return 1.0 - distance
+        if metric == "inner_product":
+            # pgvector's <#> returns negative inner product for ASC ordering.
+            return -distance
+        if metric == "l2":
+            return -distance
+        raise ValueError(
+            "vector_metric must be one of 'cosine', 'inner_product', or 'l2', "
+            f"got {metric!r}"
+        )
+
     def tags_literal(self, tags: list[str]) -> list[str]:
         return list(tags)
 
@@ -103,6 +140,7 @@ class PostgresBackend:
         hnsw: bool,
         dim: int,
         engine: str | None = None,
+        vector_metric: str = "cosine",
     ) -> list[str]:
         # Engine clause is a no-op on PG (engine is the cluster's, not table-level).
         del engine
@@ -135,11 +173,37 @@ class PostgresBackend:
             f'ON {fq} ("doc_id", "seq_num")'
         )
         if hnsw:
+            _op, opclass = self.vector_metric_sql(vector_metric)
+            idx_suffix = (
+                "_emb_hnsw_idx"
+                if vector_metric == "cosine"
+                else f"_emb_hnsw_{vector_metric}_idx"
+            )
             statements.append(
-                f'CREATE INDEX IF NOT EXISTS {self.quote_ident(bare_table + "_emb_hnsw_idx")} '
-                f'ON {fq} USING hnsw ("embedding" vector_cosine_ops)'
+                f"CREATE INDEX IF NOT EXISTS {self.quote_ident(bare_table + idx_suffix)} "
+                f'ON {fq} USING hnsw ("embedding" {opclass})'
             )
         return statements
+
+    def emit_plain_table_ddl(self, fq: str, cols: list) -> list[str]:
+        """Emit CREATE TABLE for non-vector companion tables."""
+        col_lines = []
+        pk_cols = []
+        for c in cols:
+            line = f"  {self.quote_ident(c.name)} {c.type_ddl}"
+            if c.default is not None:
+                line += f" DEFAULT {c.default}"
+            if not c.nullable:
+                line += " NOT NULL"
+            col_lines.append(line)
+            if c.is_primary_key:
+                pk_cols.append(c.name)
+
+        lines = ",\n".join(col_lines)
+        if pk_cols:
+            pk = ", ".join(self.quote_ident(c) for c in pk_cols)
+            lines += f",\n  PRIMARY KEY ({pk})"
+        return [f"CREATE TABLE IF NOT EXISTS {fq} (\n{lines}\n)"]
 
     # Introspection
     def table_exists(self, cur: Any, db: str, table: str) -> bool:

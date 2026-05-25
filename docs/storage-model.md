@@ -1,5 +1,12 @@
 # Storage model — what chunkshop writes to your table
 
+> Current state: chunkshop's canonical persisted model is one row per chunk.
+> There is a `Document` object in the ingest pipeline, and every chunk row has
+> `doc_id`. Postgres targets can now opt into a companion one-row-per-document
+> table with `target.documents.enabled: true`; it is still off by default for
+> strict compatibility. The broader 1:M document/chunk design is captured in
+> [`document-table-plan.md`](document-table-plan.md).
+
 Every row chunkshop writes carries **three text payloads**, not one. Knowing
 which one to query for which job is the difference between solid retrieval and
 mysterious mismatches.
@@ -70,8 +77,62 @@ CREATE TABLE {schema}.{table} (
 -- + any promoted-metadata columns (target.promote_metadata)
 ```
 
-Source: `python/src/chunkshop/sink.py::_create_base_ddl` (Python is the
-schema authority — Rust mirrors).
+Source: `python/src/chunkshop/sinks/pg.py::_create_base_ddl` for Postgres
+(Python is the schema authority for the current implementation; Rust parity is
+still pending for the document table).
+
+## Optional Postgres Document Table
+
+For Postgres targets, set `target.documents.enabled: true` to write a companion
+document table in the same schema:
+
+```yaml
+target:
+  type: postgres
+  database: chunkshop_scotus
+  table: chunks
+  documents:
+    enabled: true
+    table: documents
+    store_full_content: true
+    store_lede_report: true
+    promote_metadata:
+      - path: lede_report.attributes.term.value
+        type: text
+    fts:
+      enabled: true
+      language: english
+```
+
+That creates `{database}.{documents.table}` with one row per source document:
+
+```sql
+CREATE TABLE {schema}.documents (
+    doc_id              text PRIMARY KEY,
+    source              text,
+    title               text,
+    uri                 text,
+    source_path         text,
+    content_hash        text,
+    full_content        text,
+    metadata            jsonb NOT NULL DEFAULT '{}',
+    lede_summary        text,
+    lede_toc            jsonb NOT NULL DEFAULT '[]',
+    lede_facts          jsonb NOT NULL DEFAULT '[]',
+    lede_report         jsonb NOT NULL DEFAULT '{}',
+    lede_search_text    text,
+    char_count          int,
+    token_count_est     int,
+    chunk_count         int NOT NULL DEFAULT 0,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    updated_at          timestamptz NOT NULL DEFAULT now()
+);
+```
+
+Use this table for document-level retrieval surfaces: full-document context,
+doc summaries, TOC/headings, facts, filterable promoted metadata, and document
+FTS over `title`, `lede_summary`, and `lede_search_text`. Chunk rows remain the
+source of truth for vector search and exact retrieved evidence.
 
 ### Field-by-field
 
@@ -108,6 +169,11 @@ FROM chunkshop_samples.handbook
 ORDER BY embedding <=> '[0.123, ...]'::vector
 LIMIT 10;
 ```
+
+Postgres targets default to cosine (`<=>`). You can set
+`target.vector_metric` to `inner_product` (`<#>`) or `l2` (`<->`) when the
+embedding model recommends a different metric; chunkshop uses the matching HNSW
+opclass when `target.hnsw` is enabled.
 
 Return `original_content` to the user — that's the clean text. The
 `embedded_content` may have a heading prefix or neighbor splice that's just

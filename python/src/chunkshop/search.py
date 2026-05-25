@@ -4,7 +4,8 @@ A small, focused read API over a chunkshop chunks table:
 
   - `ensure_fts`        : idempotently add a generated tsvector column + GIN index
   - `keyword_search`    : full-text search (to_tsquery OR-join + ts_rank)
-  - `semantic_search`   : pgvector cosine top-k, distance converted to similarity
+  - `semantic_search`   : pgvector top-k, distance converted to a comparable
+                           higher-is-better score
   - `hybrid_search`     : run multiple legs and fuse (RRF or weighted min-max)
 
 Plus a `where` filter (metadata/source/tags, FILTER-ONLY — not a ranking leg)
@@ -158,20 +159,34 @@ def ensure_fts(
     schema: str,
     table: str,
     language: str = "english",
+    include_metadata_paths: list[str] | None = None,
 ) -> None:
     """Idempotently add a generated `search_vector` tsvector column + GIN index.
 
     Safe to call repeatedly. The tsvector is GENERATED ALWAYS from
-    original_content, so it stays in sync with no application-side maintenance.
+    original_content plus any configured metadata paths, so it stays in sync
+    with no application-side maintenance.
     """
     _check_language(language)
+    metadata_paths = include_metadata_paths or []
+    for path in metadata_paths:
+        if not path or not all(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", seg) for seg in path.split(".")):
+            raise ValueError(
+                "include_metadata_paths segments must match "
+                f"^[A-Za-z_][A-Za-z0-9_]*$ separated by '.', got {path!r}"
+            )
     backend = _backend()
     fq = _fq(backend, schema, table)
     idx = backend.quote_ident(f"{table}_fts_idx")
+    text_parts = ["original_content"]
+    for path in metadata_paths:
+        pg_path = ",".join(path.split("."))
+        text_parts.append(f"COALESCE(metadata #>> '{{{pg_path}}}', '')")
+    source_text = " || ' ' || ".join(text_parts)
 
     add_col = (
         f"ALTER TABLE {fq} ADD COLUMN IF NOT EXISTS search_vector tsvector "
-        f"GENERATED ALWAYS AS (to_tsvector('{language}', original_content)) STORED"
+        f"GENERATED ALWAYS AS (to_tsvector('{language}', {source_text})) STORED"
     )
     create_idx = f"CREATE INDEX IF NOT EXISTS {idx} ON {fq} USING GIN(search_vector)"
 
@@ -247,16 +262,25 @@ def semantic_search(
     query_vec: np.ndarray,
     k: int,
     where: Optional[dict] = None,
+    vector_metric: str = "cosine",
 ) -> list[Hit]:
-    """pgvector cosine top-k; score = 1 - distance (higher=better). legs=('semantic',)."""
+    """pgvector top-k; score is higher-is-better. legs=('semantic',).
+
+    ``vector_metric`` selects the pgvector operator:
+
+    - ``"cosine"`` -> ``<=>`` distance, score = ``1 - distance``
+    - ``"inner_product"`` -> ``<#>`` negative inner product, score = inner product
+    - ``"l2"`` -> ``<->`` Euclidean distance, score = ``-distance``
+    """
     backend = _backend()
+    op, _opclass = backend.vector_metric_sql(vector_metric)
     fq = _fq(backend, schema, table)
     vec_lit = backend.vector_literal(query_vec)
     where_sql, where_params = _build_where(where)
 
     sql = (
         f"SELECT doc_id, seq_num, original_content, metadata, "
-        f"embedding <=> %s::vector AS distance, "
+        f"embedding {op} %s::vector AS distance, "
         f"embedded_content "
         f"FROM {fq}"
     )
@@ -264,7 +288,7 @@ def semantic_search(
     if where_sql:
         sql += f" WHERE {where_sql}"
         params.extend(where_params)
-    sql += " ORDER BY embedding <=> %s::vector LIMIT %s"
+    sql += f" ORDER BY embedding {op} %s::vector LIMIT %s"
     params.extend([vec_lit, k])
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
@@ -276,7 +300,7 @@ def semantic_search(
             seq_num=r[1],
             text=r[2],
             metadata=r[3] or {},
-            score=1.0 - float(r[4]),
+            score=backend.vector_score(float(r[4]), vector_metric),
             legs=("semantic",),
             embedded_text=r[5] or "",
         )
@@ -299,6 +323,7 @@ def hybrid_search(
     rrf_k: int = 60,
     language: str = "english",
     candidate_multiplier: int = 3,
+    vector_metric: str = "cosine",
 ) -> list[Hit]:
     """Run the requested legs and fuse them into a single ranked list.
 
@@ -325,7 +350,8 @@ def hybrid_search(
     leg_results: dict[str, list[Hit]] = {}
     if "semantic" in legs:
         leg_results["semantic"] = semantic_search(
-            dsn, schema=schema, table=table, query_vec=query_vec, k=cand_k, where=where
+            dsn, schema=schema, table=table, query_vec=query_vec, k=cand_k,
+            where=where, vector_metric=vector_metric,
         )
     if "fts" in legs:
         leg_results["fts"] = keyword_search(

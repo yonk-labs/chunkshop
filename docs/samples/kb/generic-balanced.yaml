@@ -1,0 +1,116 @@
+# KB template: generic balanced prose corpus.
+#
+# Use this when the corpus shape is unknown or mixed. It is a starting point,
+# not a claim that one profile is globally best.
+#
+# This is a target profile/template sample. Some `kb`/`profiles` fields are
+# planned product surface and may not be accepted by the current ingest CLI yet.
+
+kb:
+  id: generic
+  template: generic
+  description: Balanced default for unknown prose corpora.
+  profile:
+    default: balanced
+    summary_source: auto
+    allow_auto_fallback: true
+
+source:
+  type: files
+  glob: /path/to/corpus/*.md
+  id_from: stem
+
+chunker:
+  type: hierarchy
+  if_oversize:
+    type: fixed_overlap
+    window_words: 200
+    step_words: 160
+    max_chars: 2000
+
+embedder:
+  type: fastembed
+  model_name: BAAI/bge-base-en-v1.5
+  dim: 768
+  threads: 4
+
+extractor:
+  type: lede_report
+  max_chars: 4000
+  max_facts: 40
+  backend: regex
+  keep_headings: true
+  include_toc: true
+
+target:
+  type: postgres
+  dsn_env: CHUNKSHOP_TEST_DSN
+  database: chunkshop_generic
+  table: chunks
+  mode: overwrite
+  hnsw: true
+  vector_metric: cosine
+  promote_metadata:
+    - path: lede_report.attributes.title.value
+      type: text
+    - path: lede_report.attributes.source.value
+      type: text
+    - path: lede_report.attributes.date.value
+      type: text
+  fts:
+    enabled: true
+    language: english
+    include_metadata_paths:
+      - lede_report.search_text
+  documents:
+    enabled: true
+    table: documents
+    store_full_content: true
+    store_lede_report: true
+    promote_metadata:
+      - path: lede_report.attributes.title.value
+        type: text
+      - path: lede_report.attributes.source.value
+        type: text
+      - path: lede_report.attributes.date.value
+        type: text
+    fts:
+      enabled: true
+      language: english
+
+profiles:
+  default: balanced
+  aliases:
+    cheap:
+      packing: summary_facts
+      top_k: 25
+      summary_source: auto
+      include_facts: true
+      include_headings: false
+      top_n_raw: 0
+    balanced:
+      packing: summary_toc_facts_plus_top5
+      top_k: 25
+      summary_source: auto
+      include_facts: true
+      include_headings: true
+      top_n_raw: 5
+    accurate:
+      packing: doc_and_chunk_summary_toc_facts_plus_top10
+      top_k: 50
+      summary_source: auto
+      include_facts: true
+      include_headings: true
+      top_n_raw: 10
+    raw:
+      packing: classic_chunks
+      top_k: 25
+      top_n_raw: 25
+
+evaluation:
+  workload: generic_rag
+  primary_metric: llm_judge_pass_rate
+  compare_against:
+    - classic_chunks
+    - summary_toc_facts_plus_top5
+    - doc_and_chunk_summary_toc_facts_plus_top5
