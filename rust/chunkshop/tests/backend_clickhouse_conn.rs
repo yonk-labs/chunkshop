@@ -68,7 +68,10 @@ async fn table_exists_and_embedding_dim_introspection() -> anyhow::Result<()> {
         ))
         .execute()
         .await?;
-    assert_eq!(backend.embedding_dim(&client, db, "synthetic").await?, Some(8));
+    assert_eq!(
+        backend.embedding_dim(&client, db, "synthetic").await?,
+        Some(8)
+    );
 
     // Cleanup
     client

@@ -13,8 +13,7 @@ const CONSOLIDATE: &str = "configs/memory/consolidate.yaml";
 
 #[test]
 fn realtime_preset_loads_and_dispatches() {
-    let cfg = load_config(std::path::Path::new(REALTIME))
-        .expect("realtime.yaml must parse");
+    let cfg = load_config(std::path::Path::new(REALTIME)).expect("realtime.yaml must parse");
     // source: session_staging mode=realtime
     let s = match cfg.source {
         SourceConfig::SessionStaging(s) => s,
@@ -38,8 +37,7 @@ fn realtime_preset_loads_and_dispatches() {
 
 #[test]
 fn consolidate_preset_loads_and_dispatches() {
-    let cfg = load_config(std::path::Path::new(CONSOLIDATE))
-        .expect("consolidate.yaml must parse");
+    let cfg = load_config(std::path::Path::new(CONSOLIDATE)).expect("consolidate.yaml must parse");
     // source: session_staging mode=consolidate
     let s = match cfg.source {
         SourceConfig::SessionStaging(s) => s,

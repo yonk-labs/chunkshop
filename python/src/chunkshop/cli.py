@@ -418,13 +418,14 @@ def bakeoff(config_path: Path, yes: bool):
 
     Outputs (under output_dir, default `skill-output/bakeoff/{name}/`):
       - results.json      — raw scored data
-      - report.md         — multi-backend leaderboard + per-query detail
+      - report.md         — multi-target leaderboard + per-query detail
       - recommended.yaml  — runnable `chunkshop ingest` cell for the top combo
     """
     _setup_cli_logging()
     import yaml
 
     from chunkshop.bakeoff.config import BakeoffConfig
+    from chunkshop.bakeoff.keys import target_display_keys
     from chunkshop.bakeoff.output import (
         write_recommended_yaml,
         write_report_md,
@@ -441,7 +442,7 @@ def bakeoff(config_path: Path, yes: bool):
     if n_combos > 50 and not yes:
         click.echo(
             f"WARNING: {n_combos} cells is large "
-            f"({n_embedders} embedders x {n_chunkers} chunkers x {n_targets} backends). "
+            f"({n_embedders} embedders x {n_chunkers} chunkers x {n_targets} targets). "
             "Each cell ingests the full corpus into its own table."
         )
         if not click.confirm("Proceed?", default=False):
@@ -456,10 +457,10 @@ def bakeoff(config_path: Path, yes: bool):
                 "is not set. Export it before running `chunkshop bakeoff`."
             )
 
-    backend_summary = ", ".join(t.type for t in cfg.targets)
+    target_summary = ", ".join(target_display_keys(cfg.targets))
     click.echo(
         f"Running bakeoff '{cfg.name}' — {n_combos} cells "
-        f"({n_embedders}×{n_chunkers} matrix × {n_targets} backends: {backend_summary})"
+        f"({n_embedders}×{n_chunkers} matrix × {n_targets} targets: {target_summary})"
     )
     results = run_bakeoff(cfg)
 
@@ -482,6 +483,95 @@ def bakeoff(config_path: Path, yes: bool):
     click.echo(f"Results: {json_path}")
     click.echo(f"Report:  {md_path}")
     click.echo(f"Recommended cell: {yaml_path}")
+
+
+@cli.group(name="eval")
+def eval_cmd():
+    """Internal RAG evaluation harness planning commands."""
+
+
+@eval_cmd.command(name="validate")
+@click.option(
+    "--config", "config_path",
+    required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to an eval matrix YAML config.",
+)
+def eval_validate(config_path: Path):
+    """Validate an eval matrix without running retrieval or judges."""
+    from chunkshop.eval import build_eval_plan, load_eval_matrix
+
+    try:
+        cfg = load_eval_matrix(config_path)
+        plan = build_eval_plan(cfg)
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+    click.echo(f"[eval] OK — {cfg.name!r}")
+    click.echo(f"  workloads: {len(cfg.workloads)}")
+    click.echo(f"  baselines: {len(cfg.baselines)}")
+    click.echo(f"  explicit candidates: {len(cfg.candidates)}")
+    click.echo(f"  profiles: {len(cfg.profiles)}")
+    click.echo(f"  expanded policies: {len(plan.policies)}")
+    click.echo(f"  planned runs: {len(plan.runs)}")
+
+
+@eval_cmd.command(name="plan")
+@click.option(
+    "--config", "config_path",
+    required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to an eval matrix YAML config.",
+)
+@click.option(
+    "--out", "out_dir",
+    type=click.Path(path_type=Path),
+    default=Path("skill-output/eval/plan"),
+    show_default=True,
+    help="Directory for manifest.json, report.md, and generated llm-judge configs.",
+)
+@click.option(
+    "--profile", "profiles",
+    multiple=True,
+    help="Easy-mode/profile name to expand. Repeatable. Defaults to all profiles.",
+)
+@click.option(
+    "--tag", "tags",
+    multiple=True,
+    help="Only include workloads/policies carrying at least one tag. Repeatable.",
+)
+@click.option(
+    "--smoke-limit",
+    type=int,
+    default=12,
+    show_default=True,
+    help="Limit inserted into generated smoke-mode llm-judge configs.",
+)
+def eval_plan(config_path: Path, out_dir: Path, profiles, tags, smoke_limit: int):
+    """Expand an eval matrix into a concrete execution manifest.
+
+    This does not run ingestion, retrieval, answer generation, or judging. It
+    creates the stable artifact a runner can execute and review.
+    """
+    from chunkshop.eval import build_eval_plan, load_eval_matrix, write_eval_plan
+
+    try:
+        cfg = load_eval_matrix(config_path)
+        plan = build_eval_plan(
+            cfg,
+            profiles=list(profiles) or None,
+            tags=list(tags) or None,
+        )
+        plan = write_eval_plan(cfg, plan, out_dir, smoke_limit=smoke_limit)
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+    click.echo(f"[eval] wrote plan for {cfg.name!r}")
+    click.echo(f"  manifest: {out_dir / 'manifest.json'}")
+    click.echo(f"  report:   {out_dir / 'report.md'}")
+    click.echo(f"  workloads: {len(plan.workloads)}")
+    click.echo(f"  policies:  {len(plan.policies)}")
+    click.echo(f"  runs:      {len(plan.runs)}")
+    if plan.llm_judge_configs:
+        click.echo(f"  llm-judge configs: {len(plan.llm_judge_configs)}")
 
 
 def _parse_where(opts) -> dict:
@@ -530,12 +620,18 @@ def _parse_where(opts) -> dict:
     help="Comma-separated retrieval legs (semantic, fts).",
 )
 @click.option(
+    "--vector-metric",
+    type=click.Choice(["cosine", "inner_product", "l2"]),
+    default=None,
+    help="Postgres pgvector metric for semantic search. Defaults to target.vector_metric.",
+)
+@click.option(
     "--where", "where_opts", multiple=True,
     help="Filter as KEY=VALUE (source=x, tags=a,b, metadata.k=v). Repeatable.",
 )
 @click.option("--json", "as_json", is_flag=True,
               help="Emit results as JSON instead of human-readable text.")
-def search(config, query, k, return_mode, legs, where_opts, as_json):
+def search(config, query, k, return_mode, legs, vector_metric, where_opts, as_json):
     """Hybrid-search a cell's target; optionally summarize the hits.
 
     Embeds the query with the cell's configured embedder, runs a hybrid
@@ -582,6 +678,7 @@ def search(config, query, k, return_mode, legs, where_opts, as_json):
             return_mode=return_mode,
             summarize_fn=summarize_fn,
             language=(tgt.fts.language if tgt.fts else "english"),
+            vector_metric=vector_metric or tgt.vector_metric,
         )
     except Exception as exc:
         raise click.ClickException(str(exc))

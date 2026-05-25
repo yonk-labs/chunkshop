@@ -52,16 +52,76 @@ fn pg_type_to_sqlite(pg_type: &str) -> &str {
 /// splits the embedding column out into the vec0 partner table.
 fn canonical_cols(dim: usize) -> Vec<ColSpec> {
     vec![
-        ColSpec { name: "id", type_ddl: "TEXT".into(), nullable: false, default: None, is_primary_key: true },
-        ColSpec { name: "doc_id", type_ddl: "TEXT".into(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "seq_num", type_ddl: "INTEGER".into(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "original_content", type_ddl: "TEXT".into(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "embedded_content", type_ddl: "TEXT".into(), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "tags", type_ddl: "TEXT".into(), nullable: false, default: Some("'[]'"), is_primary_key: false },
-        ColSpec { name: "metadata", type_ddl: "TEXT".into(), nullable: false, default: Some("'{}'"), is_primary_key: false },
-        ColSpec { name: "embedding", type_ddl: format!("FLOAT[{dim}]"), nullable: false, default: None, is_primary_key: false },
-        ColSpec { name: "source", type_ddl: "TEXT".into(), nullable: true, default: None, is_primary_key: false },
-        ColSpec { name: "created_at", type_ddl: "TEXT".into(), nullable: false, default: Some("CURRENT_TIMESTAMP"), is_primary_key: false },
+        ColSpec {
+            name: "id",
+            type_ddl: "TEXT".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: true,
+        },
+        ColSpec {
+            name: "doc_id",
+            type_ddl: "TEXT".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "seq_num",
+            type_ddl: "INTEGER".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "original_content",
+            type_ddl: "TEXT".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "embedded_content",
+            type_ddl: "TEXT".into(),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "tags",
+            type_ddl: "TEXT".into(),
+            nullable: false,
+            default: Some("'[]'"),
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "metadata",
+            type_ddl: "TEXT".into(),
+            nullable: false,
+            default: Some("'{}'"),
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "embedding",
+            type_ddl: format!("FLOAT[{dim}]"),
+            nullable: false,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "source",
+            type_ddl: "TEXT".into(),
+            nullable: true,
+            default: None,
+            is_primary_key: false,
+        },
+        ColSpec {
+            name: "created_at",
+            type_ddl: "TEXT".into(),
+            nullable: false,
+            default: Some("CURRENT_TIMESTAMP"),
+            is_primary_key: false,
+        },
     ]
 }
 
@@ -77,10 +137,17 @@ impl SqliteSink {
                 );
             }
         }
-        Self { cfg, backend, embed_dim }
+        Self {
+            cfg,
+            backend,
+            embed_dim,
+        }
     }
 
-    fn fq_main(&self) -> String { self.backend.fq_table(&self.cfg.database_name, &self.cfg.table) }
+    fn fq_main(&self) -> String {
+        self.backend
+            .fq_table(&self.cfg.database_name, &self.cfg.table)
+    }
     fn fq_vec(&self) -> String {
         let vec_table = format!("{}_vec", self.cfg.table);
         self.backend.fq_table(&self.cfg.database_name, &vec_table)
@@ -92,10 +159,15 @@ impl SqliteSink {
     /// TABLE IF NOT EXISTS / catches duplicate-column errors.
     fn create_base_ddl(&self, conn: &rusqlite::Connection) -> Result<()> {
         for stmt in self.backend.emit_chunks_table_ddl(
-            &self.fq_main(), &canonical_cols(self.embed_dim),
-            self.cfg.hnsw, self.embed_dim, None,
+            &self.fq_main(),
+            &canonical_cols(self.embed_dim),
+            self.cfg.hnsw,
+            self.embed_dim,
+            None,
+            None,
         ) {
-            conn.execute_batch(&stmt).with_context(|| format!("ddl: {stmt}"))?;
+            conn.execute_batch(&stmt)
+                .with_context(|| format!("ddl: {stmt}"))?;
         }
         self.ensure_promote_columns(conn)?;
         Ok(())
@@ -104,13 +176,17 @@ impl SqliteSink {
     fn ensure_promote_columns(&self, conn: &rusqlite::Connection) -> Result<()> {
         for pc in &self.cfg.promote_metadata {
             let stmt = self.backend.add_column_if_not_exists_sql(
-                &self.fq_main(), &pc.column_name(), pg_type_to_sqlite(&pc.type_),
+                &self.fq_main(),
+                &pc.column_name(),
+                pg_type_to_sqlite(&pc.type_),
             );
             match conn.execute_batch(&stmt) {
                 Ok(()) => {}
                 Err(e) => {
                     let m = e.to_string().to_lowercase();
-                    if m.contains("duplicate column") { continue; }
+                    if m.contains("duplicate column") {
+                        continue;
+                    }
                     return Err(anyhow!("ADD COLUMN promote_metadata: {e}"));
                 }
             }
@@ -179,7 +255,10 @@ impl SqliteSink {
         }
         // Idempotent ADD COLUMN source — catch duplicate-column.
         match conn.execute_batch(&self.backend.add_column_if_not_exists_sql(
-            &self.fq_main(), "source", "TEXT")) {
+            &self.fq_main(),
+            "source",
+            "TEXT",
+        )) {
             Ok(()) => {}
             Err(e) => {
                 let m = e.to_string().to_lowercase();
@@ -207,12 +286,16 @@ impl SqliteSink {
         };
         if d != self.embed_dim {
             return Err(anyhow!(
-                "append mode: target dim {d} != cell embed_dim {}", self.embed_dim
+                "append mode: target dim {d} != cell embed_dim {}",
+                self.embed_dim
             ));
         }
         // Ensure source column + promote columns.
         match conn.execute_batch(&self.backend.add_column_if_not_exists_sql(
-            &self.fq_main(), "source", "TEXT")) {
+            &self.fq_main(),
+            "source",
+            "TEXT",
+        )) {
             Ok(()) => {}
             Err(e) => {
                 let m = e.to_string().to_lowercase();
@@ -235,35 +318,52 @@ impl SqliteSink {
             .ok();
         let Some(sql) = sql else { return Ok(None) };
         let re = regex::Regex::new(r"(?i)FLOAT\[(\d+)\]").unwrap();
-        Ok(re.captures(&sql)
+        Ok(re
+            .captures(&sql)
             .and_then(|c| c.get(1))
             .and_then(|m| m.as_str().parse().ok()))
     }
 
     fn write_document_in_tx(
-        &self, tx: &rusqlite::Transaction<'_>,
-        doc_id: &str, chunks: &[Chunk],
-        embeddings: &[Vec<f32>], tags_per_chunk: &[Vec<String>],
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        doc_id: &str,
+        chunks: &[Chunk],
+        embeddings: &[Vec<f32>],
+        tags_per_chunk: &[Vec<String>],
     ) -> Result<()> {
         let promote = &self.cfg.promote_metadata;
         // Main table cols (no embedding).
         let mut main_col_names: Vec<String> = vec![
-            "id".into(), "doc_id".into(), "seq_num".into(),
-            "original_content".into(), "embedded_content".into(),
-            "tags".into(), "metadata".into(), "source".into(),
+            "id".into(),
+            "doc_id".into(),
+            "seq_num".into(),
+            "original_content".into(),
+            "embedded_content".into(),
+            "tags".into(),
+            "metadata".into(),
+            "source".into(),
         ];
-        for pc in promote { main_col_names.push(pc.column_name()); }
-        let mut update_cols: Vec<&str> = vec![
-            "original_content", "embedded_content", "tags", "metadata",
-        ];
+        for pc in promote {
+            main_col_names.push(pc.column_name());
+        }
+        let mut update_cols: Vec<&str> =
+            vec!["original_content", "embedded_content", "tags", "metadata"];
         // Source excluded from update — write-once.
         let promoted_names: Vec<String> = promote.iter().map(|pc| pc.column_name()).collect();
-        for n in &promoted_names { update_cols.push(n.as_str()); }
+        for n in &promoted_names {
+            update_cols.push(n.as_str());
+        }
         let upsert = self.backend.upsert_clause(&["id"], &update_cols);
-        let cols_sql: String = main_col_names.iter()
-            .map(|c| self.backend.quote_ident(c)).collect::<Vec<_>>().join(", ");
+        let cols_sql: String = main_col_names
+            .iter()
+            .map(|c| self.backend.quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
         let placeholders: String = std::iter::repeat("?")
-            .take(main_col_names.len()).collect::<Vec<_>>().join(", ");
+            .take(main_col_names.len())
+            .collect::<Vec<_>>()
+            .join(", ");
         let main_stmt = format!(
             "INSERT INTO {tbl} ({cols_sql}) VALUES ({placeholders}) {upsert}",
             tbl = self.fq_main()
@@ -302,23 +402,34 @@ impl SqliteSink {
                 });
                 params.push(Box::new(s));
             }
-            let p_refs: Vec<&dyn rusqlite::ToSql> = params.iter()
-                .map(|b| b.as_ref()).collect();
-            main_q.execute(p_refs.as_slice()).context("upsert main row")?;
+            let p_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+            main_q
+                .execute(p_refs.as_slice())
+                .context("upsert main row")?;
 
             // vec table
-            vec_del_q.execute(rusqlite::params![id]).context("delete vec")?;
+            vec_del_q
+                .execute(rusqlite::params![id])
+                .context("delete vec")?;
             let vec_lit = self.backend.vector_literal(&embeddings[i]);
-            vec_ins_q.execute(rusqlite::params![id, vec_lit]).context("insert vec")?;
+            vec_ins_q
+                .execute(rusqlite::params![id, vec_lit])
+                .context("insert vec")?;
         }
 
         if self.cfg.delete_orphans {
-            drop(main_q); drop(vec_del_q); drop(vec_ins_q);
+            drop(main_q);
+            drop(vec_del_q);
+            drop(vec_ins_q);
             let n_new = chunks.len() as i64;
             tx.execute(
-                &format!("DELETE FROM {} WHERE doc_id = ? AND seq_num >= ?", self.fq_main()),
+                &format!(
+                    "DELETE FROM {} WHERE doc_id = ? AND seq_num >= ?",
+                    self.fq_main()
+                ),
                 rusqlite::params![doc_id, n_new],
-            ).context("delete orphans main")?;
+            )
+            .context("delete orphans main")?;
             // Vec table: id format is `doc_id::seq_num`. Match by LIKE + parse seq.
             tx.execute(
                 &format!(
@@ -327,7 +438,8 @@ impl SqliteSink {
                     self.fq_vec()
                 ),
                 rusqlite::params![doc_id, n_new],
-            ).context("delete orphans vec")?;
+            )
+            .context("delete orphans vec")?;
         }
         Ok(())
     }
@@ -356,8 +468,11 @@ impl Sink for SqliteSink {
     // The other 4 trait methods stay as the stub-error returns until later
     // tasks implement them.
     fn write_document(
-        &self, doc_id: &str, chunks: &[Chunk],
-        embeddings: &[Vec<f32>], tags_per_chunk: &[Vec<String>],
+        &self,
+        doc_id: &str,
+        chunks: &[Chunk],
+        embeddings: &[Vec<f32>],
+        tags_per_chunk: &[Vec<String>],
     ) -> impl Future<Output = Result<()>> + Send {
         let this = self.clone();
         let doc_id = doc_id.to_string();
@@ -368,10 +483,14 @@ impl Sink for SqliteSink {
             if chunks.len() != embeddings.len() || chunks.len() != tags_per_chunk.len() {
                 return Err(anyhow!(
                     "chunks/embeddings/tags length mismatch: {} / {} / {}",
-                    chunks.len(), embeddings.len(), tags_per_chunk.len()
+                    chunks.len(),
+                    embeddings.len(),
+                    tags_per_chunk.len()
                 ));
             }
-            if chunks.is_empty() { return Ok(()); }
+            if chunks.is_empty() {
+                return Ok(());
+            }
 
             let conn = this.backend.connect().await?;
             tokio::task::spawn_blocking(move || -> Result<()> {
@@ -380,7 +499,9 @@ impl Sink for SqliteSink {
                 this.write_document_in_tx(&tx, &doc_id, &chunks, &embeddings, &tags_per_chunk)?;
                 tx.commit().context("commit tx")?;
                 Ok(())
-            }).await.context("spawn_blocking write_document")?
+            })
+            .await
+            .context("spawn_blocking write_document")?
         }
     }
     fn delete_document(&self, doc_id: &str) -> impl Future<Output = Result<i64>> + Send {
@@ -394,31 +515,46 @@ impl Sink for SqliteSink {
                 // Two-phase: SELECT ids first, then DELETE both tables by id IN (...).
                 let ids: Vec<String> = {
                     let stmt = if this.cfg.source_tag.is_some() {
-                        format!("SELECT id FROM {} WHERE doc_id = ? AND source = ?", this.fq_main())
+                        format!(
+                            "SELECT id FROM {} WHERE doc_id = ? AND source = ?",
+                            this.fq_main()
+                        )
                     } else {
                         format!("SELECT id FROM {} WHERE doc_id = ?", this.fq_main())
                     };
                     let mut q = tx.prepare(&stmt)?;
-                    let rows: rusqlite::Result<Vec<String>> = if let Some(tag) = &this.cfg.source_tag {
-                        q.query_map(rusqlite::params![doc_id, tag], |r| r.get(0))?.collect()
-                    } else {
-                        q.query_map(rusqlite::params![doc_id], |r| r.get(0))?.collect()
-                    };
+                    let rows: rusqlite::Result<Vec<String>> =
+                        if let Some(tag) = &this.cfg.source_tag {
+                            q.query_map(rusqlite::params![doc_id, tag], |r| r.get(0))?
+                                .collect()
+                        } else {
+                            q.query_map(rusqlite::params![doc_id], |r| r.get(0))?
+                                .collect()
+                        };
                     rows.context("collect ids to delete")?
                 };
                 if ids.is_empty() {
                     tx.commit()?;
                     return Ok(0);
                 }
-                let placeholders: String = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(",");
-                let main_del = format!("DELETE FROM {} WHERE id IN ({placeholders})", this.fq_main());
+                let placeholders: String = std::iter::repeat("?")
+                    .take(ids.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let main_del = format!(
+                    "DELETE FROM {} WHERE id IN ({placeholders})",
+                    this.fq_main()
+                );
                 let vec_del = format!("DELETE FROM {} WHERE id IN ({placeholders})", this.fq_vec());
-                let p: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+                let p: Vec<&dyn rusqlite::ToSql> =
+                    ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
                 let n = tx.execute(&main_del, p.as_slice()).context("delete main")? as i64;
                 tx.execute(&vec_del, p.as_slice()).context("delete vec")?;
                 tx.commit()?;
                 Ok(n)
-            }).await.context("spawn_blocking delete_document")?
+            })
+            .await
+            .context("spawn_blocking delete_document")?
         }
     }
     fn count_docs(&self) -> impl Future<Output = Result<i64>> + Send {
@@ -427,16 +563,23 @@ impl Sink for SqliteSink {
             let conn = this.backend.connect().await?;
             tokio::task::spawn_blocking(move || -> Result<i64> {
                 let g = conn.blocking_lock();
-                let n: i64 = g.query_row(
-                    &format!("SELECT COUNT(DISTINCT doc_id) FROM {}", this.fq_main()),
-                    [], |r| r.get(0)
-                ).context("count_docs")?;
+                let n: i64 = g
+                    .query_row(
+                        &format!("SELECT COUNT(DISTINCT doc_id) FROM {}", this.fq_main()),
+                        [],
+                        |r| r.get(0),
+                    )
+                    .context("count_docs")?;
                 Ok(n)
-            }).await.context("spawn_blocking count_docs")?
+            })
+            .await
+            .context("spawn_blocking count_docs")?
         }
     }
     fn query_top_k(
-        &self, query_vec: &[f32], k: usize,
+        &self,
+        query_vec: &[f32],
+        k: usize,
     ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
         let this = self.clone();
         let q_owned = query_vec.to_vec();
@@ -450,16 +593,24 @@ impl Sink for SqliteSink {
                      FROM {vec} v JOIN {main} c ON c.id = v.id \
                      WHERE v.embedding MATCH ? AND k = ? \
                      ORDER BY v.distance",
-                    vec = this.fq_vec(), main = this.fq_main()
+                    vec = this.fq_vec(),
+                    main = this.fq_main()
                 );
                 let mut q = g.prepare(&stmt).context("prepare top_k")?;
-                let rows = q.query_map(
-                    rusqlite::params![vec_lit, k as i64],
-                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, i32>(1)?, r.get::<_, f64>(2)?))
-                ).context("query top_k")?;
+                let rows = q
+                    .query_map(rusqlite::params![vec_lit, k as i64], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, i32>(1)?,
+                            r.get::<_, f64>(2)?,
+                        ))
+                    })
+                    .context("query top_k")?;
                 let out: rusqlite::Result<Vec<_>> = rows.collect();
                 Ok(out.context("collect top_k rows")?)
-            }).await.context("spawn_blocking query_top_k")?
+            })
+            .await
+            .context("spawn_blocking query_top_k")?
         }
     }
 }

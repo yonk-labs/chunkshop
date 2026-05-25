@@ -99,7 +99,13 @@ target:
         let mut candidates: Vec<PathBuf> = Vec::new();
         let here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let worktree_root = here.ancestors().nth(2).unwrap().to_path_buf();
-        candidates.push(worktree_root.join("python").join(".venv").join("bin").join("python"));
+        candidates.push(
+            worktree_root
+                .join("python")
+                .join(".venv")
+                .join("bin")
+                .join("python"),
+        );
         if let Some(parent_of_worktree) = worktree_root.parent() {
             candidates.push(
                 parent_of_worktree
@@ -136,10 +142,20 @@ target:
         }
     };
     let py_status = Command::new(&py_bin)
-        .args(["-m", "chunkshop.cli", "ingest", "--config", py_path.to_str().unwrap()])
+        .args([
+            "-m",
+            "chunkshop.cli",
+            "ingest",
+            "--config",
+            py_path.to_str().unwrap(),
+        ])
         .status()
         .expect("spawn python -m chunkshop.cli");
-    assert!(py_status.success(), "Python cell A ingest failed (using {})", py_bin.display());
+    assert!(
+        py_status.success(),
+        "Python cell A ingest failed (using {})",
+        py_bin.display()
+    );
 
     // 2. Rust cell B: append + source_tag=rs_b + same promote_metadata column.
     //    Use a different fixture file so doc_ids don't collide.
@@ -206,13 +222,12 @@ target:
         "expected exactly 2 distinct source_tags (py_a and rs_b), got {distinct_sources}"
     );
 
-    let rs_rows: i64 = sqlx::query(
-        "SELECT COUNT(*) FROM chunkshop_rust_sink_parity.rows WHERE source = 'rs_b'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap()
-    .get(0);
+    let rs_rows: i64 =
+        sqlx::query("SELECT COUNT(*) FROM chunkshop_rust_sink_parity.rows WHERE source = 'rs_b'")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get(0);
     assert_eq!(
         rs_rows as usize, result.chunks_written,
         "rs_b row count {rs_rows} must equal Rust write count {}",

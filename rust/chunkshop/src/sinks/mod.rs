@@ -9,20 +9,20 @@ use crate::chunker::Chunk;
 use crate::config::TargetConfig;
 
 pub mod base;
-pub mod mariadb;
-pub mod pg;
-pub mod sqlite;
 pub mod clickhouse;
+pub mod mariadb;
 #[cfg(feature = "memory")]
 pub mod memory_pg;
+pub mod pg;
+pub mod sqlite;
 
 pub use base::Sink;
-pub use mariadb::MariadbSink;
-pub use pg::PgSink;
-pub use sqlite::SqliteSink;
 pub use clickhouse::ClickhouseSink;
+pub use mariadb::MariadbSink;
 #[cfg(feature = "memory")]
 pub use memory_pg::MemorySink;
+pub use pg::PgSink;
+pub use sqlite::SqliteSink;
 
 /// Sum type for runtime polymorphism. Pipeline holds `AnySink` and calls
 /// trait methods through the match-delegate impl below.
@@ -58,12 +58,27 @@ impl Sink for AnySink {
     ) -> impl Future<Output = Result<()>> + Send {
         async move {
             match self {
-                AnySink::Pg(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
-                AnySink::Mariadb(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
-                AnySink::Sqlite(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
-                AnySink::Clickhouse(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
+                AnySink::Pg(s) => {
+                    s.write_document(doc_id, chunks, embeddings, tags_per_chunk)
+                        .await
+                }
+                AnySink::Mariadb(s) => {
+                    s.write_document(doc_id, chunks, embeddings, tags_per_chunk)
+                        .await
+                }
+                AnySink::Sqlite(s) => {
+                    s.write_document(doc_id, chunks, embeddings, tags_per_chunk)
+                        .await
+                }
+                AnySink::Clickhouse(s) => {
+                    s.write_document(doc_id, chunks, embeddings, tags_per_chunk)
+                        .await
+                }
                 #[cfg(feature = "memory")]
-                AnySink::Memory(s) => s.write_document(doc_id, chunks, embeddings, tags_per_chunk).await,
+                AnySink::Memory(s) => {
+                    s.write_document(doc_id, chunks, embeddings, tags_per_chunk)
+                        .await
+                }
             }
         }
     }
@@ -139,6 +154,8 @@ pub fn load_sink(cfg: &TargetConfig, backend: AnyBackend, dim: usize) -> Result<
         // Cross-variant mismatches are programming errors (load_backend +
         // load_sink are always called paired with the same TargetConfig).
         #[allow(unreachable_patterns)]
-        _ => Err(anyhow!("backend / target type mismatch — programming error in load_sink dispatch")),
+        _ => Err(anyhow!(
+            "backend / target type mismatch — programming error in load_sink dispatch"
+        )),
     }
 }

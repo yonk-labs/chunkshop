@@ -31,7 +31,9 @@ fn sqlite_vec_loads_on_memory_connection() {
         .prepare("SELECT id FROM smoke_vec WHERE embedding MATCH ? AND k = 1")
         .expect("prepare match");
     let rows: Vec<String> = stmt
-        .query_map(rusqlite::params!["[1.0, 0.0, 0.0]"], |r| r.get::<_, String>(0))
+        .query_map(rusqlite::params!["[1.0, 0.0, 0.0]"], |r| {
+            r.get::<_, String>(0)
+        })
         .expect("query")
         .map(|r| r.unwrap())
         .collect();

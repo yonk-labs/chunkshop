@@ -72,12 +72,19 @@ fn make_cfg(dsn: &str, schema: &str, mode: SessionStagingMode) -> SessionStaging
 
 #[tokio::test]
 async fn yields_one_document_per_session() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     ensure_staging_table(&pool, &schema, "staging").await?;
     stage_events(
-        &pool, &schema, "staging",
+        &pool,
+        &schema,
+        "staging",
         &[
             ev("s1", 1, "s1 first"),
             ev("s1", 2, "s1 second"),
@@ -100,13 +107,20 @@ async fn yields_one_document_per_session() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn events_ordered_by_seq() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     ensure_staging_table(&pool, &schema, "staging").await?;
     // Stage out-of-order; source must sort by seq.
     stage_events(
-        &pool, &schema, "staging",
+        &pool,
+        &schema,
+        "staging",
         &[
             ev("s1", 3, "third"),
             ev("s1", 1, "first"),
@@ -131,8 +145,13 @@ async fn events_ordered_by_seq() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn realtime_mode_advances_consumed_realtime() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     ensure_staging_table(&pool, &schema, "staging").await?;
     stage_event(&pool, &schema, "staging", &ev("s1", 1, "hi")).await?;
@@ -158,7 +177,11 @@ async fn realtime_mode_advances_consumed_realtime() -> anyhow::Result<()> {
     // Re-running yields zero docs (watermark filters everything out).
     let docs2 = src.iter_documents().await?;
     src.commit_processed().await?;
-    assert_eq!(docs2.len(), 0, "re-run after watermark advance must yield nothing");
+    assert_eq!(
+        docs2.len(),
+        0,
+        "re-run after watermark advance must yield nothing"
+    );
 
     cleanup(&pool, &schema).await?;
     Ok(())
@@ -171,14 +194,21 @@ async fn realtime_mode_advances_consumed_realtime() -> anyhow::Result<()> {
 /// Python `49861dc`.
 #[tokio::test]
 async fn consolidate_mode_uses_session_level_where_for_late_events() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     ensure_staging_table(&pool, &schema, "staging").await?;
 
     // First, stage the initial conversation.
     stage_events(
-        &pool, &schema, "staging",
+        &pool,
+        &schema,
+        "staging",
         &[ev("s1", 1, "Redis"), ev("s1", 2, "still Redis")],
     )
     .await?;
@@ -201,7 +231,13 @@ async fn consolidate_mode_uses_session_level_where_for_late_events() -> anyhow::
 
     // Late event arrives AFTER consolidation. It has consumed='{}' but the
     // older events have consumed.consolidated set.
-    stage_event(&pool, &schema, "staging", &ev("s1", 3, "switched to RabbitMQ")).await?;
+    stage_event(
+        &pool,
+        &schema,
+        "staging",
+        &ev("s1", 3, "switched to RabbitMQ"),
+    )
+    .await?;
     backdate(&pool, &schema).await?;
 
     // Round 2: O1 — session-level WHERE re-selects s1 because it has a
@@ -222,7 +258,10 @@ async fn consolidate_mode_uses_session_level_where_for_late_events() -> anyhow::
     );
     // Content must include the late event AND the earlier ones.
     assert!(s1b.content.contains("RabbitMQ"), "late event missing");
-    assert!(s1b.content.contains("Redis"), "earlier events lost — O1 violation");
+    assert!(
+        s1b.content.contains("Redis"),
+        "earlier events lost — O1 violation"
+    );
 
     cleanup(&pool, &schema).await?;
     Ok(())
@@ -230,17 +269,20 @@ async fn consolidate_mode_uses_session_level_where_for_late_events() -> anyhow::
 
 #[tokio::test]
 async fn max_sessions_caps_yielded_sessions() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     ensure_staging_table(&pool, &schema, "staging").await?;
     stage_events(
-        &pool, &schema, "staging",
-        &[
-            ev("a", 1, "1"),
-            ev("b", 1, "2"),
-            ev("c", 1, "3"),
-        ],
+        &pool,
+        &schema,
+        "staging",
+        &[ev("a", 1, "1"), ev("b", 1, "2"), ev("c", 1, "3")],
     )
     .await?;
 

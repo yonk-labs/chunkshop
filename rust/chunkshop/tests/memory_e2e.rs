@@ -8,7 +8,6 @@ use chunkshop::config::load_config;
 use chunkshop::memory::{ensure_staging_table, stage_events, StagedEvent};
 use chunkshop::run_cell;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::Row;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -50,9 +49,11 @@ fn unique_database() -> String {
 }
 
 async fn cleanup(pool: &sqlx::PgPool, database: &str) -> anyhow::Result<()> {
-    sqlx::query(&format!(r#"DROP TABLE IF EXISTS public.chunkshop_staging CASCADE"#))
-        .execute(pool)
-        .await?;
+    sqlx::query(&format!(
+        r#"DROP TABLE IF EXISTS public.chunkshop_staging CASCADE"#
+    ))
+    .execute(pool)
+    .await?;
     sqlx::query(&format!(r#"DROP SCHEMA IF EXISTS "{database}" CASCADE"#))
         .execute(pool)
         .await?;
@@ -78,27 +79,46 @@ fn ev(session_id: &str, seq: i64, role: &str, content: &str) -> StagedEvent {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_stage_then_consolidate() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
     // The preset YAMLs use `dsn_env: CHUNKSHOP_MEMORY_DSN` on both source and
     // target; we point that env var at the test DSN for the duration of the
     // test.
     // SAFETY: This test runs single-process; multi-test parallelism on env
     // vars is the standard caveat. Each unique_database() keeps tables
     // isolated even if two e2e tests interleave.
-    unsafe { std::env::set_var("CHUNKSHOP_MEMORY_DSN", &dsn); }
-    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    unsafe {
+        std::env::set_var("CHUNKSHOP_MEMORY_DSN", &dsn);
+    }
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let database = unique_database();
     cleanup(&admin_pool, &database).await?;
 
     // 1. Stage the fixture.
     ensure_staging_table(&admin_pool, "public", "chunkshop_staging").await?;
     stage_events(
-        &admin_pool, "public", "chunkshop_staging",
+        &admin_pool,
+        "public",
+        "chunkshop_staging",
         &[
             ev("s1", 1, "user", "We use Redis for the job queue."),
             ev("s1", 2, "assistant", "Understood, Redis backs the queue."),
-            ev("s2", 1, "user", "We migrated the queue from Redis to Postgres."),
-            ev("s2", 2, "assistant", "Confirmed, Postgres LISTEN/NOTIFY now backs the queue."),
+            ev(
+                "s2",
+                1,
+                "user",
+                "We migrated the queue from Redis to Postgres.",
+            ),
+            ev(
+                "s2",
+                2,
+                "assistant",
+                "Confirmed, Postgres LISTEN/NOTIFY now backs the queue.",
+            ),
         ],
     )
     .await?;

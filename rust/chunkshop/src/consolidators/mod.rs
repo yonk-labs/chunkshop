@@ -89,13 +89,13 @@ impl Consolidator for ExtractiveConsolidator {
             // Sort by length descending then index ascending; take top 3,
             // then re-sort by original index for stable output order.
             scored.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
-            let mut top: Vec<(usize, &String)> = scored
-                .into_iter()
-                .take(3)
-                .map(|(i, s, _)| (i, s))
-                .collect();
+            let mut top: Vec<(usize, &String)> =
+                scored.into_iter().take(3).map(|(i, s, _)| (i, s)).collect();
             top.sort_by(|a, b| a.0.cmp(&b.0));
-            top.into_iter().map(|(_, s)| s.clone()).collect::<Vec<_>>().join(" ")
+            top.into_iter()
+                .map(|(_, s)| s.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
         };
         Ok(ConsolidationOutput {
             summary,
@@ -178,10 +178,12 @@ mod tests {
     #[test]
     fn extractive_emits_summary_no_facts_on_short_text() {
         let c = ExtractiveConsolidator;
-        let out = c.consolidate(&ep("[user] We use Redis for the queue.")).unwrap();
+        let out = c
+            .consolidate(&ep("[user] We use Redis for the queue."))
+            .unwrap();
         assert!(out.facts.is_empty());
         assert!(out.summary.contains("Redis"));
-        assert!(!out.summary.starts_with("[user]"));      // role tag stripped
+        assert!(!out.summary.starts_with("[user]")); // role tag stripped
     }
 
     #[test]
@@ -217,7 +219,11 @@ mod tests {
         assert!(out.summary.contains("longest"));
         // 3-sentence cap on long input.
         let sentence_count = out.summary.matches('.').count();
-        assert!(sentence_count <= 3, "expected <=3 sentences; got: {:?}", out.summary);
+        assert!(
+            sentence_count <= 3,
+            "expected <=3 sentences; got: {:?}",
+            out.summary
+        );
     }
 
     #[test]

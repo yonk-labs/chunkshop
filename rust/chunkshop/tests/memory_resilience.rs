@@ -60,13 +60,24 @@ fn ev(sid: &str, seq: i64, content: &str) -> StagedEvent {
 /// crash-resume invariant.
 #[tokio::test]
 async fn o3_uncommitted_run_does_not_advance_watermark() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     ensure_staging_table(&pool, &schema, "staging").await?;
     stage_events(
-        &pool, &schema, "staging",
-        &[ev("s1", 1, "first"), ev("s2", 1, "second"), ev("s3", 1, "third")],
+        &pool,
+        &schema,
+        "staging",
+        &[
+            ev("s1", 1, "first"),
+            ev("s2", 1, "second"),
+            ev("s3", 1, "third"),
+        ],
     )
     .await?;
 
@@ -136,12 +147,19 @@ async fn o3_uncommitted_run_does_not_advance_watermark() -> anyhow::Result<()> {
 /// session-level WHERE re-selects the entire session.
 #[tokio::test]
 async fn o1_late_event_after_commit_rebuilds_full_session() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let schema = unique_schema();
     ensure_staging_table(&pool, &schema, "staging").await?;
     stage_events(
-        &pool, &schema, "staging",
+        &pool,
+        &schema,
+        "staging",
         &[ev("s1", 1, "v1"), ev("s1", 2, "v2")],
     )
     .await?;

@@ -7,9 +7,7 @@ use std::path::PathBuf;
 use chunkshop::chunker::{
     ChunkerImpl, HierarchicalGrouping, HierarchicalSummaryChunker, HierarchyChunker,
 };
-use chunkshop::config::{
-    HierarchyChunkerConfig, PassthroughSummarizerConfig, SummarizerConfig,
-};
+use chunkshop::config::{HierarchyChunkerConfig, PassthroughSummarizerConfig, SummarizerConfig};
 use chunkshop::sources::Document;
 use chunkshop::summarizer::build_summarizer;
 use serde::Deserialize;
@@ -81,12 +79,11 @@ fn make_chunker(grouping: HierarchicalGrouping) -> HierarchicalSummaryChunker {
 
 #[test]
 fn rust_hierarchical_summary_fixed_n_matches_python() {
-    let corpus = std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt"))
-        .expect("read corpus");
-    let ref_json = std::fs::read_to_string(
-        fixtures_dir().join("hierarchical_summary_fixed_n_reference.json"),
-    )
-    .expect("read reference");
+    let corpus =
+        std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt")).expect("read corpus");
+    let ref_json =
+        std::fs::read_to_string(fixtures_dir().join("hierarchical_summary_fixed_n_reference.json"))
+            .expect("read reference");
     let r: Reference = serde_json::from_str(&ref_json).expect("parse");
 
     let chunker = make_chunker(HierarchicalGrouping::FixedN(3));
@@ -102,8 +99,8 @@ fn rust_hierarchical_summary_fixed_n_matches_python() {
 
 #[test]
 fn rust_hierarchical_summary_section_aware_matches_python() {
-    let corpus = std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt"))
-        .expect("read corpus");
+    let corpus =
+        std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt")).expect("read corpus");
     let ref_json = std::fs::read_to_string(
         fixtures_dir().join("hierarchical_summary_section_aware_reference.json"),
     )

@@ -74,19 +74,31 @@ fn extractor_type_label(e: &ExtractorConfig) -> &'static str {
 
 fn target_type_label(t: &TargetConfig) -> String {
     match t {
-        TargetConfig::Postgres(c) =>
-            format!("postgres -> {}.{} (mode={})", c.database_name, c.table, c.mode),
-        TargetConfig::Mariadb(c) =>
-            format!("mariadb -> {}.{} (mode={})", c.database_name, c.table, c.mode),
-        TargetConfig::Sqlite(c) =>
-            format!("sqlite -> {}.{} (mode={})", c.database_name, c.table, c.mode),
-        TargetConfig::Clickhouse(c) =>
-            format!("clickhouse -> {}.{} (mode={})", c.database_name, c.table, c.mode),
+        TargetConfig::Postgres(c) => format!(
+            "postgres -> {}.{} (mode={})",
+            c.database_name, c.table, c.mode
+        ),
+        TargetConfig::Mariadb(c) => format!(
+            "mariadb -> {}.{} (mode={})",
+            c.database_name, c.table, c.mode
+        ),
+        TargetConfig::Sqlite(c) => format!(
+            "sqlite -> {}.{} (mode={})",
+            c.database_name, c.table, c.mode
+        ),
+        TargetConfig::Clickhouse(c) => format!(
+            "clickhouse -> {}.{} (mode={})",
+            c.database_name, c.table, c.mode
+        ),
     }
 }
 
 #[derive(Parser)]
-#[command(name = "chunkshop-rs", version, about = "Rust chunkshop ingest + bakeoff")]
+#[command(
+    name = "chunkshop-rs",
+    version,
+    about = "Rust chunkshop ingest + bakeoff"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -142,8 +154,8 @@ async fn run_bakeoff_command(
     keep_schema: bool,
 ) -> Result<()> {
     let text = std::fs::read_to_string(&config)?;
-    let cfg: BakeoffConfig = serde_yaml_ng::from_str(&text)
-        .map_err(|e| anyhow!("parse {}: {e}", config.display()))?;
+    let cfg: BakeoffConfig =
+        serde_yaml_ng::from_str(&text).map_err(|e| anyhow!("parse {}: {e}", config.display()))?;
 
     let combos_per_target = cfg.matrix.chunkers.len() * cfg.matrix.embedders.len();
     let targets = cfg.effective_targets()?;
@@ -179,7 +191,11 @@ async fn run_bakeoff_command(
         "Running bakeoff '{}' — {n_combos} combos across {} target(s): {}",
         cfg.name,
         targets.len(),
-        targets.iter().map(|t| t.backend_name()).collect::<Vec<_>>().join(", "),
+        targets
+            .iter()
+            .map(|t| t.backend_name())
+            .collect::<Vec<_>>()
+            .join(", "),
     );
     let base_dir = config.parent().map(|p| p.to_path_buf());
     let results = run_bakeoff_with_base(&cfg, base_dir.as_deref()).await?;
@@ -209,11 +225,7 @@ async fn run_bakeoff_command(
         winner.chunker_label,
         winner.embedder_label,
         winner.aggregate.get("mrr").copied().unwrap_or(0.0),
-        winner
-            .aggregate
-            .get("recall_at_1")
-            .copied()
-            .unwrap_or(0.0),
+        winner.aggregate.get("recall_at_1").copied().unwrap_or(0.0),
     );
     eprintln!("Results: {}", json_path.display());
     eprintln!("Report:  {}", report_path.display());
@@ -224,14 +236,19 @@ async fn run_bakeoff_command(
         // (caller's responsibility — many backends, many concerns, easy to mess up).
         use sqlx::postgres::PgPoolOptions;
         let legacy = cfg.target.as_ref().unwrap();
-        let dsn_str = dsn.as_ref().ok_or_else(|| anyhow!("--dsn required for legacy single-PG cleanup"))?;
-        let pool = PgPoolOptions::new().max_connections(1).connect(dsn_str).await?;
-        let stmt = format!(
-            r#"DROP SCHEMA IF EXISTS "{}" CASCADE"#,
+        let dsn_str = dsn
+            .as_ref()
+            .ok_or_else(|| anyhow!("--dsn required for legacy single-PG cleanup"))?;
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(dsn_str)
+            .await?;
+        let stmt = format!(r#"DROP SCHEMA IF EXISTS "{}" CASCADE"#, legacy.schema_name);
+        sqlx::query(&stmt).execute(&pool).await?;
+        eprintln!(
+            "Dropped schema {} (use --keep-schema to preserve)",
             legacy.schema_name
         );
-        sqlx::query(&stmt).execute(&pool).await?;
-        eprintln!("Dropped schema {} (use --keep-schema to preserve)", legacy.schema_name);
     }
     Ok(())
 }
@@ -265,26 +282,24 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
-        Command::Validate { config } => {
-            match load_config(&config) {
-                Ok(cfg) => {
-                    println!("[validate] OK — cell {:?}", cfg.cell_name);
-                    println!("  source:   {}", source_type_label(&cfg.source));
-                    println!("  framer:   {}", framer_type_label(&cfg.framer));
-                    println!("  chunker:  {}", chunker_type_label(&cfg.chunker));
-                    let emb_label = embedder_type_label(&cfg.embedder);
-                    println!("  embedder: {emb_label}");
-                    println!("  extractor:{}", extractor_type_label(&cfg.extractor));
-                    let tgt = target_type_label(&cfg.target);
-                    println!("  target:   {tgt}");
-                    Ok(())
-                }
-                Err(e) => {
-                    eprintln!("[validate] FAIL: {e:#}");
-                    std::process::exit(1);
-                }
+        Command::Validate { config } => match load_config(&config) {
+            Ok(cfg) => {
+                println!("[validate] OK — cell {:?}", cfg.cell_name);
+                println!("  source:   {}", source_type_label(&cfg.source));
+                println!("  framer:   {}", framer_type_label(&cfg.framer));
+                println!("  chunker:  {}", chunker_type_label(&cfg.chunker));
+                let emb_label = embedder_type_label(&cfg.embedder);
+                println!("  embedder: {emb_label}");
+                println!("  extractor:{}", extractor_type_label(&cfg.extractor));
+                let tgt = target_type_label(&cfg.target);
+                println!("  target:   {tgt}");
+                Ok(())
             }
-        }
+            Err(e) => {
+                eprintln!("[validate] FAIL: {e:#}");
+                std::process::exit(1);
+            }
+        },
         Command::Bakeoff {
             config,
             dsn,

@@ -65,7 +65,10 @@ mod tests {
 
     #[test]
     fn single_sentence_no_terminator() {
-        assert_eq!(naive_sentences("just words"), vec!["just words".to_string()]);
+        assert_eq!(
+            naive_sentences("just words"),
+            vec!["just words".to_string()]
+        );
     }
 
     #[test]

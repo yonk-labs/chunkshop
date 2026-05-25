@@ -31,8 +31,8 @@ impl FilesSource {
 
         let mut out = Vec::with_capacity(paths.len());
         for p in paths {
-            let text = std::fs::read_to_string(&p)
-                .with_context(|| format!("reading {}", p.display()))?;
+            let text =
+                std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))?;
             let doc_id = self.id_for(&p)?;
             let title = p
                 .file_name()

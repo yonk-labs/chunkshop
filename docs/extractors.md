@@ -11,7 +11,7 @@ extractor reads a chunk's text and returns an `ExtractResult` with two fields:
   `extractors/result.py` for the full rule). Structured metadata is what you
   promote to typed columns via `target.promote_metadata`.
 
-chunkshop ships **five extractors**. All except `none` and `rake_keywords`
+chunkshop ships **eight extractor configs**. All except `none` and `rake_keywords`
 require an optional pip extra — base install adds zero NLP weight.
 
 | Extractor          | Ships as extra    | Tags           | Structured metadata          |
@@ -19,6 +19,8 @@ require an optional pip extra — base install adds zero NLP weight.
 | `none`             | — (built-in)      | —              | —                            |
 | `rake_keywords`    | `[extractors]`    | Top-K phrases  | —                            |
 | `keybert_phrases`  | `[keybert]`       | Top-K phrases  | —                            |
+| `lede_top_terms`   | `[lede]`          | Top terms      | —                            |
+| `lede_report`      | `[lede]`          | Attributes/facts/entities | `lede_report: {...}`         |
 | `spacy_entities`   | `[spacy]`         | —              | `entities: {label: [...]}`  |
 | `lang_detect`      | `[lang]`          | —              | `language`, `language_confidence` |
 | `composite`        | — (needs children's extras) | concat of children | merge of children (last wins) |
@@ -28,6 +30,7 @@ backends at once.
 
 ```bash
 uv sync --extra lang              # just language detection
+uv sync --extra lede              # lede report/top-terms extraction
 uv sync --extra nlp               # keybert + spacy + langdetect
 ```
 
@@ -203,7 +206,106 @@ uv sync --extra keybert
 
 ---
 
-## 3. `spacy_entities` — Named Entity Recognition
+## 3. `lede_report` — compact facts + readable report metadata
+
+> **Why use this.** You want retrieval-side facts that are cheap to inspect
+> and easy to feed into answer generation or LLM judging. This is the first
+> choice for legal, policy, documentation, and support corpora where dates,
+> amounts, headings, and key factual sentences matter more than a tag cloud.
+
+### What it does
+
+Calls `lede.readable_report()` on the chunk text. The full JSON report lands under
+`metadata.lede_report`; selected report fields become flat tags so they can
+participate in filtering, display, or search diagnostics. The default
+`max_chars: 4000` keeps reports compact while preserving enough factual detail
+for SCOTUS-style questions. In lede v0.4.5+, JSON includes normalized
+`attributes`, `fact_records`, `promotion_candidates`, and `search_text`.
+
+### YAML
+
+```yaml
+extractor:
+  type: lede_report
+  max_chars: 4000
+  max_facts: 40
+  backend: regex        # deterministic default; use spacy for NER sections
+  keep_headings: true
+  include_toc: true
+  tag_sources: [attributes, key_facts, dates, amounts, entities]
+```
+
+### Config fields
+
+| Field           | Default                                      | Notes                                                |
+|-----------------|----------------------------------------------|------------------------------------------------------|
+| `max_chars`     | `4000`                                       | Character budget passed to `readable_report`.       |
+| `max_facts`     | `40`                                         | Maximum facts in the report.                        |
+| `backend`       | `regex`                                      | `regex`, `spacy`, or `auto`.                        |
+| `keep_headings` | `true`                                       | Preserve heading context in summary output.         |
+| `include_toc`   | `true`                                       | Include table-of-contents-style heading summary.    |
+| `tag_sources`   | `[attributes, key_facts, dates, amounts, entities]` | Report sections copied into `tags`.                 |
+| `max_tag_chars` | `240`                                        | Per-tag truncation budget.                          |
+
+### Sample output
+
+```yaml
+tags:
+  - "2023"
+  - "23-108"
+  - "Docket Number: 23-108"
+  - "$13,000"
+metadata:
+  lede_report:
+    summary: "..."
+    attributes:
+      term: {value: "2023", type: year}
+      docket_number: {value: "23-108", type: identifier}
+    key_facts: ["Docket Number: 23-108", "..."]
+    promotion_candidates:
+      - {path: lede_report.attributes.term.value, key: term, promote: true}
+    search_text: "..."
+    metadata:
+      dates: ["2024"]
+      amounts: ["$13,000"]
+```
+
+### Install
+
+```bash
+uv sync --extra lede
+# For backend: spacy, also install:
+uv sync --extra lede --extra lede-spacy
+```
+
+Use `backend: spacy` when entity coverage is more important than dependency
+weight. The spaCy backend adds `spacy_metadata` and `spacy_phrases` sections to
+the report if the spaCy package/model is available.
+
+For SQL-friendly reports, promote the stable v0.4.5 JSON paths:
+
+```yaml
+target:
+  promote_metadata:
+    - { path: lede_report.attributes.term.value, type: text }
+    - { path: lede_report.attributes.docket_number.value, type: text }
+    - { path: lede_report.attributes.citation.value, type: text }
+  fts:
+    enabled: true
+    include_metadata_paths:
+      - lede_report.search_text
+```
+
+### When NOT to pick it
+
+- You only need a light tag cloud — use `lede_top_terms`, `rake_keywords`, or
+  `keybert_phrases`.
+- You need typed entity arrays for direct SQL filters — use `spacy_entities`
+  or combine both with `composite`.
+
+---
+
+## 4. `spacy_entities` — Named Entity Recognition
 
 > **Why use this.** You want to filter retrievals by organization, person, or
 > place without reading every chunk. For example: "find me all chunks that
@@ -304,7 +406,7 @@ uv run python -m spacy download en_core_web_sm
 
 ---
 
-## 4. `lang_detect` — language code + confidence
+## 5. `lang_detect` — language code + confidence
 
 > **Why use this.** Your corpus mixes English with other languages and you
 > need to segment queries per language. For example: a support-ticket corpus
@@ -384,7 +486,7 @@ uv sync --extra lang
 
 ---
 
-## 5. `composite` — chain multiple extractors
+## 6. `composite` — chain multiple extractors
 
 > **Why use this.** One extractor isn't enough. You want entities *and*
 > language *and* keyphrases in one ingest pass, written to the same chunk's
@@ -482,6 +584,7 @@ uv sync --extra nlp
 | Nothing — skip extraction                        | `none` (default)                         |
 | Cheap keyword tags for UI                        | `rake_keywords`                          |
 | High-quality semantic topic labels               | `keybert_phrases`                        |
+| Compact fact/report metadata for judged RAG      | `lede_report`                            |
 | Filter retrievals by org / person / place        | `spacy_entities` + promote `entities.ORG` |
 | Segment by language in a multilingual corpus     | `lang_detect` + promote `language`        |
 | All of the above in one pass                     | `composite` chaining them all            |
@@ -493,6 +596,7 @@ flowchart TB
     Q{What do you need?}
     Q --> NONE[Nothing<br/>just embeddings]
     Q --> TAGS[Keyword tags]
+    Q --> FACTS[Fact report]
     Q --> NAMED[Named entities]
     Q --> LANG[Language code]
     Q --> MANY[More than one]
@@ -500,6 +604,7 @@ flowchart TB
     TAGS --> T{Quality vs. cost}
     T --> RAKE[rake_keywords<br/>cheap, no model]
     T --> KB[keybert_phrases<br/>embedding-quality]
+    FACTS --> LR[lede_report<br/>summary + key facts]
     NAMED --> SP[spacy_entities<br/>+ promote entities.ORG]
     LANG --> LD[lang_detect<br/>+ promote language]
     MANY --> COMP[composite<br/>chains any of the above]

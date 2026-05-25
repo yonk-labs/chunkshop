@@ -31,9 +31,18 @@ vendor/
 .env.local
 /tmp/
 *.log
+.llm-judge-cache/
+.llm-judge-inputs/
+.llm-judge-pkg/
+.llm-judge-runs/
+.llm-judge-venv*/
+.venv-llm-judge/
 
 # Skill outputs (briefs, plans, audits — regenerate with the skill, don't edit)
 skill-output/
+
+# Downloaded benchmark corpora/slices for local sweeps
+data/benchmarks/longbench*.jsonl
 
 # ONNX model cache
 .cache/

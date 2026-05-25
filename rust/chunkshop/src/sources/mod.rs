@@ -57,10 +57,10 @@ pub use clickhouse_table::ClickhouseTableSource;
 pub use mariadb_table::MariadbTableSource;
 #[cfg(all(feature = "source", feature = "sink"))]
 pub use pg_table::PgTableSource;
-#[cfg(all(feature = "source", feature = "sink"))]
-pub use sqlite_table::SqliteTableSource;
 #[cfg(feature = "memory")]
 pub use session_staging::SessionStagingSource;
+#[cfg(all(feature = "source", feature = "sink"))]
+pub use sqlite_table::SqliteTableSource;
 
 /// Sum type for runtime polymorphism. R1 shipped the original 5 sources.
 /// R2/R3/R4 added MariadbTable, SqliteTable, ClickhouseTable respectively.

@@ -25,7 +25,9 @@ async fn s3_source_lists_and_fetches_three_keys() {
 
     let mut builder = AmazonS3Builder::from_env().with_bucket_name(&bucket);
     if let Some(ep) = &endpoint_url {
-        builder = builder.with_endpoint(ep).with_allow_http(ep.starts_with("http://"));
+        builder = builder
+            .with_endpoint(ep)
+            .with_allow_http(ep.starts_with("http://"));
     }
     let store = match builder.build() {
         Ok(s) => s,
@@ -35,10 +37,7 @@ async fn s3_source_lists_and_fetches_three_keys() {
         }
     };
 
-    let prefix = format!(
-        "chunkshop-s3-test/{}/",
-        uuid_like_suffix()
-    );
+    let prefix = format!("chunkshop-s3-test/{}/", uuid_like_suffix());
     let keys = vec![
         format!("{prefix}alpha.txt"),
         format!("{prefix}bravo.txt"),
@@ -50,7 +49,10 @@ async fn s3_source_lists_and_fetches_three_keys() {
     for (key, body) in keys.iter().zip(bodies.iter()) {
         let path = ObjPath::from(key.clone());
         store
-            .put(&path, PutPayload::from_bytes(body.as_bytes().to_vec().into()))
+            .put(
+                &path,
+                PutPayload::from_bytes(body.as_bytes().to_vec().into()),
+            )
             .await
             .expect("put fixture");
     }

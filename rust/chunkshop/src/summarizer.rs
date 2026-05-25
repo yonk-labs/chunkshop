@@ -172,9 +172,7 @@ impl LedeSummarizer {
         // Warn-ignore extra kwargs so future lede params don't trip old binaries.
         for key in kwargs.keys() {
             if !matches!(key.as_str(), "max_length" | "mode") {
-                tracing::warn!(
-                    "callable summarizer (lede): ignoring unrecognized kwarg {key:?}"
-                );
+                tracing::warn!("callable summarizer (lede): ignoring unrecognized kwarg {key:?}");
             }
         }
         Ok(Self { max_length, mode })
@@ -231,8 +229,14 @@ mod tests {
         };
         let meta = json!({"summary": "x", "other": "y"});
         let err = s.summarize("t", &meta).unwrap_err().to_string();
-        assert!(err.contains("missing"), "expected field name in error: {err}");
-        assert!(err.contains("Available keys"), "expected key listing: {err}");
+        assert!(
+            err.contains("missing"),
+            "expected field name in error: {err}"
+        );
+        assert!(
+            err.contains("Available keys"),
+            "expected key listing: {err}"
+        );
     }
 
     #[test]
@@ -330,7 +334,9 @@ mod tests {
             "expected 'unknown mode' in error: {err}"
         );
         assert!(
-            err.contains("\"default\"") && err.contains("\"legacy\"") && err.contains("\"coverage\""),
+            err.contains("\"default\"")
+                && err.contains("\"legacy\"")
+                && err.contains("\"coverage\""),
             "expected valid mode list in error: {err}"
         );
     }

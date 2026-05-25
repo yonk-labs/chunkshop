@@ -1,0 +1,253 @@
+# Deep RAG evaluation matrix sketch.
+#
+# This is the intended configuration shape for the larger harness. It is not
+# consumed by today's `chunkshop bakeoff` command directly; the next harness
+# layer should expand this into bakeoff/retrieval runs, answer-generation runs,
+# llm-judge configs, and final reports.
+
+name: chunkshop_deep_rag_matrix
+tags: [nightly, deep]
+
+judging:
+  cache_dir: .llm-judge-cache
+  resume: true
+  smoke_mode: quick
+  final_mode: accurate
+  concurrency: 4
+  parse_retries: 1
+  retries: 2
+  max_tokens: 1200
+  strict_json_fallback: true
+  judges:
+    - provider: openai-compatible
+      base_url: http://192.168.1.193:8000/v1
+      model: Intel/Qwen3-Coder-Next-int4-AutoRound
+    - provider: openai-compatible
+      base_url: http://192.168.1.133:8000/v1
+      model: cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit
+
+workloads:
+  - name: scotus
+    kind: custom_corpus
+    tags: [showcase, release-gate, legal]
+    profile: chunkshop-e1e8
+    input: .llm-judge-inputs/v05-audited.jsonl
+    corpus:
+      type: files
+      glob: skill-output/benchmarks/scotus-corpus/*.md
+      id_from: stem
+    questions: skill-output/benchmarks/scotus_questions.yaml
+    gold: skill-output/benchmarks/scotus_gold.yaml
+
+  - name: scotus_30_retrieval
+    kind: custom_corpus
+    tags: [showcase, release-gate, legal, retrieval_e2e]
+    profile: chunkshop-e1e8
+    input: .llm-judge-inputs/scotus-30-retrieval.jsonl
+    questions: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/questions/scotus.yaml
+    gold: /home/yonk/yonk-tools/pg-raggraph/benchmarks/age-bakeoff/questions/scotus.yaml
+    generator:
+      command: >-
+        scripts/scotus_retrieval_to_llm_judge.py
+        --schema chunkshop_lede_report_scotus
+        --out .llm-judge-inputs/scotus-30-retrieval.jsonl
+
+  - name: scotus_50_buckets
+    kind: custom_corpus
+    tags: [legal, deep, bucketed, retrieval_e2e]
+    profile: chunkshop-e1e8
+    questions: docs/samples/eval/scotus-50-query-buckets.yaml
+    gold: docs/samples/eval/scotus-50-query-buckets.yaml
+    corpus:
+      type: files
+      glob: /home/yonk/yonk-tools/pg-raggraph/benchmarks/scotus/*.md
+      id_from: stem
+    evaluation_policy:
+      bucketed: true
+      exclude_from_topk_rag_score:
+        - impossible_for_llm_topk_rag
+      score_with_metadata_required:
+        - impossible_for_llm_topk_rag
+        - hard_llm_metadata_rag
+
+  - name: pg_codebase
+    kind: custom_corpus
+    tags: [codebase_qa, nightly]
+    corpus:
+      type: files
+      glob: ../postgres/**/*.c
+      id_from: path
+    questions: skill-output/benchmarks/pg_code_questions.yaml
+    reference_policy:
+      generate_expected: true
+      source: oracle_full_context
+      samples: 3
+
+  - name: ragas
+    kind: benchmark
+    tags: [standard, nightly]
+    profile: ragas
+    input: data/benchmarks/ragas.jsonl
+
+  - name: locomo
+    kind: benchmark
+    tags: [long_context, weekly]
+    profile: locomo
+    input: data/benchmarks/locomo.jsonl
+
+  - name: longbench
+    kind: benchmark
+    tags: [standard, long_context, industry, weekly]
+    profile: longbench
+    input: data/benchmarks/longbench.jsonl
+    reference_policy:
+      use_benchmark_gold: true
+      oracle_context: benchmark_context
+
+baselines:
+  - name: oracle_full_context
+    description: Send oracle/full source context directly to the answer model.
+    context_packer:
+      type: full_context
+      max_input_tokens: 120000
+
+  - name: classic_rag_500tok_top25
+    description: Conventional chunk RAG baseline.
+    chunker:
+      type: fixed_overlap
+      window_words: 500
+      step_words: 100
+    retrieval:
+      mode: semantic
+      top_k: 25
+    context_packer:
+      type: chunks
+
+  - name: full_doc_after_semantic_doc_match
+    description: Promote top semantic chunks to parent docs and send full docs.
+    retrieval:
+      mode: semantic
+      top_k: 50
+      promote_to: document
+      top_docs: [1, 3, 5]
+    context_packer:
+      type: full_documents
+
+axes:
+  embedders:
+    - {name: bge_small, type: fastembed, model_name: BAAI/bge-small-en-v1.5, dim: 384}
+    - {name: bge_base, type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768}
+    - {name: nomic, type: fastembed, model_name: nomic-ai/nomic-embed-text-v1.5-Q, dim: 768}
+
+  chunkers:
+    - {name: hierarchy, type: hierarchy}
+    - {name: sentence_aware, type: sentence_aware}
+    - {name: fixed_500_100, type: fixed_overlap, window_words: 500, step_words: 100}
+    - {name: neighbor_hierarchy_1, type: neighbor_expand, base: {type: hierarchy}, window: 1}
+
+  extractors:
+    - {name: none, type: none}
+    - {name: lede_top_terms, type: lede_top_terms, n: 10}
+    - {name: lede_report, type: lede_report, max_chars: 4000, max_facts: 40, backend: regex}
+    - {name: lede_report_spacy, type: lede_report, max_chars: 4000, max_facts: 40, backend: spacy, tags: [expensive]}
+
+  vector_metrics: [cosine, inner_product, l2]
+
+  retrieval_modes:
+    - {name: semantic, mode: semantic}
+    - {name: fts, mode: fts}
+    - {name: hybrid_rrf, mode: hybrid, fusion: rrf}
+    - {name: hybrid_weighted, mode: hybrid, fusion: weighted}
+    - {name: semantic_filtered, mode: semantic, metadata_filter: true}
+
+  candidate_sets:
+    - {name: k25, top_k: 25}
+    - {name: k50, top_k: 50}
+    - {name: k100, top_k: 100}
+    - {name: k250, top_k: 250, tags: [expensive]}
+
+  query_expansion:
+    - {name: none, type: none}
+    - {name: multi_query, type: multi_query, samples: 3}
+    - {name: hyde, type: hyde}
+    - {name: decomposition, type: decomposition, tags: [multihop]}
+
+  context_packers:
+    - {name: chunks, type: chunks}
+    - {name: summaries, type: summaries}
+    - {name: summary_toc, type: summary_toc}
+    - {name: summary_toc_facts, type: summary_toc_facts}
+    - {name: raw_plus_summary, type: raw_plus_summary}
+
+  pg_raggraph_modes:
+    - {name: naive, mode: naive}
+    - {name: hybrid, mode: hybrid}
+
+profiles:
+  general_default:
+    include:
+      embedders: [bge_base]
+      chunkers: [hierarchy, sentence_aware]
+      extractors: [lede_report]
+      vector_metrics: [cosine]
+      retrieval_modes: [hybrid_rrf]
+      candidate_sets: [k25, k50]
+      query_expansion: [none]
+      context_packers: [summary_toc]
+
+  accuracy_max:
+    include:
+      embedders: [bge_base, nomic]
+      chunkers: [hierarchy, neighbor_hierarchy_1]
+      extractors: [lede_report, lede_report_spacy]
+      vector_metrics: [cosine, inner_product, l2]
+      retrieval_modes: [semantic, hybrid_rrf]
+      candidate_sets: [k50, k100, k250]
+      query_expansion: [multi_query, hyde]
+      context_packers: [chunks, raw_plus_summary, summary_toc_facts]
+
+  low_cost:
+    include:
+      embedders: [bge_small]
+      chunkers: [hierarchy]
+      extractors: [lede_top_terms]
+      vector_metrics: [cosine]
+      retrieval_modes: [hybrid_rrf]
+      candidate_sets: [k25]
+      query_expansion: [none]
+      context_packers: [summaries, summary_toc]
+
+  multihop_enumeration:
+    include:
+      embedders: [bge_base, nomic]
+      chunkers: [hierarchy, neighbor_hierarchy_1]
+      extractors: [lede_report, lede_report_spacy]
+      vector_metrics: [cosine]
+      retrieval_modes: [hybrid_rrf]
+      candidate_sets: [k100, k250]
+      query_expansion: [decomposition, multi_query]
+      context_packers: [chunks, summary_toc_facts]
+
+reporting:
+  top_n: 20
+  compare_against:
+    - oracle_full_context
+    - classic_rag_500tok_top25
+  specialist_profiles:
+    - general_default
+    - accuracy_max
+    - low_cost
+    - multihop_enumeration
+  metrics:
+    - answer_accuracy
+    - answer_score
+    - fact_coverage
+    - retrieval_recall
+    - context_recall
+    - token_input
+    - token_output
+    - token_savings_vs_oracle
+    - token_savings_vs_classic_rag
+    - latency_retrieval_ms
+    - latency_answer_ms
+    - cost_estimate

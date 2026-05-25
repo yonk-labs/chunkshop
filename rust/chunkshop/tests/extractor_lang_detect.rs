@@ -29,7 +29,10 @@ fn english_text_returns_en() {
         .get("language_confidence")
         .and_then(|v| v.as_f64())
         .expect("language_confidence is f64");
-    assert!(conf >= 0.0 && conf <= 1.0, "confidence out of range: {conf}");
+    assert!(
+        conf >= 0.0 && conf <= 1.0,
+        "confidence out of range: {conf}"
+    );
 }
 
 #[test]

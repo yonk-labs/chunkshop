@@ -16,6 +16,7 @@ from chunkshop.bakeoff.output import (
     write_report_md,
     write_results_json,
 )
+from chunkshop.bakeoff.keys import target_display_keys
 from chunkshop.config import (
     CellConfig,
     FastembedEmbedder,
@@ -89,9 +90,9 @@ def test_report_md_has_leaderboard_and_stat_note(tmp_path):
     r = _fixture_results()
     p = write_report_md(cfg, r, tmp_path)
     text = p.read_text()
-    # Multi-backend report header phrasing
-    assert "Cross-backend comparison" in text
-    assert "Postgres leaderboard" in text
+    # Multi-target report header phrasing
+    assert "Cross-target comparison" in text
+    assert "postgres leaderboard" in text
     assert "hierarchy" in text
     assert "Statistical power" in text
 
@@ -104,3 +105,75 @@ def test_recommended_yaml_parses_as_cell_config(tmp_path):
     # Strip the comment-only marker field (YAML has no native comment-as-data).
     raw.pop("# NOTE", None)
     CellConfig.model_validate(raw)
+
+
+def test_target_display_keys_distinguish_pgvector_metrics():
+    cfg = _fixture_cfg()
+    cfg.targets = [
+        PostgresBakeoffTarget(
+            type="postgres",
+            dsn_env="X",
+            vector_metric=metric,
+            **{"database": "bakeoff_fix"},
+        )
+        for metric in ("cosine", "inner_product", "l2")
+    ]
+    assert target_display_keys(cfg.targets) == [
+        "postgres_cosine",
+        "postgres_inner_product",
+        "postgres_l2",
+    ]
+
+
+def test_report_and_recommended_preserve_pgvector_metric_winner(tmp_path):
+    cfg = _fixture_cfg()
+    cfg.targets = [
+        PostgresBakeoffTarget(
+            type="postgres",
+            dsn_env="X",
+            vector_metric=metric,
+            **{"database": "bakeoff_fix"},
+        )
+        for metric in ("cosine", "inner_product", "l2")
+    ]
+    combos = []
+    for target_key, mrr in [
+        ("postgres_cosine", 0.0),
+        ("postgres_inner_product", 1.0),
+        ("postgres_l2", 0.0),
+    ]:
+        combos.append(ComboResult(
+            backend="postgres",
+            target_key=target_key,
+            chunker_key="hierarchy",
+            embedder_key="bge_base_en_v1_5_int8",
+            chunker_label="hierarchy",
+            embedder_label="Xenova/bge-base-en-v1.5-int8",
+            table="hierarchy__bge_base_en_v1_5_int8",
+            ingest_chunks=13,
+            ingest_wall_seconds=1.1,
+            aggregate={
+                "recall_at_1": mrr,
+                "recall_at_3": mrr,
+                "recall_at_5": mrr,
+                "mrr": mrr,
+            },
+            per_query=[],
+        ))
+    r = BakeoffResults(
+        run_name="fixture",
+        started_at="2026-04-23",
+        corpus_label="samples",
+        n_queries=1,
+        n_combos=3,
+        gold_queries=[{"query": "q", "gold_doc_id": "d1"}],
+        combos=combos,
+    )
+
+    report = write_report_md(cfg, r, tmp_path).read_text()
+    assert "postgres_cosine" in report
+    assert "postgres_inner_product" in report
+    assert "postgres_l2" in report
+
+    raw = yaml.safe_load(write_recommended_yaml(cfg, r, tmp_path).read_text())
+    assert raw["target"]["vector_metric"] == "inner_product"

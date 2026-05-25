@@ -3,8 +3,7 @@
 
 use chunkshop::chunker::Chunk;
 use chunkshop::config::{
-    ChunkerConfig, FixedOverlapChunkerConfig, HierarchyChunkerConfig,
-    NeighborExpandChunkerConfig,
+    ChunkerConfig, FixedOverlapChunkerConfig, HierarchyChunkerConfig, NeighborExpandChunkerConfig,
 };
 use chunkshop::runner::build_chunker;
 use chunkshop::sources::Document;

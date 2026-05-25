@@ -36,10 +36,7 @@ pub struct MariadbSink {
 /// is missing or an intermediate is not an object. Mirrors Python's
 /// `_jsonb_path_get`. Chunkshop-specific dict navigation, not SQL — lives here
 /// rather than on Backend.
-fn jsonb_path_get<'a>(
-    meta: &'a serde_json::Value,
-    path: &str,
-) -> Option<&'a serde_json::Value> {
+fn jsonb_path_get<'a>(meta: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
     let mut cur = meta;
     for seg in path.split('.') {
         let obj = cur.as_object()?;
@@ -218,11 +215,11 @@ impl MariadbSink {
         {
             return self.create_base_ddl_in_tx(tx).await;
         }
-        sqlx::query(
-            &self
-                .backend
-                .add_column_if_not_exists_sql(&self.fq(), "source", "VARCHAR(255)"),
-        )
+        sqlx::query(&self.backend.add_column_if_not_exists_sql(
+            &self.fq(),
+            "source",
+            "VARCHAR(255)",
+        ))
         .execute(&mut **tx)
         .await
         .context("ADD COLUMN source")?;
@@ -261,21 +258,18 @@ impl MariadbSink {
                 own = self.embed_dim,
             ));
         }
-        sqlx::query(
-            &self
-                .backend
-                .add_column_if_not_exists_sql(&self.fq(), "source", "VARCHAR(255)"),
-        )
+        sqlx::query(&self.backend.add_column_if_not_exists_sql(
+            &self.fq(),
+            "source",
+            "VARCHAR(255)",
+        ))
         .execute(&mut **tx)
         .await
         .context("ADD COLUMN source")?;
         self.ensure_promote_columns_in_tx(tx).await
     }
 
-    async fn ensure_promote_columns_in_tx(
-        &self,
-        tx: &mut Transaction<'_, MySql>,
-    ) -> Result<()> {
+    async fn ensure_promote_columns_in_tx(&self, tx: &mut Transaction<'_, MySql>) -> Result<()> {
         for pc in &self.cfg.promote_metadata {
             // pc.type_ is allowlisted in PromoteColumn::validate_type; map to
             // the MariaDB-side type name.
@@ -295,10 +289,14 @@ impl MariadbSink {
 
     async fn create_base_ddl_in_tx(&self, tx: &mut Transaction<'_, MySql>) -> Result<()> {
         let cols = canonical_cols(&self.backend, self.embed_dim);
-        for stmt in
-            self.backend
-                .emit_chunks_table_ddl(&self.fq(), &cols, self.cfg.hnsw, self.embed_dim, None)
-        {
+        for stmt in self.backend.emit_chunks_table_ddl(
+            &self.fq(),
+            &cols,
+            self.cfg.hnsw,
+            self.embed_dim,
+            None,
+            None,
+        ) {
             sqlx::query(&stmt)
                 .execute(&mut **tx)
                 .await
@@ -373,8 +371,7 @@ impl Sink for MariadbSink {
                 "embedding",
                 "source",
             ];
-            let mut all_cols: Vec<String> =
-                base_col_names.iter().map(|c| c.to_string()).collect();
+            let mut all_cols: Vec<String> = base_col_names.iter().map(|c| c.to_string()).collect();
             for pc in promote {
                 all_cols.push(pc.column_name());
             }
@@ -434,8 +431,8 @@ impl Sink for MariadbSink {
                 );
 
                 let id = format!("{}::{}", c.doc_id, c.seq_num);
-                let tags_json = serde_json::to_string(tags)
-                    .context("serialize tags array to JSON")?;
+                let tags_json =
+                    serde_json::to_string(tags).context("serialize tags array to JSON")?;
                 let meta_json = serde_json::to_string(&c.metadata)
                     .context("serialize chunk metadata to JSON")?;
 
@@ -485,7 +482,11 @@ impl Sink for MariadbSink {
                     "DELETE FROM {tbl} WHERE doc_id = ? AND source = ?",
                     tbl = self.fq()
                 );
-                sqlx::query(&stmt).bind(doc_id).bind(tag).execute(pool).await?
+                sqlx::query(&stmt)
+                    .bind(doc_id)
+                    .bind(tag)
+                    .execute(pool)
+                    .await?
             } else {
                 let stmt = format!("DELETE FROM {tbl} WHERE doc_id = ?", tbl = self.fq());
                 sqlx::query(&stmt).bind(doc_id).execute(pool).await?
@@ -528,10 +529,7 @@ impl Sink for MariadbSink {
                  ORDER BY VEC_DISTANCE_EUCLIDEAN(embedding, {vec_lit}) LIMIT ?",
                 tbl = self.fq()
             );
-            let rows = sqlx::query(&stmt)
-                .bind(k as i64)
-                .fetch_all(pool)
-                .await?;
+            let rows = sqlx::query(&stmt).bind(k as i64).fetch_all(pool).await?;
             Ok(rows
                 .into_iter()
                 .map(|r| {

@@ -24,8 +24,14 @@ async fn projects_id_content_title_metadata_columns() -> anyhow::Result<()> {
     let client = backend.client().await?;
     let db = "chunkshop_r4_source";
 
-    client.query(&format!("DROP DATABASE IF EXISTS `{db}` SYNC")).execute().await?;
-    client.query(&format!("CREATE DATABASE `{db}`")).execute().await?;
+    client
+        .query(&format!("DROP DATABASE IF EXISTS `{db}` SYNC"))
+        .execute()
+        .await?;
+    client
+        .query(&format!("CREATE DATABASE `{db}`"))
+        .execute()
+        .await?;
     client
         .query(&format!(
             "CREATE TABLE `{db}`.docs (id String, body String, title String, lang String, author String) ENGINE = MergeTree() ORDER BY id"
@@ -61,8 +67,14 @@ async fn projects_id_content_title_metadata_columns() -> anyhow::Result<()> {
     assert_eq!(a.content, "hello world");
     assert_eq!(a.title.as_deref(), Some("A"));
     assert_eq!(a.metadata.get("lang").and_then(|v| v.as_str()), Some("en"));
-    assert_eq!(a.metadata.get("author").and_then(|v| v.as_str()), Some("alice"));
+    assert_eq!(
+        a.metadata.get("author").and_then(|v| v.as_str()),
+        Some("alice")
+    );
 
-    client.query(&format!("DROP DATABASE `{db}` SYNC")).execute().await?;
+    client
+        .query(&format!("DROP DATABASE `{db}` SYNC"))
+        .execute()
+        .await?;
     Ok(())
 }

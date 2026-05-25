@@ -138,6 +138,32 @@ def test_targets_discriminated_union_dispatch():
     assert parsed.targets[2].dsn_env == "SQ_PATH"
 
 
+def test_postgres_bakeoff_target_accepts_vector_metric():
+    cfg = yaml.safe_load(MINIMAL_YAML)
+    cfg["targets"][0]["vector_metric"] = "l2"
+    parsed = BakeoffConfig.model_validate(cfg)
+    assert parsed.targets[0].vector_metric == "l2"
+
+
+def test_postgres_bakeoff_targets_can_cover_all_vector_metrics():
+    cfg = yaml.safe_load(MINIMAL_YAML)
+    cfg["targets"] = [
+        {
+            "type": "postgres",
+            "dsn_env": "TEST_DSN",
+            "database": "bakeoff_test",
+            "vector_metric": metric,
+        }
+        for metric in ("cosine", "inner_product", "l2")
+    ]
+    parsed = BakeoffConfig.model_validate(cfg)
+    assert [t.vector_metric for t in parsed.targets] == [
+        "cosine",
+        "inner_product",
+        "l2",
+    ]
+
+
 def test_unknown_target_type_rejected():
     """Bad target.type triggers discriminator validation error at config load."""
     bad = yaml.safe_load(MINIMAL_YAML)

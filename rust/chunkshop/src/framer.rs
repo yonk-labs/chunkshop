@@ -56,8 +56,7 @@ impl HeadingBoundaryFramer {
         let heading_re = Regex::new(&format!("(?m){}.+$", cfg.pattern))
             .map_err(|e| anyhow!("invalid heading pattern: {e}"))?;
         // Pattern alone for stripping the prefix from a matched heading line.
-        let pattern_re = Regex::new(&cfg.pattern)
-            .map_err(|e| anyhow!("invalid pattern: {e}"))?;
+        let pattern_re = Regex::new(&cfg.pattern).map_err(|e| anyhow!("invalid pattern: {e}"))?;
         Ok(Self {
             cfg,
             heading_re,
@@ -390,8 +389,16 @@ impl FramerImpl for SessionEpisodeFramer {
                 let content = ev.get("content").and_then(|v| v.as_str()).unwrap_or("");
                 lines.push(format!("[{tag}] {content}"));
             }
-            let start_ts = evs.first().and_then(|e| e.get("ts")).cloned().unwrap_or(Value::Null);
-            let end_ts = evs.last().and_then(|e| e.get("ts")).cloned().unwrap_or(Value::Null);
+            let start_ts = evs
+                .first()
+                .and_then(|e| e.get("ts"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let end_ts = evs
+                .last()
+                .and_then(|e| e.get("ts"))
+                .cloned()
+                .unwrap_or(Value::Null);
             let turn_span = evs.len() as u64;
 
             let mut m = base_meta.clone();
@@ -552,8 +559,8 @@ mod tests {
         let mut cfg = default_se_cfg();
         cfg.max_words = 3;
         let evs = vec![
-            json!({"role": "user", "content": "one two three", "ts": 100.0}),     // 3 words
-            json!({"role": "assistant", "content": "next ep", "ts": 101.0}),      // boundary triggers
+            json!({"role": "user", "content": "one two three", "ts": 100.0}), // 3 words
+            json!({"role": "assistant", "content": "next ep", "ts": 101.0}),  // boundary triggers
         ];
         let f = SessionEpisodeFramer::new(cfg);
         let frames = f.frame(&session_doc(evs)).unwrap();

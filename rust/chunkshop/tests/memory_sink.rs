@@ -40,6 +40,7 @@ fn mk_cfg(database: &str, source_tag: &str, namespace: Option<&str>) -> Postgres
         table: "memory".to_string(),
         overwrite: false,
         hnsw: false,
+        vector_metric: "cosine".to_string(),
         mode: "create_if_missing".to_string(),
         source_tag: Some(source_tag.to_string()),
         promote_metadata: vec![
@@ -113,8 +114,13 @@ fn chunk(doc_id: &str, seq_num: usize, content: &str, kind: &str, session_id: &s
 
 #[tokio::test]
 async fn create_table_includes_canonical_plus_promoted_columns() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let database = unique_database();
     let cfg = mk_cfg(&database, "ns1", Some("ns1"));
     let backend = PostgresBackend::new(DSN_ENV.to_string());
@@ -141,7 +147,10 @@ async fn create_table_includes_canonical_plus_promoted_columns() -> anyhow::Resu
         "source",
         "created_at",
     ] {
-        assert!(cols.contains(&c.to_string()), "missing canonical column {c}");
+        assert!(
+            cols.contains(&c.to_string()),
+            "missing canonical column {c}"
+        );
     }
     // Promote columns the memory presets declare
     for c in &[
@@ -163,8 +172,13 @@ async fn create_table_includes_canonical_plus_promoted_columns() -> anyhow::Resu
 
 #[tokio::test]
 async fn write_stamps_tier_namespace_recorded_at_and_kind() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let database = unique_database();
     let cfg = mk_cfg(&database, "ns1", Some("ns1"));
     let backend = PostgresBackend::new(DSN_ENV.to_string());
@@ -207,8 +221,13 @@ async fn write_stamps_tier_namespace_recorded_at_and_kind() -> anyhow::Result<()
 
 #[tokio::test]
 async fn namespace_falls_back_to_source_tag_when_not_explicit() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let database = unique_database();
     // memory.namespace=None → should fall back to source_tag ("ns_via_tag").
     let cfg = mk_cfg(&database, "ns_via_tag", None);
@@ -306,8 +325,13 @@ fn mk_consolidated_with_promote(database: &str, source_tag: &str) -> PostgresTar
 
 #[tokio::test]
 async fn consolidated_supersedes_provisional_scoped_by_source() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let database = unique_database();
     let backend = || PostgresBackend::new(DSN_ENV.to_string());
 
@@ -315,20 +339,32 @@ async fn consolidated_supersedes_provisional_scoped_by_source() -> anyhow::Resul
     let prov_ns1 = MemorySink::new(mk_provisional(&database, "ns1"), backend(), 4);
     prov_ns1.create_table().await?;
     prov_ns1
-        .write_document("s1", &[chunk("s1", 0, "ns1 provisional", "episode", "s1")],
-                         &[vec![0.0; 4]], &[vec![]])
+        .write_document(
+            "s1",
+            &[chunk("s1", 0, "ns1 provisional", "episode", "s1")],
+            &[vec![0.0; 4]],
+            &[vec![]],
+        )
         .await?;
     // ns2 provisional write (same session) — different source_tag.
     let prov_ns2 = MemorySink::new(mk_provisional(&database, "ns2"), backend(), 4);
     prov_ns2
-        .write_document("s1", &[chunk("s1", 0, "ns2 provisional", "episode", "s1")],
-                         &[vec![0.0; 4]], &[vec![]])
+        .write_document(
+            "s1",
+            &[chunk("s1", 0, "ns2 provisional", "episode", "s1")],
+            &[vec![0.0; 4]],
+            &[vec![]],
+        )
         .await?;
     // ns1 consolidated write — must DELETE ns1 provisional but leave ns2 alone.
     let cons_ns1 = MemorySink::new(mk_consolidated_with_promote(&database, "ns1"), backend(), 4);
     cons_ns1
-        .write_document("s1", &[chunk("s1", 0, "ns1 consolidated", "episode", "s1")],
-                         &[vec![0.0; 4]], &[vec![]])
+        .write_document(
+            "s1",
+            &[chunk("s1", 0, "ns1 consolidated", "episode", "s1")],
+            &[vec![0.0; 4]],
+            &[vec![]],
+        )
         .await?;
 
     let rows: Vec<(String, String)> = sqlx::query_as(&format!(
@@ -357,8 +393,13 @@ async fn consolidated_supersedes_provisional_scoped_by_source() -> anyhow::Resul
 
 #[tokio::test]
 async fn double_consolidate_is_idempotent() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let database = unique_database();
     let backend = || PostgresBackend::new(DSN_ENV.to_string());
 
@@ -366,13 +407,21 @@ async fn double_consolidate_is_idempotent() -> anyhow::Result<()> {
     // so each will run the DELETE). Result must still be exactly 1 row.
     let c1 = MemorySink::new(mk_consolidated_with_promote(&database, "ns1"), backend(), 4);
     c1.create_table().await?;
-    c1.write_document("s1", &[chunk("s1", 0, "v1", "episode", "s1")],
-                       &[vec![0.0; 4]], &[vec![]])
-        .await?;
+    c1.write_document(
+        "s1",
+        &[chunk("s1", 0, "v1", "episode", "s1")],
+        &[vec![0.0; 4]],
+        &[vec![]],
+    )
+    .await?;
     let c2 = MemorySink::new(mk_consolidated_with_promote(&database, "ns1"), backend(), 4);
-    c2.write_document("s1", &[chunk("s1", 0, "v2", "episode", "s1")],
-                       &[vec![0.0; 4]], &[vec![]])
-        .await?;
+    c2.write_document(
+        "s1",
+        &[chunk("s1", 0, "v2", "episode", "s1")],
+        &[vec![0.0; 4]],
+        &[vec![]],
+    )
+    .await?;
 
     let n: i64 = sqlx::query_scalar(&format!(
         r#"SELECT count(*) FROM "{database}".memory WHERE doc_id = 's1'"#
@@ -394,8 +443,13 @@ async fn double_consolidate_is_idempotent() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn soft_invalidate_retracts_older_contradicting_fact() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let database = unique_database();
     let backend = || PostgresBackend::new(DSN_ENV.to_string());
 
@@ -405,8 +459,14 @@ async fn soft_invalidate_retracts_older_contradicting_fact() -> anyhow::Result<(
     // Old fact: queue uses redis, effective_from 2026-01-01.
     sink.write_document(
         "s1",
-        &[fact_chunk("s1", 0, "queue", "uses", "redis",
-                     "2026-01-01T00:00:00+00:00")],
+        &[fact_chunk(
+            "s1",
+            0,
+            "queue",
+            "uses",
+            "redis",
+            "2026-01-01T00:00:00+00:00",
+        )],
         &[vec![0.0; 4]],
         &[vec![]],
     )
@@ -414,8 +474,14 @@ async fn soft_invalidate_retracts_older_contradicting_fact() -> anyhow::Result<(
     // Newer contradicting fact: queue uses postgres, effective_from 2026-03-01.
     sink.write_document(
         "s2",
-        &[fact_chunk("s2", 0, "queue", "uses", "postgres",
-                     "2026-03-01T00:00:00+00:00")],
+        &[fact_chunk(
+            "s2",
+            0,
+            "queue",
+            "uses",
+            "postgres",
+            "2026-03-01T00:00:00+00:00",
+        )],
         &[vec![0.0; 4]],
         &[vec![]],
     )
@@ -434,8 +500,13 @@ async fn soft_invalidate_retracts_older_contradicting_fact() -> anyhow::Result<(
     let (obj1, ret1, _eff_to1) = &rows[1];
     assert_eq!(obj0, "redis");
     assert!(*ret0, "older redis fact must be retracted");
-    assert!(eff_to0.as_ref().map(|s| s.starts_with("2026-03-01")).unwrap_or(false),
-            "effective_to on retracted row should be the newer effective_from: {eff_to0:?}");
+    assert!(
+        eff_to0
+            .as_ref()
+            .map(|s| s.starts_with("2026-03-01"))
+            .unwrap_or(false),
+        "effective_to on retracted row should be the newer effective_from: {eff_to0:?}"
+    );
     assert_eq!(obj1, "postgres");
     assert!(!*ret1, "current postgres fact must not be retracted");
 
@@ -445,8 +516,13 @@ async fn soft_invalidate_retracts_older_contradicting_fact() -> anyhow::Result<(
 
 #[tokio::test]
 async fn sparse_triple_is_no_op_on_invalidate() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let database = unique_database();
     let backend = || PostgresBackend::new(DSN_ENV.to_string());
 
@@ -468,11 +544,9 @@ async fn sparse_triple_is_no_op_on_invalidate() -> anyhow::Result<()> {
         &[vec![]],
     )
     .await?;
-    let n: i64 = sqlx::query_scalar(&format!(
-        r#"SELECT count(*) FROM "{database}".memory"#
-    ))
-    .fetch_one(&admin_pool)
-    .await?;
+    let n: i64 = sqlx::query_scalar(&format!(r#"SELECT count(*) FROM "{database}".memory"#))
+        .fetch_one(&admin_pool)
+        .await?;
     assert_eq!(n, 1, "sparse fact must still insert; invalidate must skip");
 
     cleanup(&admin_pool, &database).await?;
@@ -481,8 +555,13 @@ async fn sparse_triple_is_no_op_on_invalidate() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn underscore_prefixed_metadata_keys_stripped() -> anyhow::Result<()> {
-    let Some(dsn) = skip_if_no_dsn() else { return Ok(()); };
-    let admin_pool = PgPoolOptions::new().max_connections(2).connect(&dsn).await?;
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
     let database = unique_database();
     let cfg = mk_cfg(&database, "ns1", Some("ns1"));
     let backend = PostgresBackend::new(DSN_ENV.to_string());

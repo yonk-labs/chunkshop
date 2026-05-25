@@ -6,8 +6,7 @@ use std::path::PathBuf;
 
 use chunkshop::chunker::{ChunkerImpl, HierarchyChunker, SummaryEmbedChunker};
 use chunkshop::config::{
-    ExternalSummarizerConfig, HierarchyChunkerConfig, PassthroughSummarizerConfig,
-    SummarizerConfig,
+    ExternalSummarizerConfig, HierarchyChunkerConfig, PassthroughSummarizerConfig, SummarizerConfig,
 };
 use chunkshop::sources::Document;
 use chunkshop::summarizer::build_summarizer;
@@ -81,17 +80,17 @@ fn make_base_chunker() -> Box<dyn ChunkerImpl + Send + Sync> {
 
 #[test]
 fn rust_summary_embed_passthrough_matches_python() {
-    let corpus = std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt"))
-        .expect("read corpus");
-    let ref_json = std::fs::read_to_string(
-        fixtures_dir().join("summary_embed_passthrough_reference.json"),
-    )
-    .expect("read reference");
+    let corpus =
+        std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt")).expect("read corpus");
+    let ref_json =
+        std::fs::read_to_string(fixtures_dir().join("summary_embed_passthrough_reference.json"))
+            .expect("read reference");
     let r: PassthroughRef = serde_json::from_str(&ref_json).expect("parse");
 
     let summarizer_cfg = SummarizerConfig::Passthrough(PassthroughSummarizerConfig::default());
     let summarizer = build_summarizer(&summarizer_cfg).expect("build summarizer");
-    let chunker = SummaryEmbedChunker::new(make_base_chunker(), summarizer, "passthrough", None, None);
+    let chunker =
+        SummaryEmbedChunker::new(make_base_chunker(), summarizer, "passthrough", None, None);
 
     let doc = Document {
         id: r.doc_id.clone(),
@@ -105,8 +104,8 @@ fn rust_summary_embed_passthrough_matches_python() {
 
 #[test]
 fn rust_summary_embed_external_matches_python() {
-    let corpus = std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt"))
-        .expect("read corpus");
+    let corpus =
+        std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt")).expect("read corpus");
     let ref_json =
         std::fs::read_to_string(fixtures_dir().join("summary_embed_external_reference.json"))
             .expect("read reference");
