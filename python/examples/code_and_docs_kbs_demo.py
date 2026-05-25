@@ -1,34 +1,44 @@
 #!/usr/bin/env python3
-"""# Demo: two-KB ingest pattern — code AND docs side by side
+"""# Demo: two- or three-KB ingest pattern — code, docs, and (optionally) comments
 
-Builds **two** chunkshop tables from a single code repo and queries each
-separately + jointly. The point: source code and prose docs are
-semantically different assets that want different chunkers and
-different extractors, but should share the **same embedder** so they live
-in the same vector space and can be searched together.
+Builds two chunkshop tables from a single code repo and queries each
+separately + jointly. With ``--with-comments`` it builds a THIRD table
+from the comments mined out of the same code files. The point: source
+code, prose docs, and inline rationale are semantically distinct assets
+that want different chunkers and different extractors, but should share
+the **same embedder** so they live in the same vector space and can be
+searched together.
 
 Layout against the chunkshop repo (default `--repo`):
 
 ```
-<schema>.kb_code   <- *.py / *.java / *.go / *.ts / *.js / *.rs
-                     symbol_aware chunker (function-level)
-                     composite: code_summary (lede) + code_relationships
-                     promote_metadata: symbol_name, fqn, symbol_type,
-                                       language, summary, start_line,
-                                       end_line
+<schema>.kb_code     <- *.py / *.java / *.go / *.ts / *.js / *.rs
+                       symbol_aware chunker (function-level)
+                       composite: code_summary (lede) + code_relationships
+                       promote_metadata: symbol_name, fqn, symbol_type,
+                                         language, summary, start_line,
+                                         end_line
 
-<schema>.kb_docs   <- *.md / *.rst / *.txt
-                     sentence_aware chunker (200..1200 chars)
-                     composite: lang_detect + rake_keywords
-                     promote_metadata: language, source_path
+<schema>.kb_docs     <- *.md / *.rst / *.txt
+                       sentence_aware chunker (200..1200 chars)
+                       composite: lang_detect + rake_keywords
+                       promote_metadata: language, source_path
+
+<schema>.kb_comments <- comments mined from the same code files (opt-in)
+                       comment_extracts source (block granularity)
+                       sentence_aware chunker (100..800 chars)
+                       composite: lang_detect + rake_keywords
+                       promote_metadata: language, source_path, kind,
+                                         start_line
 ```
 
-Both tables use the same embedder (Xenova/bge-small-en-v1.5-int8, 384-dim)
-so cross-KB queries are just two ``hybrid_search`` calls over the same
+All tables use the same embedder (Xenova/bge-small-en-v1.5-int8, 384-dim)
+so cross-KB queries are just N ``hybrid_search`` calls over the same
 vector space, merged client-side.
 
 Run:
     python code_and_docs_kbs_demo.py
+    python code_and_docs_kbs_demo.py --with-comments
     python code_and_docs_kbs_demo.py --repo /path/to/some-other-repo
     python code_and_docs_kbs_demo.py --query "your question here"
     python code_and_docs_kbs_demo.py --cleanup
@@ -216,6 +226,84 @@ def _build_code_cell(
     )
 
 
+def _build_comments_cell(
+    *,
+    repo_root: Path,
+    ext: str,
+    schema: str,
+    table: str,
+    dsn_env: str,
+    omp_threads: int,
+):
+    """One sub-cell per code-language extension. All write to the same comments table.
+
+    Uses the new ``comment_extracts`` source so comments land as
+    standalone Documents — sentence_aware then chunks each block into
+    KB-sized rows. Same prose-side extractors as kb_docs (lang_detect,
+    rake) because comments are prose, not code.
+    """
+    from chunkshop.config import (
+        CellConfig,
+        CommentExtractsSource,
+        CompositeExtractor,
+        FastembedEmbedder,
+        LangDetectExtractor,
+        PromoteColumn,
+        RakeKeywordsExtractor,
+        RuntimeConfig,
+        SentenceAwareChunker,
+        TargetConfig,
+    )
+
+    glob_pat = str(repo_root / f"**/*.{ext}")
+    return CellConfig(
+        cell_name=f"kb_comments__{ext}",
+        source=CommentExtractsSource(
+            type="comment_extracts",
+            glob=glob_pat,
+            min_chars=40,            # filter trivial breadcrumbs
+            granularity="block",     # one comment region = one Document
+            include_docstrings=True, # docstrings ARE rationale
+            skip_pragmas=True,       # drop noqa / @ts-ignore / //go:build
+        ),
+        chunker=SentenceAwareChunker(
+            type="sentence_aware",
+            min_chars=100,
+            max_chars=800,
+        ),
+        extractor=CompositeExtractor(
+            type="composite",
+            extractors=[
+                LangDetectExtractor(type="lang_detect"),
+                RakeKeywordsExtractor(type="rake_keywords", top_k=6, min_chars=4),
+            ],
+        ),
+        embedder=FastembedEmbedder(
+            type="fastembed",
+            model_name="Xenova/bge-small-en-v1.5-int8",
+            dim=384,
+            batch_size=64,
+            threads=omp_threads,
+        ),
+        target=TargetConfig(
+            type="postgres",
+            dsn_env=dsn_env,
+            database=schema,
+            table=table,
+            mode="create_if_missing",
+            source_tag=f"comments_{ext}",
+            hnsw=False,
+            promote_metadata=[
+                PromoteColumn(path="language", type="text"),
+                PromoteColumn(path="source_path", type="text"),
+                PromoteColumn(path="kind", type="text"),
+                PromoteColumn(path="start_line", type="int"),
+            ],
+        ),
+        runtime=RuntimeConfig(omp_num_threads=omp_threads, heartbeat_every=50),
+    )
+
+
 def _build_docs_cell(
     *,
     repo_root: Path,
@@ -340,6 +428,15 @@ def _run_cells(
                 dsn_env=dsn_env,
                 omp_threads=omp_threads,
             )
+        elif kind == "comments":
+            cfg = _build_comments_cell(
+                repo_root=repo_root,
+                ext=ext,
+                schema=schema,
+                table=table,
+                dsn_env=dsn_env,
+                omp_threads=omp_threads,
+            )
         else:
             cfg = _build_docs_cell(
                 repo_root=repo_root,
@@ -419,6 +516,23 @@ DEFAULT_QUERIES: tuple[tuple[str, str, str], ...] = (
 )
 
 
+# Extra rationale-style queries when --with-comments — designed to hit
+# the "why did we pick X" content that comments carry and code/docs
+# usually don't.
+COMMENTS_QUERIES: tuple[tuple[str, str, str], ...] = (
+    (
+        "rationale query against kb_comments",
+        "why is the source column write-once on conflict",
+        "comments",
+    ),
+    (
+        "joint rationale query across all KBs",
+        "subprocess isolation across cells reason",
+        "all",
+    ),
+)
+
+
 def _hybrid(
     dsn: str,
     *,
@@ -480,28 +594,25 @@ def _joint_search(
     dsn: str,
     *,
     schema: str,
-    code_table: str,
-    docs_table: str,
+    tables: tuple[tuple[str, str], ...],  # ((origin_label, table_name), ...)
     query: str,
     query_vec,
     k: int,
 ):
-    """UNION of hybrid_search over both tables; dedup by content; keep best score."""
-    code_hits = _hybrid(
-        dsn, schema=schema, table=code_table,
-        query=query, query_vec=query_vec, k=k,
-    )
-    docs_hits = _hybrid(
-        dsn, schema=schema, table=docs_table,
-        query=query, query_vec=query_vec, k=k,
-    )
+    """UNION of hybrid_search across N tables; dedup by content; keep best score.
 
-    # Tag origin onto each hit so the printout can show it.
+    ``tables`` is a tuple of ``(origin_label, table_name)`` pairs — the
+    label is printed next to each hit so the operator can tell which KB
+    a row came from. Two-KB and three-KB callers share this one helper.
+    """
     tagged = []
-    for h in code_hits:
-        tagged.append(("kb_code", h))
-    for h in docs_hits:
-        tagged.append(("kb_docs", h))
+    for origin, tbl in tables:
+        hits = _hybrid(
+            dsn, schema=schema, table=tbl,
+            query=query, query_vec=query_vec, k=k,
+        )
+        for h in hits:
+            tagged.append((origin, h))
 
     # Dedup by chunk content; keep the higher-scoring duplicate.
     by_text: dict[str, tuple[str, object]] = {}
@@ -571,7 +682,10 @@ def _table_stats(dsn: str, schema: str, table: str) -> dict:
 
 
 def _print_summary_table(
-    code_stats: dict, docs_stats: dict, query_results: list[dict]
+    code_stats: dict,
+    docs_stats: dict,
+    query_results: list[dict],
+    comments_stats: Optional[dict] = None,
 ) -> None:
     print()
     print("=" * 72)
@@ -581,10 +695,12 @@ def _print_summary_table(
         ("kb_code", code_stats),
         ("kb_docs", docs_stats),
     ]
-    print(f"  {'table':<10} {'rows':>8} {'docs':>6} {'avg_chars':>11}")
+    if comments_stats is not None:
+        rows.append(("kb_comments", comments_stats))
+    print(f"  {'table':<12} {'rows':>8} {'docs':>6} {'avg_chars':>11}")
     for name, s in rows:
         print(
-            f"  {name:<10} {s['rows']:>8} {s['distinct_docs']:>6} {s['avg_chars']:>11.0f}"
+            f"  {name:<12} {s['rows']:>8} {s['distinct_docs']:>6} {s['avg_chars']:>11.0f}"
         )
 
     print()
@@ -666,6 +782,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default="kb_docs",
         help="Table name for the docs KB (default: kb_docs).",
     )
+    p.add_argument(
+        "--with-comments",
+        action="store_true",
+        help=(
+            "Also build a third KB from comments mined out of the code files "
+            "(uses the comment_extracts source). Default off for backward-compat."
+        ),
+    )
+    p.add_argument(
+        "--comments-table",
+        default="kb_comments",
+        help="Table name for the comments KB when --with-comments (default: kb_comments).",
+    )
     return p.parse_args(argv)
 
 
@@ -730,9 +859,32 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"  kb_docs failed: {docs_result['error']}", file=sys.stderr)
         return 1
 
+    # --- KB 3: comments (opt-in) ---------------------------------------
+    comments_result: Optional[dict] = None
+    comments_stats: Optional[dict] = None
+    if args.with_comments:
+        print("\n--- Cell 3: kb_comments ---")
+        comments_result = _run_cells(
+            repo_root,
+            kind="comments",
+            exts=CODE_EXTS,  # mine comments out of the code files
+            schema=args.schema,
+            table=args.comments_table,
+            dsn_env=dsn_env,
+            omp_threads=args.threads,
+        )
+        if comments_result["error"]:
+            print(
+                f"  kb_comments failed: {comments_result['error']}",
+                file=sys.stderr,
+            )
+            return 1
+
     # --- Stats ---------------------------------------------------------
     code_stats = _table_stats(args.dsn, args.schema, args.code_table)
     docs_stats = _table_stats(args.dsn, args.schema, args.docs_table)
+    if args.with_comments:
+        comments_stats = _table_stats(args.dsn, args.schema, args.comments_table)
     print("\n--- Cell summary ---")
     print(
         f"  kb_code: docs={code_result['docs_processed']} "
@@ -748,6 +900,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         f"embed={docs_result['embed_seconds']:.1f}s "
         f"-> {docs_stats['rows']} row(s) in {args.schema}.{args.docs_table}"
     )
+    if args.with_comments and comments_result is not None and comments_stats is not None:
+        print(
+            f"  kb_comments: docs={comments_result['docs_processed']} "
+            f"chunks={comments_result['chunks_written']} "
+            f"wall={comments_result['wall_seconds']:.1f}s "
+            f"embed={comments_result['embed_seconds']:.1f}s "
+            f"-> {comments_stats['rows']} row(s) in {args.schema}.{args.comments_table}"
+        )
 
     # --- Build FTS indexes (idempotent) before querying ---------------
     # hybrid_search uses both a vector leg and an FTS leg. The cells write
@@ -757,7 +917,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     from chunkshop.search import ensure_fts
 
     print("\n--- Building FTS indexes ---")
-    for tbl in (args.code_table, args.docs_table):
+    fts_tables = [args.code_table, args.docs_table]
+    if args.with_comments:
+        fts_tables.append(args.comments_table)
+    for tbl in fts_tables:
         print(f"  ensure_fts on {args.schema}.{tbl}...")
         ensure_fts(args.dsn, schema=args.schema, table=tbl)
 
@@ -779,14 +942,29 @@ def main(argv: Optional[list[str]] = None) -> int:
     query_results: list[dict] = []
 
     if args.query:
-        # Single user query: run it against code, docs, and joint.
-        queries: tuple[tuple[str, str, str], ...] = (
+        # Single user query: run it against code, docs, joint, and
+        # (if enabled) the comments KB + an all-KB joint.
+        queries_list: list[tuple[str, str, str]] = [
             ("user query against kb_code", args.query, "code"),
             ("user query against kb_docs", args.query, "docs"),
             ("user query joint", args.query, "both"),
-        )
+        ]
+        if args.with_comments:
+            queries_list.append(
+                ("user query against kb_comments", args.query, "comments")
+            )
+            queries_list.append(
+                ("user query joint across all three KBs", args.query, "all")
+            )
+        queries = tuple(queries_list)
     else:
         queries = DEFAULT_QUERIES
+        if args.with_comments:
+            queries = queries + COMMENTS_QUERIES
+
+    # Pre-build the joint-table tuples so we don't recompute per query.
+    both_tables = (("kb_code", args.code_table), ("kb_docs", args.docs_table))
+    all_tables = both_tables + (("kb_comments", args.comments_table),)
 
     for label, q, target in queries:
         qv = embedder.embed([q])[0]
@@ -804,17 +982,34 @@ def main(argv: Optional[list[str]] = None) -> int:
                 query=q, query_vec=qv, k=5,
             )
             query_results.append(_print_hits(f"{label}: {q!r}", hits))
+        elif target == "comments":
+            hits = _hybrid(
+                args.dsn,
+                schema=args.schema, table=args.comments_table,
+                query=q, query_vec=qv, k=5,
+            )
+            query_results.append(_print_hits(f"{label}: {q!r}", hits))
+        elif target == "all":
+            merged = _joint_search(
+                args.dsn,
+                schema=args.schema,
+                tables=all_tables,
+                query=q, query_vec=qv, k=5,
+            )
+            query_results.append(_print_joint(f"{label}: {q!r}", merged))
         else:  # both
             merged = _joint_search(
                 args.dsn,
                 schema=args.schema,
-                code_table=args.code_table, docs_table=args.docs_table,
+                tables=both_tables,
                 query=q, query_vec=qv, k=5,
             )
             query_results.append(_print_joint(f"{label}: {q!r}", merged))
 
     # --- Summary table -------------------------------------------------
-    _print_summary_table(code_stats, docs_stats, query_results)
+    _print_summary_table(
+        code_stats, docs_stats, query_results, comments_stats=comments_stats,
+    )
 
     # --- Cleanup hint --------------------------------------------------
     print()

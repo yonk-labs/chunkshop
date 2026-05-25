@@ -7,6 +7,7 @@ and `from chunkshop.sources import load_source` without dragging in
 Mirrors the lazy pattern already used in `chunkshop.sinks.__init__`.
 """
 from chunkshop.config import (
+    CommentExtractsSource as CommentExtractsCfg,
     FilesSource as FilesCfg,
     InlineSource as InlineCfg,
     JsonCorpusSource as JsonCfg,
@@ -28,6 +29,9 @@ def load_source(cfg: SourceConfig) -> Source:
     if isinstance(cfg, FilesCfg):
         from chunkshop.sources.files import FilesSource
         return FilesSource(cfg)
+    if isinstance(cfg, CommentExtractsCfg):
+        from chunkshop.sources.comment_extracts import CommentExtractsSource
+        return CommentExtractsSource(cfg)
     if isinstance(cfg, JsonCfg):
         from chunkshop.sources.json_corpus import JsonCorpusSource
         return JsonCorpusSource(cfg)
