@@ -14,12 +14,13 @@ a starting point to copy into your own code.
 # types via sys.modules[cls.__module__].__dict__, which is None for such a
 # module and raises AttributeError. Eager annotations (no future import) avoid
 # that. dict[str, TaskResult] etc. work natively on the required Python 3.12+.
-import asyncio, time
+import asyncio
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional
 
-from chunkshop.sources.base import Document, IncrementalSource, PrunableSource
+from chunkshop.sources.base import Document, IncrementalSource
 
 
 class SourceTaskType(str, Enum):
