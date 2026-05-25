@@ -1,0 +1,15 @@
+chunkshop-connectors
+Copyright (c) 2026 The Yonk and chunkshop contributors
+
+This product includes software developed by the Onyx project
+(https://github.com/onyx-dot-app/onyx), licensed under the MIT Expat
+license, originally adapted into RAGFlow's `common/data_source/` tree
+(https://github.com/infiniflow/ragflow).
+
+chunkshop-connectors lifts the MIT-licensed `common/data_source/` files
+from RAGFlow (Apache-2.0 overall; the data_source subtree carries an
+explicit MIT header with Onyx attribution preserved verbatim).
+
+Full upstream licence text and provenance details:
+  - THIRD-PARTY-LICENSES.md
+  - src/chunkshop_connectors/_PROVENANCE.md

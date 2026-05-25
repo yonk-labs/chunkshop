@@ -1,0 +1,81 @@
+[project]
+name = "chunkshop-connectors"
+version = "0.1.0"
+description = "First-party connector plugins for chunkshop (RAGFlow/Onyx MIT lift)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "The Yonk", email = "matt@theyonk.com" }]
+keywords = ["chunkshop", "connectors", "rag", "data-ingest", "onyx", "ragflow"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "chunkshop>=0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-asyncio>=0.21",
+    "pytest_httpserver>=1.0",
+]
+gdrive = []
+github = []
+slack = []
+blob = ["boto3>=1.28"]
+rss = ["feedparser>=6.0"]
+notion = []
+confluence = []
+jira = []
+dropbox = []
+box = []
+gitlab = []
+bitbucket = []
+gmail = []
+imap = []
+discord = []
+airtable = []
+asana = []
+zendesk = []
+sharepoint = []
+teams = []
+seafile = []
+webdav = []
+moodle = []
+dingtalk = []
+rest_api = []
+all = [
+    "chunkshop-connectors[gdrive,github,slack,blob,rss,notion,confluence,jira,dropbox,box,gitlab,bitbucket,gmail,imap,discord,airtable,asana,zendesk,sharepoint,teams,seafile,webdav,moodle,dingtalk,rest_api]",
+]
+
+# Connector plugins register source types under the "chunkshop.sources"
+# entry-point group. Each connector adds one line below as it lands; see
+# docs/cookbook/authoring-connectors.md in the chunkshop core repo.
+[project.entry-points."chunkshop.sources"]
+# populated as connectors are added (Tasks 4-9)
+
+[project.urls]
+Homepage = "https://github.com/yonk-labs/chunkshop"
+Issues = "https://github.com/yonk-labs/chunkshop/issues"
+Repository = "https://github.com/yonk-labs/chunkshop.git"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# Resolve chunkshop from the sibling in-repo path so editable installs of
+# this plugin always pick up the current main chunkshop, not PyPI. When
+# building a wheel for PyPI publication, this section is ignored by the
+# build backend.
+[tool.uv.sources]
+chunkshop = { path = "..", editable = true }
