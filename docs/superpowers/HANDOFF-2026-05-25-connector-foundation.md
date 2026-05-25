@@ -45,3 +45,46 @@ Plan: `...-sp3-files-rich-parsing.md`. Independent of SP-2; can run in parallel.
 ## Execution method used
 
 `superpowers:subagent-driven-development` — SP-1's 19 tasks were run as 6 cohesive same-file groups (each a fresh general-purpose subagent doing strict TDD per the plan), with diffs spot-checked between groups and a full opus code-review at the end. Continue the same way.
+
+## Paste-ready resume prompt (next session)
+
+```
+Resume the chunkshop connector-plugin-foundation build. Full context is in the
+worktree /home/yonk/yonk-tools/chunkshop-sp1 (branch feat/connector-foundation,
+pushed to origin). START by reading:
+  docs/superpowers/HANDOFF-2026-05-25-connector-foundation.md   (state + next steps)
+  docs/superpowers/specs/2026-05-25-chunkshop-connector-plugin-foundation-design.md
+
+Work in that worktree. Tests: from python/ run `uv run --no-sync pytest -q`.
+Bring up the test DB first: `docker compose -f docker-compose.test.yaml up -d`
+(Postgres on :5434). The 6 lede-import failures are pre-existing/expected — ignore
+them (or `uv pip install -e ".[lede]"` to silence). Lint via `uvx ruff check`.
+
+Use superpowers:subagent-driven-development (one cohesive group per fix, strict TDD,
+opus for review). Do these IN ORDER:
+
+1. Finish SP-1 (two review findings still open):
+   - Finding #2 (pg_table tuple cursor): replace strict `WHERE updated_at > %s` with a
+     tuple cursor {"after_ts","after_id"}, query `WHERE (updated_at_col,id_col) > (%s,%s)
+     ORDER BY updated_at_col,id_col`, cursor_from(doc)->{"after_ts":<iso>,"after_id":doc.id}.
+     Keep the no-column full-resync fallback. WRITE THE DUPLICATE-TIMESTAMP TEST FIRST
+     (two rows same updated_at; sync both, re-sync from advanced cursor -> yields neither).
+     A prior attempt was broken+reverted; the bug was a cursor-key/param mismatch.
+   - Finding #3 (oauth/refresh.py): normalize naive expires_at to UTC before subtracting
+     (TypeError today). Add naive-datetime tests (within leeway -> refreshed; outside -> None).
+   - Add the spec-§6 test: real PgTableSource through assert_idempotent_on_re_emit (DB-backed,
+     must PASS not skip).
+   - Re-run the opus final code-review over `git diff main...HEAD`; fix anything high-confidence.
+   - Then superpowers:finishing-a-development-branch to merge feat/connector-foundation -> main.
+
+2. SP-2 prep then build: FIRST reconcile docs/superpowers/plans/...-sp2-...md against the
+   LANDED SP-1 API (registry.load_connector(name,config), IncrementalSource, the merge-delta
+   cursor_from contract, ConnectorSource config, RawStore). Then execute it — Task 0 must
+   locate the RAGFlow checkout on this Linux host (brief path is macOS; likely absent — may
+   need to clone https://github.com/infiniflow/ragflow). Many tasks are [READ-AT-EXEC].
+
+3. SP-3 (files.py rich parsing): independent, fully detailed TDD plan; can run in parallel
+   with SP-2 in its own worktree.
+
+Verify and test every pattern/user flow as you go. Don't merge anything red.
+```
