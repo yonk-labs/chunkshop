@@ -760,6 +760,24 @@ class CompositeExtractor(_Base):
     extractors: list["ExtractorConfig"] = Field(default_factory=list)
 
 
+class CodeRelationshipsExtractor(_Base):
+    """Cross-file code-symbol relationship extractor (SP-C).
+
+    Per-chunk: attaches ``metadata['callees']`` for each chunk. Corpus-level:
+    accumulates symbols + call sites across all chunks in a cell run; the
+    extractor's ``finalize()`` method then resolves callees to FQNs by
+    unique-name (D5). The optional ``target_schema`` is consumed by the
+    standalone ``write_edges()`` helper that the consumer calls after the
+    cell completes — the runner itself does not invoke ``finalize`` yet
+    (extractor contract is per-chunk only in v1).
+    """
+
+    type: Literal["code_relationships"]
+    target_schema: Optional[str] = None
+    unique_match_confidence: float = Field(default=0.9, ge=0.0, le=1.0)
+    ambiguous_match_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
 ExtractorConfig = Annotated[
     Union[
         NoneExtractor,
@@ -770,6 +788,7 @@ ExtractorConfig = Annotated[
         LedeTopTermsExtractor,
         LedeReportExtractor,
         CompositeExtractor,
+        CodeRelationshipsExtractor,
     ],
     Field(discriminator="type"),
 ]

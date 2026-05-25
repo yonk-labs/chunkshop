@@ -1,4 +1,5 @@
 from chunkshop.config import (
+    CodeRelationshipsExtractor as CodeRelCfg,
     CompositeExtractor as CompositeCfg,
     ExtractorConfig,
     KeyBertPhrasesExtractor as KeyBertCfg,
@@ -10,6 +11,7 @@ from chunkshop.config import (
     SpacyEntitiesExtractor as SpacyCfg,
 )
 from chunkshop.extractors.base import Extractor
+from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
 from chunkshop.extractors.composite import CompositeExtractor
 from chunkshop.extractors.keybert_phrases import KeyBertPhrasesExtractor
 from chunkshop.extractors.lang_detect import LangDetectExtractor
@@ -38,6 +40,8 @@ def load_extractor(cfg: ExtractorConfig) -> Extractor:
         return LedeReportExtractor(cfg)
     if isinstance(cfg, CompositeCfg):
         return CompositeExtractor(cfg)
+    if isinstance(cfg, CodeRelCfg):
+        return CodeRelationshipsExtractor(cfg)
     raise ValueError(f"unknown extractor type: {type(cfg).__name__}")
 
 
