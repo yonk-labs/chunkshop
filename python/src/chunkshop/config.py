@@ -484,6 +484,33 @@ class ConsolidationChunker(_Base):
         return self
 
 
+class CodeAwareChunker(_Base):
+    """Split source code at function/class boundaries via the stdlib ``ast`` module.
+
+    For ``.py`` files (or ``language='python'``) the chunker walks top-level AST
+    nodes and emits one chunk per function/class. Module-level statements
+    (imports, constants) gather into a leading ``module_block`` chunk. With
+    ``include_imports=True`` (default), each chunk's ``embedded_content`` is
+    prefixed with the file's import block so embeddings carry context like
+    "uses BeautifulSoup". ``original_content`` always holds the raw source
+    segment without that framing.
+
+    For any other extension the chunker delegates to the configured
+    ``if_oversize`` chunker (falling back to ``sentence_aware`` when unset).
+    Malformed Python (``ast.parse`` raises ``SyntaxError``) emits one chunk
+    holding the whole doc with ``strategy='code_aware_fallback'``.
+    """
+    type: Literal["code_aware"]
+    max_chars: int = 4000  # soft cap; oversize functions stay whole unless if_oversize is set
+    min_chars: int = 100   # smaller-than-this module-level statements may still emit as a block
+    include_imports: bool = True
+    language: Literal["python", "auto"] = "auto"
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        return self.max_chars
+
+
 class HierarchicalSummaryChunker(_Base):
     """Emit base (fine) chunks plus coarse summary chunks linked by group_id."""
     type: Literal["hierarchical_summary"]
@@ -529,6 +556,7 @@ ChunkerConfig = Annotated[
         ConsolidationChunker,
         HierarchicalSummaryChunker,
         SemanticChunker,
+        CodeAwareChunker,
     ],
     Field(discriminator="type"),
 ]
@@ -540,6 +568,7 @@ SemanticChunker.model_rebuild()
 SummaryEmbedChunker.model_rebuild()
 ConsolidationChunker.model_rebuild()
 HierarchicalSummaryChunker.model_rebuild()
+CodeAwareChunker.model_rebuild()
 
 
 class IdentityFramerConfig(_Base):
