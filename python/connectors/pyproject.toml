@@ -22,6 +22,17 @@ dev = [
     "pytest>=7",
     "pytest-asyncio>=0.21",
     "pytest_httpserver>=1.0",
+    # Required so the URL-crawl e2e tests (chunkshop core's depth-bounded
+    # HttpSource crawler) actually exercise the bs4-backed link extraction
+    # path instead of silently `pytest.importorskip`-skipping on a clean CI.
+    "beautifulsoup4>=4.12",
+    # Required so the sqlite-backed e2e tests exercise the vector path
+    # instead of silently skipping when the sqlite-vec runtime isn't loaded.
+    "sqlite-vec>=0.1.3",
+    # Used by URL-crawl, github, and gdrive tests via httpx.MockTransport
+    # (already pulled transitively today, but the test path depends on it
+    # directly — declare it here for CI determinism).
+    "httpx>=0.26",
 ]
 gdrive = ["httpx>=0.26"]
 github = ["httpx>=0.26"]
