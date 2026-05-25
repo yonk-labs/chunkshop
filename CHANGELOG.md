@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-05-25
+
+Connector platform + code understanding. Adds the SP-1 plugin-foundation
+(IncrementalSource / PrunableSource / SyncMode Protocols + entry-point
+registry with per-plugin import isolation + RawStore primitive + OAuth
+interfaces), four verified-tier connectors via the new in-monorepo
+`chunkshop-connectors` plugin package (blob, rss, github, gdrive — the
+last two with real-OAuth e2e demos), 23 experimental-tier stubs
+registered behind the same seam, SP-3 file rich-parsing (PDF / DOCX /
+PPTX / XLSX / HTML behind opt-in extras), depth-bounded URL crawl with
+ETag + Last-Modified incremental cursors, two new code-aware chunkers
+(`code_aware` stdlib-ast for Python, `symbol_aware` tree-sitter for
+Python/Java + regex fallback for Go/TS/JS), two new code-aware
+extractors (`code_relationships` with cross-file edge resolution +
+`write_edges` materialization, `code_summary` with lede/callable/
+first-N-sentences backends), CLI `search --by-symbol` filter +
+`chunkshop impact-of` subcommand with recursive-CTE N-hop traversal,
+runner integration that auto-fires `extractor.finalize()` to materialize
+the `code_edges` table.
+
+**Test coverage**: core suite 530 → 701+, connectors suite 7 → 140
+(verified-tier behavioral + experimental smoke + chunker×extractor
+orthogonality matrix + attribution audit + e2e), real-world 5-KB
+integration demo (3 GitHub repos + cross-cutting MD + 5 arxiv PDFs +
+4 LLM-MD + ClickHouse → 5 hybrid-searchable KBs in ~14 minutes).
+
+**Verified benefit**: 98.2% token reduction vs grep+load with higher
+precision@5 across 10 realistic engineering queries
+(`docs/benchmarks/grep-vs-hybrid-2026-05-25.md`).
+
+**Pre-existing skips graduated**: the 6 lede/lede-spacy tests are now
+skip-not-fail when the spaCy model isn't installed (CLAUDE.md's stale
+"6 failures" note updated). CI now installs the full extras set
+(`[code]`, `[lede-spacy]`, `[all-parsers]`, chunkshop-connectors
+plugin) + `en_core_web_sm` so those tests actually run in CI.
+
+**Security**: closes 3 Dependabot advisories (urllib3 high+high,
+idna medium) via `uv lock --upgrade-package`.
+
+Full per-commit changelog: `docs/CHANGES-2026-05-25.md`.
+Agent reference (single self-contained doc for LLM consumers):
+`docs/AGENT_REFERENCE.md`.
+
 ## 0.5.0 — 2026-05-22
 
 Search lands. This release adds lede v0.4 hint-biased extraction, a hybrid

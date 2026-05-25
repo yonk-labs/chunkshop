@@ -64,25 +64,58 @@ jobs:
         # local dev. --wait blocks until every service's healthcheck passes.
         run: docker compose -f docker-compose.test.yaml up -d --wait
 
-      - name: Install project + dev + nlp + lede + all backend extras
+      - name: Install project + dev + nlp + lede + lede-spacy + all-backends + code + all-parsers
         working-directory: python
         # --frozen installs strictly from the committed lockfile and refuses
         # to update it. Catches "I forgot to commit uv.lock after adding a
         # dep" before it merges. all-backends pulls pymysql /
         # clickhouse-connect / sqlite-vec so the modular-backend test modules
-        # import (they fail at *collection* otherwise). lede provides the
-        # query-hint/summary feature the search tests exercise (they import
-        # chunkshop.summarizers.lede directly and have no skip-guard).
-        run: uv sync --frozen --extra dev --extra extractors --extra nlp --extra all-backends --extra lede
+        # import (they fail at *collection* otherwise). lede + lede-spacy
+        # provide the query-hint/summary feature the search tests exercise
+        # (they import chunkshop.summarizers.lede directly and have no
+        # skip-guard; without lede-spacy the spaCy-backed hint expansion
+        # tests skip instead of running). code pulls tree-sitter +
+        # tree-sitter-python + tree-sitter-java for the SP-A codeparse
+        # surface (symbol_aware chunker, code_relationships extractor).
+        # all-parsers pulls pypdf / python-docx / python-pptx / openpyxl /
+        # beautifulsoup4 so the SP-3 file-parser tests run instead of
+        # importorskip-ing.
+        run: uv sync --frozen --extra dev --extra extractors --extra nlp --extra all-backends --extra lede --extra lede-spacy --extra code --extra all-parsers
+
+      - name: Install spaCy English model (for lede-spacy hint-expansion tests)
+        working-directory: python
+        # The 6 lede-report / cli-search summary tests need en_core_web_sm
+        # at runtime. lede-spacy gates on its presence — without this step
+        # those tests skip-not-fail. The download is ~12 MB.
+        run: uv run --no-sync python -m spacy download en_core_web_sm
+
+      - name: Install chunkshop-connectors (plugin package) + its test deps
+        working-directory: python/connectors
+        # The plugin package isn't in the core chunkshop test suite; it has
+        # its own pytest tree (verified-tier connectors + experimental stubs
+        # + chunker-x-extractor matrix + e2e demos). Its [dev] extra includes
+        # beautifulsoup4 / sqlite-vec / httpx / pytest_httpserver / rake-nltk
+        # so the url-crawl + sqlite + httpx-mock + rake-extractor cells run
+        # instead of importorskip-ing. Editable install resolves chunkshop
+        # from the sibling python/ checkout (see [tool.uv.sources]).
+        run: uv sync --extra dev
 
       - name: Verify pgvector extension available
         run: |
           PGPASSWORD=postgres psql -h localhost -p 5434 -U postgres -d chunkshop_test \
             -c "CREATE EXTENSION IF NOT EXISTS vector; SELECT extversion FROM pg_extension WHERE extname='vector';"
 
-      - name: pytest (unit + integration)
+      - name: pytest (core chunkshop — unit + integration)
         working-directory: python
         run: uv run pytest -q --tb=short
+
+      - name: pytest (chunkshop-connectors plugin suite)
+        working-directory: python/connectors
+        # Connectors run their own suite — verified-tier connector tests,
+        # experimental-tier smoke tests, chunker-x-extractor orthogonality
+        # matrix, attribution audit. Slow marker excluded by default (those
+        # are the live-network e2e demos); add `-m slow` locally to run them.
+        run: uv run --no-sync --project . pytest -q --tb=short
 
       - name: Run functional scenarios (tests/sub)
         run: bash tests/sub/run-all.sh

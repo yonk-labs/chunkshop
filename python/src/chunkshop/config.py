@@ -173,7 +173,7 @@ class HttpSource(_Base):
     request_delay_seconds: float = Field(default=0.5, ge=0)
     respect_robots: bool = True
     max_pages: int = Field(default=1000, ge=1)
-    user_agent: str = "chunkshop/0.5 (+https://github.com/yonk-labs/chunkshop)"
+    user_agent: str = "chunkshop/0.6 (+https://github.com/yonk-labs/chunkshop)"
 
 
 class S3Source(_Base):

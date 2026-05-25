@@ -13,18 +13,25 @@ All commands below assume you're in `python/` unless noted. `uv` is the default 
 ```bash
 cd python
 
-# Install — always include [extractors] so the RAKE test doesn't fail
-uv sync --extra dev --extra extractors --extra all-backends
+# Install — the full extras set CI uses (so local runs match what CI exercises).
+# `code` pulls tree-sitter + Python/Java grammars for the symbol_aware chunker
+# + code_relationships extractor. `all-parsers` pulls pypdf/python-docx/etc.
+# for the SP-3 file-parser layer. `lede` + `lede-spacy` flip the 6 search /
+# hint-expansion tests from skip-not-fail to PASS once the spaCy model is
+# installed (see the next line). Skip extras you don't use to keep the venv
+# leaner; the affected tests skip cleanly when their extra is absent.
+uv sync --extra dev --extra extractors --extra nlp --extra all-backends \
+        --extra lede --extra lede-spacy --extra code --extra all-parsers
+uv run --no-sync python -m spacy download en_core_web_sm   # for lede-spacy
+uv run --no-sync pytest -q        # --no-sync preserves extras + model
 
-# Full test suite (some tests skip if Postgres unreachable)
-uv run pytest -q
-
-# lede / lede-spacy / hybrid-search tests (I-1): the lede-spacy extra + a spaCy
-# model are NOT in the default sync, and a plain `uv run` re-syncs and prunes them
-# (the lede expansion tests then silently SKIP). To actually run them:
-#   uv pip install -e ".[lede]" -e ".[lede-spacy]"
-#   uv run --no-sync python -m spacy download en_core_web_sm
-#   uv run --no-sync pytest -q        # --no-sync preserves the extras + model
+# chunkshop-connectors plugin suite (verified-tier blob/rss/github/gdrive +
+# experimental stubs + chunker-x-extractor matrix + attribution audit) lives
+# in a separate package with its own pytest tree:
+cd connectors && uv sync --extra dev
+uv run --no-sync --project . pytest -q
+# `-m slow` to also run the live-network e2e demos (gdrive OAuth, GitHub PAT,
+# 5-KB orchestrator, URL crawl against example.com, etc.)
 
 # Single test file
 uv run pytest tests/chunkshop/test_sink_append_mode.py -v
@@ -81,9 +88,22 @@ The pipeline is `Source → Chunker → Embedder → Extractor → Sink`. Every 
 
 **Identifier safety.** `table`, `schema`, `source_tag`, and `PromoteColumn.path` each pass through a regex validator (`^[a-z_][a-z0-9_]*$` for idents; `^[A-Za-z_][A-Za-z0-9_]*$` per segment for jsonb paths, dot-separated). This is SQL-injection-prevention by allowlist — don't widen the regex without reading `PromoteColumn._safe_path` comments.
 
-### The four chunkers (+ a benchmark verdict)
+### Chunker inventory (+ a benchmark verdict)
 
-`sentence_aware`, `fixed_overlap`, `hierarchy`, `neighbor_expand`. chunkshop's own factorial bakeoff (772-doc legal QA corpus, 30 gold questions) found `hierarchy` wins every embedder column by prepending the section heading to `embedded_content` as free framing context. `hierarchy + int8 bge-small` is the shipped default in `example-files-to-bge.yaml`. Full discussion in `docs/chunkers.md`.
+Prose: `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`,
+`semantic`. Summarization layers: `summary_embed`, `hierarchical_summary`,
+`consolidation`. Code-aware: `code_aware` (Python AST, stdlib), `symbol_aware`
+(multi-lang tree-sitter — Python + Java, with regex fallback for Go / TS / JS;
+stamps `fqn` + `node_id` per chunk to drive `chunkshop search --by-symbol` +
+`chunkshop impact-of`).
+
+chunkshop's own factorial bakeoff (772-doc legal QA corpus, 30 gold questions)
+found `hierarchy` wins every embedder column on prose by prepending the section
+heading to `embedded_content` as free framing context. `hierarchy + int8
+bge-small` is the shipped default in `example-files-to-bge.yaml`. For source-
+code corpora, `symbol_aware` is the right reach — it's what unlocks
+`code_relationships` extractor's cross-file edge resolution. Full discussion in
+`docs/chunkers.md` + per-chunker reference at `docs/reference/chunker-*.md`.
 
 ## Repo conventions
 
