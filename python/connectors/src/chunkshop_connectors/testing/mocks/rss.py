@@ -10,7 +10,16 @@ import sys
 import types
 from typing import Any
 
-import pytest
+# pytest is gated so this module imports cleanly on `pip install
+# chunkshop-connectors` without dev extras. The `_Entry` / `_FakeFeed` /
+# `_RssMockHandle` classes are usable from non-pytest contexts; only the
+# `rss_mock` fixture below requires pytest.
+try:
+    import pytest  # noqa: F401
+    _HAS_PYTEST = True
+except ImportError:
+    pytest = None  # type: ignore[assignment]
+    _HAS_PYTEST = False
 
 
 class _Entry:
@@ -51,47 +60,51 @@ class _RssMockHandle:
         self.valid_config = config
 
 
-@pytest.fixture
-def rss_mock(monkeypatch):
-    """Provide a fake feedparser module + a valid_config for the rss connector.
+if _HAS_PYTEST:
+    @pytest.fixture
+    def rss_mock(monkeypatch):
+        """Provide a fake feedparser module + a valid_config for the rss connector.
 
-    Seeds three entries — one with a full Atom content list, one with
-    only summary, one with neither id nor content (exercises the
-    fallback paths).
-    """
-    entries = [
-        _Entry(
-            id="urn:entry:1",
-            title="First post",
-            link="https://example.com/1",
-            summary="short summary one",
-            published="Mon, 01 Jan 2024 00:00:00 GMT",
-            author="alice",
-            content=[{"value": "<p>Full body of post one</p>"}],
-        ),
-        _Entry(
-            id="urn:entry:2",
-            title="Second post",
-            link="https://example.com/2",
-            summary="just a summary",
-            published="Tue, 02 Jan 2024 00:00:00 GMT",
-        ),
-        _Entry(
-            id="",
-            title="Third post",
-            link="https://example.com/3",
-            summary="",
-            published="Wed, 03 Jan 2024 00:00:00 GMT",
-        ),
-    ]
-    feed = _FakeFeed(entries)
+        Seeds three entries — one with a full Atom content list, one with
+        only summary, one with neither id nor content (exercises the
+        fallback paths).
+        """
+        entries = [
+            _Entry(
+                id="urn:entry:1",
+                title="First post",
+                link="https://example.com/1",
+                summary="short summary one",
+                published="Mon, 01 Jan 2024 00:00:00 GMT",
+                author="alice",
+                content=[{"value": "<p>Full body of post one</p>"}],
+            ),
+            _Entry(
+                id="urn:entry:2",
+                title="Second post",
+                link="https://example.com/2",
+                summary="just a summary",
+                published="Tue, 02 Jan 2024 00:00:00 GMT",
+            ),
+            _Entry(
+                id="",
+                title="Third post",
+                link="https://example.com/3",
+                summary="",
+                published="Wed, 03 Jan 2024 00:00:00 GMT",
+            ),
+        ]
+        feed = _FakeFeed(entries)
 
-    fake_feedparser = types.ModuleType("feedparser")
-    fake_feedparser.parse = lambda url, **kwargs: feed
-    monkeypatch.setitem(sys.modules, "feedparser", fake_feedparser)
+        fake_feedparser = types.ModuleType("feedparser")
+        fake_feedparser.parse = lambda url, **kwargs: feed
+        monkeypatch.setitem(sys.modules, "feedparser", fake_feedparser)
 
-    handle = _RssMockHandle(
-        feed=feed,
-        config={"url": "https://example.com/feed.xml"},
-    )
-    return handle
+        handle = _RssMockHandle(
+            feed=feed,
+            config={"url": "https://example.com/feed.xml"},
+        )
+        return handle
+
+
+__all__ = ["_Entry", "_FakeFeed", "_RssMockHandle"] + (["rss_mock"] if _HAS_PYTEST else [])

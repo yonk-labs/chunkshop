@@ -18,7 +18,16 @@ import sys
 import types
 from typing import Any
 
-import pytest
+# pytest is gated so this module imports cleanly on `pip install
+# chunkshop-connectors` without dev extras (the bundled demos and the
+# `_FakeS3Client` / `_BlobMockHandle` classes don't need pytest — only the
+# `blob_mock` pytest fixture below does).
+try:
+    import pytest  # noqa: F401
+    _HAS_PYTEST = True
+except ImportError:
+    pytest = None  # type: ignore[assignment]
+    _HAS_PYTEST = False
 
 
 class _FakeS3Client:
@@ -68,32 +77,36 @@ class _BlobMockHandle:
         self.valid_config = config
 
 
-@pytest.fixture
-def blob_mock(monkeypatch):
-    """Provide a fake boto3.client + a valid_config dict for the blob connector.
+if _HAS_PYTEST:
+    @pytest.fixture
+    def blob_mock(monkeypatch):
+        """Provide a fake boto3.client + a valid_config dict for the blob connector.
 
-    The fixture seeds three small text objects under prefix ``docs/``
-    so the connector yields three Documents by default. Tests that
-    need different fixtures can replace ``handle.client.objects`` in
-    place — boto3's ``client(...)`` is wired to return the same
-    handle each call.
-    """
-    objects: list[tuple[str, str, bytes]] = [
-        ("docs/a.txt", '"etag-a"', b"alpha content"),
-        ("docs/b.txt", '"etag-b"', b"beta content"),
-        ("docs/c.md", '"etag-c"', b"gamma content"),
-    ]
-    fake_client = _FakeS3Client(objects)
+        The fixture seeds three small text objects under prefix ``docs/``
+        so the connector yields three Documents by default. Tests that
+        need different fixtures can replace ``handle.client.objects`` in
+        place — boto3's ``client(...)`` is wired to return the same
+        handle each call.
+        """
+        objects: list[tuple[str, str, bytes]] = [
+            ("docs/a.txt", '"etag-a"', b"alpha content"),
+            ("docs/b.txt", '"etag-b"', b"beta content"),
+            ("docs/c.md", '"etag-c"', b"gamma content"),
+        ]
+        fake_client = _FakeS3Client(objects)
 
-    fake_boto3 = types.ModuleType("boto3")
-    fake_boto3.client = lambda *a, **k: fake_client
-    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+        fake_boto3 = types.ModuleType("boto3")
+        fake_boto3.client = lambda *a, **k: fake_client
+        monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
 
-    handle = _BlobMockHandle(
-        client=fake_client,
-        config={
-            "bucket": "test-bucket",
-            "prefix": "docs/",
-        },
-    )
-    return handle
+        handle = _BlobMockHandle(
+            client=fake_client,
+            config={
+                "bucket": "test-bucket",
+                "prefix": "docs/",
+            },
+        )
+        return handle
+
+
+__all__ = ["_FakeS3Client", "_BlobMockHandle"] + (["blob_mock"] if _HAS_PYTEST else [])

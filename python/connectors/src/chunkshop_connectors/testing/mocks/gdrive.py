@@ -30,7 +30,17 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-import pytest
+
+# pytest is gated so this module is importable from runtime-only contexts
+# (e.g. the standalone `make_gdrive_mock()` factory used by the bundled
+# demo `e2e_gdrive_mocked.py` — that demo MUST work on a fresh
+# `pip install chunkshop-connectors[gdrive]` without dev extras).
+try:
+    import pytest  # noqa: F401
+    _HAS_PYTEST = True
+except ImportError:
+    pytest = None  # type: ignore[assignment]
+    _HAS_PYTEST = False
 
 
 # ---- Fixture state ------------------------------------------------------
@@ -309,12 +319,15 @@ def make_gdrive_mock():
 
 
 # ---- pytest fixture ----------------------------------------------------
-@pytest.fixture
-def gdrive_mock():
-    """Provide a Drive v3 mock seeded with one google-doc, one text file,
-    and one image (the image is silently skipped by the connector).
-    """
-    return make_gdrive_mock()
+# Only registered when pytest is importable; the `make_gdrive_mock()` factory
+# above is the non-pytest interface the bundled demos use.
+if _HAS_PYTEST:
+    @pytest.fixture
+    def gdrive_mock():
+        """Provide a Drive v3 mock seeded with one google-doc, one text file,
+        and one image (the image is silently skipped by the connector).
+        """
+        return make_gdrive_mock()
 
 
-__all__ = ["gdrive_mock", "make_gdrive_mock"]
+__all__ = ["make_gdrive_mock"] + (["gdrive_mock"] if _HAS_PYTEST else [])

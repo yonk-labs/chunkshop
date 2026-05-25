@@ -27,8 +27,18 @@ import base64
 import re
 from typing import Any
 
-import pytest
-from werkzeug.wrappers import Request, Response
+# pytest + werkzeug are gated so this module imports cleanly on a fresh
+# `pip install chunkshop-connectors[github]` (without dev extras). The
+# bare classes/handlers below are usable from non-pytest contexts; only
+# the `github_mock` fixture itself needs the test deps.
+try:
+    import pytest  # noqa: F401
+    from werkzeug.wrappers import Request, Response  # noqa: F401
+    _HAS_PYTEST = True
+except ImportError:
+    pytest = None  # type: ignore[assignment]
+    Request = Response = None  # type: ignore[assignment,misc]
+    _HAS_PYTEST = False
 
 
 # Default repo fixture content. Keys are file paths, values are raw bytes.
@@ -205,13 +215,19 @@ def _wire_endpoints(handle: _GitHubMockHandle) -> None:
     ).respond_with_handler(_compare_handler)
 
 
-@pytest.fixture
-def github_mock(httpserver):
-    """Provide a GitHub REST mock + valid_config for the github connector.
+if _HAS_PYTEST:
+    @pytest.fixture
+    def github_mock(httpserver):
+        """Provide a GitHub REST mock + valid_config for the github connector.
 
-    Default fixture: a tiny repo with README.md, src/a.py, docs/b.md,
-    and assets/logo.png (binary, which the connector silently skips).
-    """
-    handle = _GitHubMockHandle(httpserver, owner="acme", repo="widgets", branch="main")
-    _wire_endpoints(handle)
-    return handle
+        Default fixture: a tiny repo with README.md, src/a.py, docs/b.md,
+        and assets/logo.png (binary, which the connector silently skips).
+        """
+        handle = _GitHubMockHandle(httpserver, owner="acme", repo="widgets", branch="main")
+        _wire_endpoints(handle)
+        return handle
+
+
+__all__ = ["_GitHubMockHandle", "_wire_endpoints"] + (
+    ["github_mock"] if _HAS_PYTEST else []
+)
