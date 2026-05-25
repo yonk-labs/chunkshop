@@ -21,6 +21,17 @@ import types
 from pathlib import Path
 from typing import Any
 
+
+def _bootstrap_repo_imports() -> None:
+    """Self-bootstrap for raw `python e2e_*.py` runs in-repo."""
+    here = Path(__file__).resolve()
+    for d in (here.parents[1] / "src", here.parents[2] / "src"):
+        if d.is_dir() and str(d) not in sys.path:
+            sys.path.insert(0, str(d))
+
+
+_bootstrap_repo_imports()
+
 from chunkshop.chunkers import load_chunker
 from chunkshop.config import SentenceAwareChunker as SentCfg
 

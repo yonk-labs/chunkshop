@@ -19,6 +19,20 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path as _Path
+
+
+def _bootstrap_repo_imports() -> None:
+    """Make this demo runnable directly with raw `python e2e_*.py` from the
+    repo, without requiring `uv pip install -e .` of chunkshop / chunkshop-
+    connectors. Harmless when those packages are already installed."""
+    here = _Path(__file__).resolve()
+    for d in (here.parents[1] / "src", here.parents[2] / "src"):
+        if d.is_dir() and str(d) not in sys.path:
+            sys.path.insert(0, str(d))
+
+
+_bootstrap_repo_imports()
 
 DSN = os.environ.get(
     "CHUNKSHOP_TEST_DSN",

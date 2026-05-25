@@ -60,6 +60,29 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from queue import Empty, Queue
 
+
+def _bootstrap_in_repo_imports() -> None:
+    """Make this script runnable directly as `python e2e_gdrive_real_flow.py ...`
+    from inside the repo, without needing an `uv run` or a pre-existing
+    `pip install -e .` of the chunkshop / chunkshop-connectors packages.
+
+    Detects the in-repo layout (examples lives at
+    `python/connectors/examples/`) and prepends the two `src/` dirs to
+    `sys.path`. When the packages ARE already installed in the active env
+    this is a harmless no-op (the installed copy wins because it appears
+    earlier in `sys.path` after the prepend if it's a system site, else
+    Python uses the first hit).
+    """
+    here = Path(__file__).resolve()
+    connectors_src = here.parents[1] / "src"            # .../python/connectors/src
+    chunkshop_src = here.parents[2] / "src"             # .../python/src
+    for d in (connectors_src, chunkshop_src):
+        if d.is_dir() and str(d) not in sys.path:
+            sys.path.insert(0, str(d))
+
+
+_bootstrap_in_repo_imports()
+
 DEFAULT_DSN = "postgresql://postgres:postgres@localhost:5434/chunkshop_test"
 TOKEN_CACHE = Path.home() / ".chunkshop" / "gdrive-tokens.json"
 REDIRECT_PORT = 8765

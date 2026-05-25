@@ -25,6 +25,17 @@ import sys
 import time
 from pathlib import Path
 
+
+def _bootstrap_repo_imports() -> None:
+    """Self-bootstrap for raw `python e2e_*.py` runs in-repo."""
+    here = Path(__file__).resolve()
+    for d in (here.parents[1] / "src", here.parents[2] / "src"):
+        if d.is_dir() and str(d) not in sys.path:
+            sys.path.insert(0, str(d))
+
+
+_bootstrap_repo_imports()
+
 # Default DSN must match the chunkshop test stack (`docker-compose.test.yaml`).
 DEFAULT_DSN = "postgresql://postgres:postgres@localhost:5434/chunkshop_test"
 
