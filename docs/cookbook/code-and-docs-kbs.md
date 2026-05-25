@@ -330,6 +330,36 @@ Notice the per-query outcomes:
   the other direction with `fusion="weighted"` and a higher weight on
   kb_docs.
 
+## Three-KB pattern: code + docs + comments
+
+Source-code comments carry rationale ("why batch_size=64?") that the
+``symbol_aware`` chunker embeds *alongside the code body* — so a search
+for "why" tends to surface the function that uses the value, not the
+comment that explains it. Lifting comments out into a third KB closes
+that gap.
+
+```
+<schema>.kb_comments
+  source: comment_extracts (glob: same *.py/*.go/*.ts/... as kb_code)
+  chunker: sentence_aware (100..800 chars — comment blocks are short)
+  extractor: lang_detect + rake_keywords (comments are prose)
+  embedder: fastembed bge-small      <- SAME embedder as kb_code / kb_docs
+```
+
+The demo runs the third KB behind an opt-in flag so the default
+two-KB run stays fast:
+
+```bash
+python examples/code_and_docs_kbs_demo.py --with-comments
+python examples/code_and_docs_kbs_demo.py --with-comments \
+    --query "why did we pick this batch size"
+```
+
+When ``--with-comments`` is set the demo adds two extra queries: one
+that targets ``kb_comments`` directly, and a joint query across all
+three KBs. The full how-to lives in
+[comments-as-docs.md](comments-as-docs.md).
+
 ## Required extras
 
 ```bash
