@@ -17,7 +17,7 @@ chunkshop is a **deterministic ingest-to-pgvector tool**: one YAML "cell" = `sou
 ```bash
 pip install "chunkshop==0.5.0"
 # optional:
-pip install "chunkshop[lede]"        # hint-biased summarization (pulls lede>=0.4.2)
+pip install "chunkshop[lede]"        # hint-biased summarization + reports (pulls lede>=0.4.5)
 pip install "chunkshop[lede-spacy]"  # hint expansion: lemma/synonyms/similar
 pip install "chunkshop[sqlite]" "chunkshop[mariadb]" "chunkshop[clickhouse]"  # backends
 pip install "chunkshop[all-backends]"

@@ -29,7 +29,12 @@ from chunkshop.bakeoff.config import (
     ComboResult,
 )
 from chunkshop.bakeoff.gold import load_gold_queries
-from chunkshop.bakeoff.keys import chunker_key, combo_table, embedder_key
+from chunkshop.bakeoff.keys import (
+    chunker_key,
+    combo_table,
+    embedder_key,
+    target_display_keys,
+)
 from chunkshop.bakeoff.score import aggregate_scores, score_query
 from chunkshop.chunkers import load_chunker
 from chunkshop.config import (
@@ -61,6 +66,8 @@ def _build_target_config(tgt: BakeoffTarget, table: str) -> TargetConfig:
     extra = {}
     if getattr(tgt, "engine", None) is not None:
         extra["engine"] = tgt.engine
+    if getattr(tgt, "vector_metric", None) is not None:
+        extra["vector_metric"] = tgt.vector_metric
     return TargetConfig(
         type=tgt.type,
         dsn_env=tgt.dsn_env,
@@ -104,6 +111,8 @@ def run_bakeoff(cfg: BakeoffConfig) -> BakeoffResults:
                 "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
         os.environ.setdefault(var, n_threads)
 
+    target_keys = target_display_keys(cfg.targets)
+
     # ----- Phase 1: per-(chunker, embedder), embed once and fan-out write to all backends -----
     # Each combo is one pass through the source. Per-backend wall_seconds tracks
     # ONLY the sink.write_document time, isolated from the shared embed cost.
@@ -114,12 +123,12 @@ def run_bakeoff(cfg: BakeoffConfig) -> BakeoffResults:
         ek = embedder_key(e)
 
         # Build one sink per backend; create_table on each.
-        sinks_for_combo: list[tuple[BakeoffTarget, Any]] = []  # (target, sink)
-        for tgt in cfg.targets:
+        sinks_for_combo: list[tuple[str, BakeoffTarget, Any]] = []  # (target_key, target, sink)
+        for target_key, tgt in zip(target_keys, cfg.targets):
             sink_cfg = _build_target_config(tgt, table)
             sink = load_sink(sink_cfg, embed_dim=e.dim)
             sink.create_table()
-            sinks_for_combo.append((tgt, sink))
+            sinks_for_combo.append((target_key, tgt, sink))
 
         # Build the pipeline pieces once for this combo.
         source = load_source(cfg.source)
@@ -133,8 +142,12 @@ def run_bakeoff(cfg: BakeoffConfig) -> BakeoffResults:
         extractor = load_extractor(NoneExtractor())
 
         # Per-backend accumulators
-        write_wall_by_backend: dict[str, float] = {tgt.type: 0.0 for tgt, _ in sinks_for_combo}
-        chunks_written_by_backend: dict[str, int] = {tgt.type: 0 for tgt, _ in sinks_for_combo}
+        write_wall_by_target: dict[str, float] = {
+            target_key: 0.0 for target_key, _tgt, _sink in sinks_for_combo
+        }
+        chunks_written_by_target: dict[str, int] = {
+            target_key: 0 for target_key, _tgt, _sink in sinks_for_combo
+        }
         total_embed_seconds = 0.0
         t_combo_start = time.time()
 
@@ -156,23 +169,24 @@ def run_bakeoff(cfg: BakeoffConfig) -> BakeoffResults:
                     for ch, r in zip(chunks, results)
                 ]
                 # Fan-out write to every backend.
-                for tgt, sink in sinks_for_combo:
+                for target_key, _tgt, sink in sinks_for_combo:
                     t_w = time.perf_counter()
                     sink.write_document(doc.id, chunks, embeddings, tags)
-                    write_wall_by_backend[tgt.type] += time.perf_counter() - t_w
-                    chunks_written_by_backend[tgt.type] += len(chunks)
+                    write_wall_by_target[target_key] += time.perf_counter() - t_w
+                    chunks_written_by_target[target_key] += len(chunks)
 
         # One ingest_meta entry per backend, all sharing the same total_embed_seconds.
         # wall_seconds is per-backend write-only time.
-        for tgt, _sink in sinks_for_combo:
+        for target_key, tgt, _sink in sinks_for_combo:
             ingest_meta.append({
                 "backend": tgt.type,
+                "target_key": target_key,
                 "target": tgt,
                 "chunker": c,
                 "embedder": e,
                 "table": table,
-                "chunks": chunks_written_by_backend[tgt.type],
-                "wall_seconds": round(write_wall_by_backend[tgt.type], 2),
+                "chunks": chunks_written_by_target[target_key],
+                "wall_seconds": round(write_wall_by_target[target_key], 2),
                 "embed_seconds": round(total_embed_seconds, 2),
             })
         # Free per-combo resources before the next combo loads its embedder.
@@ -197,6 +211,7 @@ def run_bakeoff(cfg: BakeoffConfig) -> BakeoffResults:
         c = meta["chunker"]
         e = meta["embedder"]
         tgt = meta["target"]
+        target_key = meta["target_key"]
         table = meta["table"]
         ck = chunker_key(c)
         ek = embedder_key(e)
@@ -227,6 +242,7 @@ def run_bakeoff(cfg: BakeoffConfig) -> BakeoffResults:
         agg = aggregate_scores(per_query_scores)
         combo_results.append(ComboResult(
             backend=tgt.type,
+            target_key=target_key,
             chunker_key=ck,
             embedder_key=ek,
             chunker_label=_chunker_label(c),

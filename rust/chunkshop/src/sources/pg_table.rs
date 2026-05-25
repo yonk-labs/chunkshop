@@ -39,7 +39,9 @@ impl PgTableSource {
         }
         select.push_str(&format!(
             " FROM {fq}",
-            fq = self.backend.fq_table(&self.cfg.schema_name, &self.cfg.table)
+            fq = self
+                .backend
+                .fq_table(&self.cfg.schema_name, &self.cfg.table)
         ));
         if let Some(w) = &self.cfg.where_clause {
             select.push_str(&format!(" WHERE {w}"));
@@ -85,7 +87,9 @@ impl PgTableSource {
 fn read_meta_value(row: &sqlx::postgres::PgRow, idx: usize) -> serde_json::Value {
     use sqlx::Row;
     if let Ok(v) = row.try_get::<Option<String>, _>(idx) {
-        return v.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null);
+        return v
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null);
     }
     if let Ok(v) = row.try_get::<Option<i64>, _>(idx) {
         return v.map(|n| json!(n)).unwrap_or(serde_json::Value::Null);

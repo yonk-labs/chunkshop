@@ -26,6 +26,7 @@ async fn create_table_overwrite_mode() -> anyhow::Result<()> {
         table: "ct".to_string(),
         overwrite: false,
         hnsw: false,
+        vector_metric: "cosine".to_string(),
         mode: "overwrite".to_string(),
         source_tag: Some("r1-test".to_string()),
         promote_metadata: vec![],

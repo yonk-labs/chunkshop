@@ -1,0 +1,62 @@
+# Showcase benchmark matrix.
+#
+# Keep this small, stable, and easy to explain. This is the "wow" suite for
+# demos and release notes, not the full regression matrix.
+
+name: chunkshop_showcase
+tags: [showcase, release-gate]
+
+judging:
+  cache_dir: .llm-judge-cache
+  resume: true
+  smoke_mode: quick
+  final_mode: accurate
+  concurrency: 4
+  judges:
+    - provider: openai-compatible
+      base_url: http://192.168.1.193:8000/v1
+      model: Intel/Qwen3-Coder-Next-int4-AutoRound
+    - provider: openai-compatible
+      base_url: http://192.168.1.133:8000/v1
+      model: cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit
+
+workloads:
+  - name: scotus
+    tags: [legal, answerable]
+    profile: chunkshop-e1e8
+    input: .llm-judge-inputs/v05-audited.jsonl
+
+baselines:
+  - name: oracle_full_context
+    context_packer: {type: full_context}
+  - name: classic_rag_500tok_top25
+    chunker: {type: fixed_overlap, window_words: 500, step_words: 100}
+    retrieval: {mode: semantic, top_k: 25}
+    context_packer: {type: chunks}
+
+candidates:
+  - name: shipped_fast_mode
+    description: Current Fast-mode summary path.
+    embedder: {type: fastembed, model_name: BAAI/bge-small-en-v1.5, dim: 384}
+    chunker: {type: hierarchy}
+    vector_metric: cosine
+    retrieval: {mode: hybrid, fusion: rrf, top_k: 10}
+    context_packer: {type: summary_toc, max_tokens: 1200}
+
+  - name: raw_chunks
+    description: Raw retrieved chunks baseline for explaining token savings.
+    embedder: {type: fastembed, model_name: BAAI/bge-small-en-v1.5, dim: 384}
+    chunker: {type: hierarchy}
+    vector_metric: cosine
+    retrieval: {mode: hybrid, fusion: rrf, top_k: 10}
+    context_packer: {type: chunks}
+
+reporting:
+  top_n: 5
+  compare_against:
+    - oracle_full_context
+    - classic_rag_500tok_top25
+  metrics:
+    - answer_accuracy
+    - token_savings_vs_classic_rag
+    - latency_answer_ms

@@ -32,8 +32,7 @@ fn fixtures_dir() -> PathBuf {
 
 fn read_inputs() -> Vec<String> {
     let p = fixtures_dir().join("embedding_inputs.txt");
-    let s = std::fs::read_to_string(&p)
-        .unwrap_or_else(|e| panic!("read {}: {}", p.display(), e));
+    let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {}", p.display(), e));
     s.lines()
         .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
@@ -114,14 +113,27 @@ fn rust_embeddings_match_python_within_envelope() {
         .embed(inputs.clone())
         .expect("embed must succeed when init succeeded");
 
-    assert_eq!(actual.len(), n, "produced {} vectors, expected {}", actual.len(), n);
+    assert_eq!(
+        actual.len(),
+        n,
+        "produced {} vectors, expected {}",
+        actual.len(),
+        n
+    );
 
     let mut max_abs_diff: f32 = 0.0;
     let mut max_rel_diff: f32 = 0.0;
     let mut total_floats = 0usize;
     let mut diff_count = 0usize;
     for (i, v) in actual.iter().enumerate() {
-        assert_eq!(v.len(), dim, "vector {} has dim {}, expected {}", i, v.len(), dim);
+        assert_eq!(
+            v.len(),
+            dim,
+            "vector {} has dim {}, expected {}",
+            i,
+            v.len(),
+            dim
+        );
         for (j, &got) in v.iter().enumerate() {
             let exp = expected_flat[i * dim + j];
             total_floats += 1;
@@ -151,9 +163,17 @@ fn rust_embeddings_match_python_within_envelope() {
     let mut cos_distances: Vec<f64> = Vec::with_capacity(n);
     for (i, v) in actual.iter().enumerate() {
         let exp_row = &expected_flat[i * dim..(i + 1) * dim];
-        let dot: f64 = v.iter().zip(exp_row).map(|(a, b)| (*a as f64) * (*b as f64)).sum();
+        let dot: f64 = v
+            .iter()
+            .zip(exp_row)
+            .map(|(a, b)| (*a as f64) * (*b as f64))
+            .sum();
         let norm_a: f64 = v.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-        let norm_b: f64 = exp_row.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
+        let norm_b: f64 = exp_row
+            .iter()
+            .map(|x| (*x as f64).powi(2))
+            .sum::<f64>()
+            .sqrt();
         let cos_sim = dot / (norm_a * norm_b);
         let cos_dist = 1.0 - cos_sim;
         cos_distances.push(cos_dist);

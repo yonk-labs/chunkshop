@@ -36,7 +36,11 @@ fn fq_table_parity() {
         let db = inp[0].as_str().unwrap();
         let table = inp[1].as_str().unwrap();
         let expected = case["out"].as_str().unwrap();
-        assert_eq!(b.fq_table(db, table), expected, "fq_table({db:?}, {table:?})");
+        assert_eq!(
+            b.fq_table(db, table),
+            expected,
+            "fq_table({db:?}, {table:?})"
+        );
     }
 }
 
@@ -74,13 +78,24 @@ fn upsert_clause_parity() {
     let f = load_fixture();
     for case in f["upsert_clause"].as_array().unwrap() {
         let inp = &case["in"];
-        let keys: Vec<&str> = inp["keys"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
-        let updates: Vec<&str> = inp["updates"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let keys: Vec<&str> = inp["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        let updates: Vec<&str> = inp["updates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         let expected = case["out"].as_str().unwrap();
-        assert_eq!(b.upsert_clause(&keys, &updates), expected,
-                   "upsert_clause(keys={keys:?}, updates={updates:?})");
+        assert_eq!(
+            b.upsert_clause(&keys, &updates),
+            expected,
+            "upsert_clause(keys={keys:?}, updates={updates:?})"
+        );
     }
 }
 
@@ -91,7 +106,11 @@ fn create_database_sql_parity() {
     for case in f["create_database_sql"].as_array().unwrap() {
         let inp = case["in"].as_str().unwrap();
         let expected = case["out"].as_str().unwrap();
-        assert_eq!(b.create_database_sql(inp), expected, "create_database_sql({inp:?})");
+        assert_eq!(
+            b.create_database_sql(inp),
+            expected,
+            "create_database_sql({inp:?})"
+        );
     }
 }
 

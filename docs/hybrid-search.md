@@ -68,7 +68,8 @@ is the `schema` argument:
   attached DB file given by the `dsn`).
 
 ```python
-ensure_fts(dsn, *, schema, table, language="english") -> None
+ensure_fts(dsn, *, schema, table, language="english",
+           include_metadata_paths=None) -> None
 
 keyword_search(dsn, *, schema, table, query, k, where=None,
                language="english") -> list[Hit]
@@ -94,12 +95,20 @@ every startup) before using the `"fts"` leg:
 from chunkshop.search import ensure_fts
 
 ensure_fts(DSN, schema="chunkshop_samples", table="handbook")
+
+# Optionally include extracted metadata, such as lede v0.4.5 report search text.
+ensure_fts(
+    DSN,
+    schema="chunkshop_samples",
+    table="handbook",
+    include_metadata_paths=["lede_report.search_text"],
+)
 ```
 
 On Postgres this adds a `search_vector tsvector` column **generated** from
-`original_content` plus a GIN index, so it stays in sync with no
-application-side maintenance. If you only ever run `semantic_search`, you can
-skip `ensure_fts` entirely.
+`original_content` plus any requested metadata paths, then adds a GIN index, so
+it stays in sync with no application-side maintenance. If you only ever run
+`semantic_search`, you can skip `ensure_fts` entirely.
 
 `language` is allowlisted (`"english"` or `"simple"` on Postgres) because it's
 concatenated into the generated-column DDL where it can't be a bound parameter.
@@ -383,12 +392,13 @@ target:
     language: english       # default; any PostgreSQL text-search config name
 ```
 
-`FtsConfig` has two fields:
+`FtsConfig` has three fields:
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `enabled` | `bool` | `false` | Opt in to FTS index creation |
 | `language` | `str` | `"english"` | PostgreSQL text-search config name; allowlisted |
+| `include_metadata_paths` | `list[str]` | `[]` | Extra metadata JSON paths to include in the Postgres generated FTS vector, e.g. `lede_report.search_text` |
 
 `language` is allowlisted (the same set accepted by `ensure_fts`) because it is
 concatenated into the generated-column DDL where it cannot be a bound parameter.
@@ -467,6 +477,9 @@ chunkshop search --config cell.yaml --query "costs" \
 
 # JSON output for programmatic consumption
 chunkshop search --config cell.yaml --query "alpha" --k 5 --json
+
+# Compare pgvector metrics on Postgres without editing YAML
+chunkshop search --config cell.yaml --query "alpha" --vector-metric inner_product
 ```
 
 ### Text output shape
@@ -548,6 +561,7 @@ result: SearchResult = search(
     summarize_fn=None,                    # required for any non-chunks mode
     summary_hints=None,                   # explicit hint terms; overrides auto-derivation
     summary_expand=None,                  # HintExpansion for synonym/lemma widening
+    vector_metric="cosine",               # Postgres only: cosine | inner_product | l2
     summary_max_length=1200,
     language="english",
 )

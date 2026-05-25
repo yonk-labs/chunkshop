@@ -152,7 +152,10 @@ async fn pg_table_source_respects_where_clause() {
         where_clause: Some("kind = 'keep'".to_string()),
         metadata_columns: vec![],
     };
-    let docs = PgTableSource::new(cfg).iter_documents().await.expect("iter");
+    let docs = PgTableSource::new(cfg)
+        .iter_documents()
+        .await
+        .expect("iter");
     assert_eq!(docs.len(), 2, "WHERE kind='keep' should match 2 rows");
 
     let _ = sqlx::query(&format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#))

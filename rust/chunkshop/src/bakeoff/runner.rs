@@ -22,7 +22,8 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 
 use super::config::{
-    BakeoffConfig, BakeoffResults, BakeoffTargetEntry, ComboResult, GoldQuery, PerQueryResult, TopKHit,
+    BakeoffConfig, BakeoffResults, BakeoffTargetEntry, ComboResult, GoldQuery, PerQueryResult,
+    TopKHit,
 };
 use super::gold::load_gold_queries_with_base;
 use super::keys::{chunker_key, combo_table, embedder_key};
@@ -81,7 +82,11 @@ fn format_utc_now() -> String {
     let second = sec_of_day % 60;
 
     let z = days + 719_468;
-    let era = if z >= 0 { z / 146_097 } else { (z - 146_096) / 146_097 };
+    let era = if z >= 0 {
+        z / 146_097
+    } else {
+        (z - 146_096) / 146_097
+    };
     let doe = (z - era * 146_097) as u32;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let y = yoe as i64 + era * 400;
@@ -125,6 +130,7 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             table: table.to_string(),
             overwrite: false,
             hnsw: false,
+            vector_metric: t.vector_metric.clone(),
             mode: "overwrite".to_string(),
             source_tag: None,
             promote_metadata: vec![],
@@ -212,7 +218,10 @@ async fn count_chunks(target: &BakeoffTargetEntry, table: &str) -> Result<i64> {
     match target {
         BakeoffTargetEntry::Postgres(t) => {
             let dsn = std::env::var(&t.dsn_env)?;
-            let pool = PgPoolOptions::new().max_connections(1).connect(&dsn).await?;
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&dsn)
+                .await?;
             let stmt = format!(r#"SELECT COUNT(*) FROM "{}"."{}""#, t.database_name, table);
             let row = sqlx::query(&stmt).fetch_one(&pool).await?;
             Ok(row.get::<i64, _>(0))
@@ -220,7 +229,10 @@ async fn count_chunks(target: &BakeoffTargetEntry, table: &str) -> Result<i64> {
         BakeoffTargetEntry::Mariadb(t) => {
             use sqlx::mysql::MySqlPoolOptions;
             let dsn = std::env::var(&t.dsn_env)?;
-            let pool = MySqlPoolOptions::new().max_connections(1).connect(&dsn).await?;
+            let pool = MySqlPoolOptions::new()
+                .max_connections(1)
+                .connect(&dsn)
+                .await?;
             let stmt = format!("SELECT COUNT(*) FROM `{}`.`{}`", t.database_name, table);
             let row = sqlx::query(&stmt).fetch_one(&pool).await?;
             Ok(row.get::<i64, _>(0))
@@ -229,11 +241,10 @@ async fn count_chunks(target: &BakeoffTargetEntry, table: &str) -> Result<i64> {
             // SQLite path is in the env var; use rusqlite directly.
             let path = std::env::var(&t.dsn_env)?;
             let conn = rusqlite::Connection::open(&path)?;
-            let n: i64 = conn.query_row(
-                &format!(r#"SELECT COUNT(*) FROM "{}""#, table),
-                [],
-                |r| r.get(0),
-            )?;
+            let n: i64 =
+                conn.query_row(&format!(r#"SELECT COUNT(*) FROM "{}""#, table), [], |r| {
+                    r.get(0)
+                })?;
             Ok(n)
         }
         BakeoffTargetEntry::Clickhouse(t) => {
@@ -302,7 +313,10 @@ pub async fn run_bakeoff_with_base(
     for t in &targets {
         let var = t.dsn_env();
         std::env::var(var).map_err(|_| {
-            anyhow!("DSN env var {var:?} is not set (required for {} target)", t.backend_name())
+            anyhow!(
+                "DSN env var {var:?} is not set (required for {} target)",
+                t.backend_name()
+            )
         })?;
     }
 
@@ -348,9 +362,7 @@ pub async fn run_bakeoff_with_base(
             let cell_cfg = build_cell_cfg(cfg, target, c, e, &table)?;
             let t0 = Instant::now();
             let res = crate::runner::run_cell(cell_cfg).await.with_context(|| {
-                format!(
-                    "ingest failed for combo {table} on backend {backend_name}"
-                )
+                format!("ingest failed for combo {table} on backend {backend_name}")
             })?;
             let wall = t0.elapsed().as_secs_f64();
             let chunks = count_chunks(target, &table).await?;
@@ -366,9 +378,8 @@ pub async fn run_bakeoff_with_base(
             let mut query_walls_ms: Vec<f64> = Vec::with_capacity(gold.len());
             for (i, g) in gold.iter().enumerate() {
                 let tq = Instant::now();
-                let top =
-                    query_top_k_via_sink(target, &table, &vecs[i], cfg.scoring.top_k, e.dim)
-                        .await?;
+                let top = query_top_k_via_sink(target, &table, &vecs[i], cfg.scoring.top_k, e.dim)
+                    .await?;
                 query_walls_ms.push(tq.elapsed().as_secs_f64() * 1000.0);
                 let doc_ids: Vec<String> = top.iter().map(|h| h.doc_id.clone()).collect();
                 let s = score_query(&doc_ids, &g.gold_doc_id, &cfg.scoring.k);

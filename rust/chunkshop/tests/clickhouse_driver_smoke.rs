@@ -21,7 +21,11 @@ fn client_from_dsn() -> Client {
     // Parse minimal fields. (Full DSN parser lands in Task 2.)
     let dsn = std::env::var(DSN_ENV).unwrap();
     let url = url::Url::parse(&dsn).expect("parse DSN");
-    let scheme = if url.scheme().contains("https") { "https" } else { "http" };
+    let scheme = if url.scheme().contains("https") {
+        "https"
+    } else {
+        "http"
+    };
     let host_port = format!(
         "{}://{}:{}",
         scheme,
@@ -61,10 +65,19 @@ async fn vec_f32_roundtrips_through_array_float32() {
         .expect("create");
 
     let rows = vec![
-        VecRow { id: "a".into(), v: vec![0.1_f32, 0.2, -0.3] },
-        VecRow { id: "b".into(), v: vec![1.0_f32; 16] },
+        VecRow {
+            id: "a".into(),
+            v: vec![0.1_f32, 0.2, -0.3],
+        },
+        VecRow {
+            id: "b".into(),
+            v: vec![1.0_f32; 16],
+        },
     ];
-    let mut insert = client.insert::<VecRow>("chunkshop_r4_smoke").await.expect("insert");
+    let mut insert = client
+        .insert::<VecRow>("chunkshop_r4_smoke")
+        .await
+        .expect("insert");
     for r in &rows {
         insert.write(r).await.expect("write");
     }
@@ -78,7 +91,10 @@ async fn vec_f32_roundtrips_through_array_float32() {
     while let Some(r) = cursor.next().await.expect("cursor") {
         got.push(r);
     }
-    assert_eq!(got, rows, "round-trip mismatch — driver pick must be revisited");
+    assert_eq!(
+        got, rows,
+        "round-trip mismatch — driver pick must be revisited"
+    );
 
     client
         .query("DROP TABLE chunkshop_r4_smoke")

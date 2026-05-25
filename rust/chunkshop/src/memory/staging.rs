@@ -148,10 +148,9 @@ pub async fn stage_event(
 ) -> Result<String> {
     validate_ident(schema)?;
     validate_ident(table)?;
-    let eid = ev
-        .event_id
-        .clone()
-        .unwrap_or_else(|| derive_event_id(&ev.session_id, ev.seq, ev.event_ts.as_deref(), &ev.content));
+    let eid = ev.event_id.clone().unwrap_or_else(|| {
+        derive_event_id(&ev.session_id, ev.seq, ev.event_ts.as_deref(), &ev.content)
+    });
     let fq = format!("\"{schema}\".\"{table}\"");
     let metadata_json = ev.metadata.clone().unwrap_or(serde_json::json!({}));
     sqlx::query(&format!(
@@ -231,9 +230,7 @@ pub async fn prune_staging(
     validate_ident(table)?;
     let fq = format!("\"{schema}\".\"{table}\"");
     let sql = if only_consolidated {
-        format!(
-            "DELETE FROM {fq} WHERE staged_at < $1::timestamptz AND consumed ? 'consolidated'"
-        )
+        format!("DELETE FROM {fq} WHERE staged_at < $1::timestamptz AND consumed ? 'consolidated'")
     } else {
         format!("DELETE FROM {fq} WHERE staged_at < $1::timestamptz")
     };
@@ -260,10 +257,7 @@ mod tests {
         // sha1 hex = 40 chars.
         assert_eq!(id_with_seq.len(), 40);
         // Deterministic.
-        assert_eq!(
-            id_with_seq,
-            derive_event_id("s1", Some(1), None, "hi"),
-        );
+        assert_eq!(id_with_seq, derive_event_id("s1", Some(1), None, "hi"),);
         // seq takes precedence over ts when both present (matches Python).
         let id_both = derive_event_id("s1", Some(1), Some("2026-01-01"), "hi");
         assert_eq!(id_both, id_with_seq);

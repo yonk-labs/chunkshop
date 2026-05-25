@@ -48,8 +48,8 @@ struct Reference {
 
 #[test]
 fn rust_hierarchy_chunks_match_python() {
-    let corpus = std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt"))
-        .expect("read corpus");
+    let corpus =
+        std::fs::read_to_string(fixtures_dir().join("hierarchy_corpus.txt")).expect("read corpus");
     let ref_json = std::fs::read_to_string(fixtures_dir().join("hierarchy_reference.json"))
         .expect("read reference");
     let r: Reference = serde_json::from_str(&ref_json).expect("parse reference");

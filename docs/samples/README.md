@@ -15,6 +15,7 @@ Each entry has its own README with full walkthrough.
 | [`incremental-pg-table/`](incremental-pg-table/README.md) | Watermarked-cursor pattern for incremental ingest from a live Postgres source. Re-runs only pick up rows changed since last successful run. |
 | [`inline-mode/`](inline-mode/README.md) | Library / inline mode — embed chunkshop in your service and drive it document-by-document via `Pipeline.ingest_text(...)`. Python AND Rust demos. Includes orphan-cleanup verification on shrinking updates. |
 | [`if-oversize/`](if-oversize/README.md) | The `if_oversize` fallback chain — route oversized chunks (e.g. from `neighbor_expand`'s ±N joins) through a secondary chunker before they hit the embedder. Same YAML, Python + Rust. |
+| [`kb/`](kb/README.md) | KB template planning samples — legal/doc, news/multi-hop, codebase, and generic corpus shapes with recommended metadata/profile defaults. These are target configs for the profile work, not all current CLI-runnable YAML. |
 
 ## Single-file recipe configs
 

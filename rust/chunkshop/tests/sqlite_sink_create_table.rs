@@ -3,8 +3,8 @@
 
 use chunkshop::backends::SQLiteBackend;
 use chunkshop::config::SqliteTargetConfig;
-use chunkshop::sinks::SqliteSink;
 use chunkshop::sinks::Sink;
+use chunkshop::sinks::SqliteSink;
 use tempfile::tempdir;
 
 fn cfg(dsn_env: &str, mode: &str) -> SqliteTargetConfig {
@@ -25,8 +25,16 @@ fn cfg(dsn_env: &str, mode: &str) -> SqliteTargetConfig {
 
 async fn assert_both_tables_exist(b: &SQLiteBackend) {
     let conn = b.connect().await.unwrap();
-    assert!(b.table_exists(&conn, "ignored", "chunks").await.unwrap(), "chunks");
-    assert!(b.table_exists(&conn, "ignored", "chunks_vec").await.unwrap(), "chunks_vec");
+    assert!(
+        b.table_exists(&conn, "ignored", "chunks").await.unwrap(),
+        "chunks"
+    );
+    assert!(
+        b.table_exists(&conn, "ignored", "chunks_vec")
+            .await
+            .unwrap(),
+        "chunks_vec"
+    );
 }
 
 #[tokio::test]

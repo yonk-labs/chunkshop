@@ -11,6 +11,7 @@ Postgres and SQL queries, see [`tutorial-metadata.md`](tutorial-metadata.md).
 |-----------------------------------------------------------------|---------------------------------------------------|
 | Cheap keyword tags on every chunk                               | `rake_keywords`                                   |
 | High-quality topic labels for a search UI                       | `keybert_phrases`                                 |
+| Search-audit facts, dates, amounts, and compact doc reports      | `lede_report`                                     |
 | Filter retrievals by ORG / PERSON / GPE                         | `spacy_entities` + promote `entities.ORG`         |
 | Multilingual corpus — route queries by language                 | `lang_detect` + promote `language`                |
 | All of the above in one ingest pass                             | `composite` chaining them                         |
@@ -87,6 +88,53 @@ target:
 ```bash
 uv sync --extra keybert
 chunkshop ingest --config keybert.yaml
+```
+
+---
+
+### `lede_report` — compact facts + readable report metadata
+
+**Use when** retrieval quality needs audit-friendly facts on every chunk:
+case names, dates, amounts, headings, and lede's extracted key facts.
+**What this produces** — `metadata.lede_report` with summary/facts/stats, plus
+searchable `tags` drawn from attributes, key facts, dates, amounts, and
+entities. With lede v0.4.5+, the JSON also includes `promotion_candidates` and
+`search_text` for SQL columns and FTS enrichment.
+
+```yaml
+# lede-report.yaml
+cell_name: lede_report_demo
+source: { type: files, glob: "docs/samples/handbook-*.md", id_from: stem }
+chunker: { type: hierarchy }
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 4
+extractor:
+  type: lede_report
+  max_chars: 4000
+  max_facts: 40
+  backend: regex        # use spacy for NER-heavy corpora
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: mydata
+  table: lede_report_chunks
+  mode: create_if_missing
+  source_tag: lede_report_demo
+  promote_metadata:
+    - { path: lede_report.attributes.term.value, type: text }
+  fts:
+    enabled: true
+    include_metadata_paths:
+      - lede_report.search_text
+```
+
+```bash
+uv sync --extra lede
+# For backend: spacy, also install:
+uv sync --extra lede --extra lede-spacy
+chunkshop ingest --config lede-report.yaml
 ```
 
 ---
@@ -270,6 +318,7 @@ The YAML above is 18 lines. That's the value prop.
 | Want to…                                            | Set                                                                     |
 |-----------------------------------------------------|-------------------------------------------------------------------------|
 | Filter by an ORG name at SQL                        | `spacy_entities` + `promote_metadata: [{path: entities.ORG, type: "text[]"}]` |
+| Preserve compact fact/report metadata for judged RAG | `lede_report` with `max_chars: 4000`, `max_facts: 40`                         |
 | Cluster by language                                 | `lang_detect` + `promote_metadata: [{path: language, type: text}]`       |
 | Show a tag cloud in a UI                            | `keybert_phrases` (tags) — read `tags[]` column directly                |
 | Populate all three at once                          | `composite` with `spacy_entities` + `lang_detect` + `keybert_phrases`   |

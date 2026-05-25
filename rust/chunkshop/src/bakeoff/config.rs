@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ChunkerConfig, FastembedEmbedderConfig, FramerConfig, RuntimeConfig, SourceConfig};
+use crate::config::{
+    ChunkerConfig, FastembedEmbedderConfig, FramerConfig, RuntimeConfig, SourceConfig,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GoldQuery {
@@ -48,6 +50,8 @@ pub struct BakeoffPostgresTarget {
     pub dsn_env: String,
     #[serde(rename = "database")]
     pub database_name: String,
+    #[serde(default = "default_vector_metric")]
+    pub vector_metric: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,6 +70,10 @@ pub struct BakeoffSqliteTarget {
 
 fn default_sqlite_db_name() -> String {
     "ignored".to_string()
+}
+
+fn default_vector_metric() -> String {
+    "cosine".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -180,12 +188,11 @@ impl BakeoffConfig {
                 "bakeoff YAML has BOTH 'target:' (legacy single-PG) and 'targets:' \
                  (multi-backend) — set exactly one."
             )),
-            (Some(legacy), true) => Ok(vec![BakeoffTargetEntry::Postgres(
-                BakeoffPostgresTarget {
-                    dsn_env: legacy.dsn_env.clone(),
-                    database_name: legacy.schema_name.clone(),
-                },
-            )]),
+            (Some(legacy), true) => Ok(vec![BakeoffTargetEntry::Postgres(BakeoffPostgresTarget {
+                dsn_env: legacy.dsn_env.clone(),
+                database_name: legacy.schema_name.clone(),
+                vector_metric: default_vector_metric(),
+            })]),
             (None, false) => Ok(self.targets.clone()),
             (None, true) => Err(anyhow::anyhow!(
                 "bakeoff YAML must set either 'target:' (legacy single-PG) or \

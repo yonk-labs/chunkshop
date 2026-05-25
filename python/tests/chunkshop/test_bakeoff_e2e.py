@@ -117,10 +117,64 @@ def test_bakeoff_e2e_2x2_samples(ensure_pg, tmp_path):
     yaml_path = write_recommended_yaml(cfg, results, tmp_path)
 
     assert json_path.exists()
-    assert "Cross-backend comparison" in md_path.read_text()
-    assert "Statistical power" in md_path.read_text()
+    report_text = md_path.read_text()
+    assert "Cross-target comparison" in report_text
+    assert "Statistical power" in report_text
 
     # recommended.yaml round-trips through CellConfig.
     recommended = yaml.safe_load(yaml_path.read_text())
     recommended.pop("# NOTE", None)
     CellConfig.model_validate(recommended)
+
+
+def test_bakeoff_e2e_pgvector_metric_targets(ensure_pg):
+    schema = "chunkshop_bakeoff_metric_e2e"
+    with psycopg.connect(ensure_pg, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+    cfg = BakeoffConfig(
+        name="bakeoff_metric_e2e",
+        source=FilesSource(type="files", glob=SAMPLES_GLOB, id_from="stem"),
+        framer=IdentityFramerConfig(),
+        gold_queries=[
+            GoldQuery(query="how do we rotate API keys", gold_doc_id="handbook-security"),
+            GoldQuery(query="who approves a pull request", gold_doc_id="handbook-engineering"),
+        ],
+        matrix=MatrixConfig(
+            embedders=[
+                FastembedEmbedder(
+                    type="fastembed",
+                    model_name="Xenova/bge-small-en-v1.5-int8",
+                    dim=384,
+                    threads=2,
+                ),
+            ],
+            chunkers=[HierarchyChunker(type="hierarchy")],
+        ),
+        targets=[
+            PostgresBakeoffTarget(
+                type="postgres",
+                dsn_env=DSN_ENV,
+                vector_metric=metric,
+                **{"database": schema},
+            )
+            for metric in ("cosine", "inner_product", "l2")
+        ],
+    )
+
+    try:
+        results = run_bakeoff(cfg)
+        assert results.n_combos == 3
+        assert [c.backend for c in results.combos] == ["postgres"] * 3
+        assert {c.target_key for c in results.combos} == {
+            "postgres_cosine",
+            "postgres_inner_product",
+            "postgres_l2",
+        }
+        for combo in results.combos:
+            assert combo.ingest_chunks > 0
+            assert len(combo.per_query) == 2
+            assert all("top_k" in pq for pq in combo.per_query)
+    finally:
+        with psycopg.connect(ensure_pg, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")

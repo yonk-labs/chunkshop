@@ -18,7 +18,8 @@ async fn iter_documents_yields_planted_rows() {
              INSERT INTO docs VALUES \
                 ('a', 'hello world', 'Greeting', 'en'), \
                 ('b', 'bonjour le monde', 'Salutation', 'fr')",
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     let cfg = SqliteTableSourceConfig {
@@ -51,7 +52,8 @@ async fn iter_documents_respects_where_clause() {
         conn.execute_batch(
             "CREATE TABLE docs (id TEXT, body TEXT, lang TEXT); \
              INSERT INTO docs VALUES ('a', 'x', 'en'), ('b', 'y', 'fr')",
-        ).unwrap();
+        )
+        .unwrap();
     }
     let cfg = SqliteTableSourceConfig {
         dsn_env: env,

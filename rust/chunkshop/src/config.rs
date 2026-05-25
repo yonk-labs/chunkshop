@@ -174,13 +174,27 @@ pub struct SpacyEntitiesExtractorConfig {
     pub label_whitelist: Vec<String>,
 }
 
-fn default_rake_top_k() -> usize { 10 }
-fn default_rake_min_chars() -> usize { 3 }
-fn default_lang_backend() -> String { "langdetect".to_string() }
-fn default_keybert_top_k() -> usize { 10 }
-fn default_keybert_model() -> String { "all-MiniLM-L6-v2".to_string() }
-fn default_keybert_ngram() -> (usize, usize) { (1, 2) }
-fn default_spacy_model() -> String { "en_core_web_sm".to_string() }
+fn default_rake_top_k() -> usize {
+    10
+}
+fn default_rake_min_chars() -> usize {
+    3
+}
+fn default_lang_backend() -> String {
+    "langdetect".to_string()
+}
+fn default_keybert_top_k() -> usize {
+    10
+}
+fn default_keybert_model() -> String {
+    "all-MiniLM-L6-v2".to_string()
+}
+fn default_keybert_ngram() -> (usize, usize) {
+    (1, 2)
+}
+fn default_spacy_model() -> String {
+    "en_core_web_sm".to_string()
+}
 fn default_spacy_whitelist() -> Vec<String> {
     vec!["ORG", "PERSON", "GPE", "DATE", "LAW"]
         .into_iter()
@@ -557,9 +571,7 @@ impl ChunkerConfig {
             ChunkerConfig::NeighborExpand(c) => {
                 c.max_chars.or_else(|| c.base.effective_max_chars())
             }
-            ChunkerConfig::SummaryEmbed(c) => {
-                c.max_chars.or_else(|| c.base.effective_max_chars())
-            }
+            ChunkerConfig::SummaryEmbed(c) => c.max_chars.or_else(|| c.base.effective_max_chars()),
             ChunkerConfig::HierarchicalSummary(c) => {
                 c.max_chars.or_else(|| c.base.effective_max_chars())
             }
@@ -787,7 +799,9 @@ pub struct FixedNGroupingConfig {
 
 impl Default for FixedNGroupingConfig {
     fn default() -> Self {
-        Self { n: default_fixed_n() }
+        Self {
+            n: default_fixed_n(),
+        }
     }
 }
 
@@ -998,6 +1012,9 @@ pub struct PostgresTargetConfig {
     pub overwrite: bool,
     #[serde(default = "default_hnsw")]
     pub hnsw: bool,
+    /// Postgres/pgvector semantic-search metric: cosine, inner_product, or l2.
+    #[serde(default = "default_vector_metric")]
+    pub vector_metric: String,
     /// `overwrite` (default), `append`, or `create_if_missing`. All three are
     /// implemented in Rust as of MB-3 (sink full-mode parity).
     #[serde(default = "default_mode")]
@@ -1038,6 +1055,15 @@ impl PostgresTargetConfig {
             ));
         }
         validate_no_document_store(&self.documents)?;
+        if !matches!(
+            self.vector_metric.as_str(),
+            "cosine" | "inner_product" | "l2"
+        ) {
+            return Err(anyhow!(
+                "target.vector_metric must be one of 'cosine', 'inner_product', or 'l2', got {:?}",
+                self.vector_metric
+            ));
+        }
         Ok(())
     }
 }
@@ -1187,6 +1213,10 @@ fn default_dsn_env() -> String {
 }
 fn default_hnsw() -> bool {
     true
+}
+
+fn default_vector_metric() -> String {
+    "cosine".to_string()
 }
 fn default_mode() -> String {
     "overwrite".to_string()
@@ -1540,6 +1570,51 @@ target:
     }
 
     #[test]
+    fn postgres_target_vector_metric_defaults_and_validates() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        let TargetConfig::Postgres(t) = &cfg.target else {
+            panic!("expected Postgres target");
+        };
+        assert_eq!(t.vector_metric, "cosine");
+
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false, vector_metric: l2 }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        let TargetConfig::Postgres(t) = &cfg.target else {
+            panic!("expected Postgres target");
+        };
+        assert_eq!(t.vector_metric, "l2");
+
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false, vector_metric: manhattan }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("vector_metric"),
+            "expected vector_metric error, got: {err}"
+        );
+    }
+
+    #[test]
     fn rejects_section_aware_without_hierarchy_base() {
         let yaml = r#"
 cell_name: t
@@ -1608,8 +1683,7 @@ target: {{ type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, h
                     "summary_embed" =>
                         "base: { type: hierarchy }\n  summarizer: { mode: passthrough }".to_string(),
                     "hierarchical_summary" =>
-                        "base: { type: hierarchy }\n  summarizer: { mode: passthrough }"
-                            .to_string(),
+                        "base: { type: hierarchy }\n  summarizer: { mode: passthrough }".to_string(),
                     _ => "".to_string(),
                 }
             );
@@ -1739,7 +1813,10 @@ target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, 
 "#;
         let path = write_yaml(yaml);
         let err = format!("{:#}", load_config(&path).unwrap_err());
-        assert!(err.contains("source_tag"), "expected source_tag mention, got: {err}");
+        assert!(
+            err.contains("source_tag"),
+            "expected source_tag mention, got: {err}"
+        );
     }
 
     #[test]
@@ -1812,8 +1889,13 @@ target:
 "#;
         let path = write_yaml(yaml);
         let cfg = load_config(&path).expect("ReplacingMergeTree should be accepted");
-        let TargetConfig::Clickhouse(t) = &cfg.target else { unreachable!() };
-        assert_eq!(t.engine.as_deref(), Some("ReplacingMergeTree(created_at) ORDER BY (id)"));
+        let TargetConfig::Clickhouse(t) = &cfg.target else {
+            unreachable!()
+        };
+        assert_eq!(
+            t.engine.as_deref(),
+            Some("ReplacingMergeTree(created_at) ORDER BY (id)")
+        );
     }
 
     #[test]
@@ -1834,7 +1916,10 @@ target:
 "#;
         let path = write_yaml(yaml);
         let err = format!("{:#}", load_config(&path).unwrap_err());
-        assert!(err.contains("allowlist") && err.contains("Memory"), "got: {err}");
+        assert!(
+            err.contains("allowlist") && err.contains("Memory"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -1983,7 +2068,7 @@ target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mod
         let cfg = load_config(&write_yaml(yaml)).unwrap();
         match cfg.framer {
             FramerConfig::SessionEpisode(f) => {
-                assert_eq!(f.max_gap_seconds, 1800);   // python default
+                assert_eq!(f.max_gap_seconds, 1800); // python default
                 assert_eq!(f.max_turns, 40);
                 assert_eq!(f.max_words, 1200);
                 assert!(f.boundary_on_tool);
@@ -2063,7 +2148,7 @@ target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mod
 "#;
         let cfg = load_config(&write_yaml(yaml)).unwrap();
         if let ChunkerConfig::Consolidation(c) = cfg.chunker {
-            assert_eq!(c.fact_max_chars, 1200);  // python parity default
+            assert_eq!(c.fact_max_chars, 1200); // python parity default
             assert!(matches!(*c.base, ChunkerConfig::SentenceAware(_)));
         } else {
             panic!("not consolidation");

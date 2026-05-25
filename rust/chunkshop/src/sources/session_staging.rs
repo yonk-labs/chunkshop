@@ -57,8 +57,7 @@ fn resolve_dsn(cfg: &SessionStagingSourceConfig) -> Result<String> {
         }
     }
     if let Some(env) = &cfg.dsn_env {
-        return std::env::var(env)
-            .with_context(|| format!("DSN env var {env} not set"));
+        return std::env::var(env).with_context(|| format!("DSN env var {env} not set"));
     }
     Err(anyhow!(
         "session_staging source needs either `dsn` (literal) or `dsn_env` (env var name)"
@@ -183,10 +182,11 @@ impl SessionStagingSource {
         // concurrent-insert window — same pattern Python uses. Bind as
         // ISO-8601 text (matches Python's `.isoformat()` storage); the
         // UPDATE casts it back via `$2::text` into the consumed jsonb.
-        let watermark: String =
-            sqlx::query_scalar("SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+00:00\"')")
-                .fetch_one(pool)
-                .await?;
+        let watermark: String = sqlx::query_scalar(
+            "SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+00:00\"')",
+        )
+        .fetch_one(pool)
+        .await?;
         let rows = sqlx::query(&select_sql).fetch_all(pool).await?;
 
         // Group rows by session_id (input order preserved by ORDER BY).
@@ -204,10 +204,19 @@ impl SessionStagingSource {
             let mut ev = serde_json::Map::new();
             ev.insert("event_id".into(), Value::String(event_id));
             ev.insert("seq".into(), seq.map(Value::from).unwrap_or(Value::Null));
-            ev.insert("role".into(), role.map(Value::String).unwrap_or(Value::Null));
+            ev.insert(
+                "role".into(),
+                role.map(Value::String).unwrap_or(Value::Null),
+            );
             ev.insert("content".into(), Value::String(content));
-            ev.insert("tool".into(), tool.map(Value::String).unwrap_or(Value::Null));
-            ev.insert("outcome".into(), outcome.map(Value::String).unwrap_or(Value::Null));
+            ev.insert(
+                "tool".into(),
+                tool.map(Value::String).unwrap_or(Value::Null),
+            );
+            ev.insert(
+                "outcome".into(),
+                outcome.map(Value::String).unwrap_or(Value::Null),
+            );
             ev.insert("ts".into(), Value::from(ts));
             if !by_session.contains_key(&sid) {
                 session_order.push(sid.clone());
@@ -267,10 +276,8 @@ impl SessionStagingSource {
         // runner trigger the UPDATE after the per-doc write loop succeeds.
         // Mid-iteration crash → commit_processed() never runs → next run
         // reselects these sessions. Matches Python generator semantics.
-        *self.pending_watermark.lock().unwrap() =
-            Some((watermark, wm_key, emitted_sessions));
+        *self.pending_watermark.lock().unwrap() = Some((watermark, wm_key, emitted_sessions));
 
         Ok(docs)
     }
 }
-

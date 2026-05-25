@@ -25,9 +25,9 @@ use crate::config::{
 // `FastembedEmbedderConfig` + `FastembedEmbedder` are only used by the
 // `new()` convenience constructor, which builds a `FastembedEmbedder` at
 // runtime and so requires the `embedder-hub` feature (hf-hub model fetch).
-use crate::config::SemanticChunkerConfig;
 #[cfg(feature = "embedder-hub")]
 use crate::config::FastembedEmbedderConfig;
+use crate::config::SemanticChunkerConfig;
 #[cfg(feature = "embedder-hub")]
 use crate::embedder::FastembedEmbedder;
 use crate::sentence_split::naive_sentences;
@@ -1560,7 +1560,11 @@ pub fn build_chunker(cfg: ChunkerConfig) -> anyhow::Result<Box<dyn ChunkerImpl +
             let base = build_chunker(*c.base)?;
             let consolidator = crate::consolidators::build_consolidator(&c.consolidator);
             let fact_max_chars = c.fact_max_chars;
-            Box::new(ConsolidationChunker::new(base, consolidator, fact_max_chars))
+            Box::new(ConsolidationChunker::new(
+                base,
+                consolidator,
+                fact_max_chars,
+            ))
         }
     })
 }
@@ -1853,10 +1857,7 @@ mod tests {
             // Unbalanced character class: regex crate rejects this.
             heading_pattern: Some("[invalid".to_string()),
         });
-        assert!(
-            result.is_err(),
-            "expected Err for invalid regex, got Ok"
-        );
+        assert!(result.is_err(), "expected Err for invalid regex, got Ok");
     }
 
     // --- Semantic chunker algorithm helpers ---
@@ -2070,9 +2071,7 @@ mod tests {
 
     // --- RM-A Task 8: ConsolidationChunker --------------------------------
 
-    use crate::consolidators::{
-        ConsolidationOutput, Consolidator, EpisodeInput, FactTriple,
-    };
+    use crate::consolidators::{ConsolidationOutput, Consolidator, EpisodeInput, FactTriple};
 
     /// Test double: emits N synthetic facts.
     struct FakeCons {
@@ -2138,7 +2137,10 @@ mod tests {
     #[test]
     fn consolidation_emits_episode_plus_one_fact_per_triple() {
         let cons = Box::new(FakeCons {
-            facts: vec![fact("queue", "uses", "postgres"), fact("api", "calls", "search")],
+            facts: vec![
+                fact("queue", "uses", "postgres"),
+                fact("api", "calls", "search"),
+            ],
             mode: "fake",
         });
         let chunker = ConsolidationChunker::new(base_chunker(), cons, 1200);
@@ -2148,11 +2150,17 @@ mod tests {
             .iter()
             .map(|c| c.metadata["kind"].as_str().unwrap_or(""))
             .collect();
-        assert!(kinds.iter().any(|k| *k == "episode"), "missing episode kind: {kinds:?}");
+        assert!(
+            kinds.iter().any(|k| *k == "episode"),
+            "missing episode kind: {kinds:?}"
+        );
         let fact_count = kinds.iter().filter(|k| **k == "fact").count();
         assert_eq!(fact_count, 2, "expected 2 fact chunks; got {kinds:?}");
         // SPO populated
-        let fact_chunk = chunks.iter().find(|c| c.metadata["kind"] == "fact").unwrap();
+        let fact_chunk = chunks
+            .iter()
+            .find(|c| c.metadata["kind"] == "fact")
+            .unwrap();
         assert_eq!(fact_chunk.metadata["subject"], "queue");
         assert_eq!(fact_chunk.metadata["predicate"], "uses");
         assert_eq!(fact_chunk.metadata["object"], "postgres");
@@ -2169,7 +2177,10 @@ mod tests {
         });
         let chunker = ConsolidationChunker::new(base_chunker(), cons, 200);
         let chunks = chunker.chunk(&episode_doc("episode body."));
-        let fact_chunk = chunks.iter().find(|c| c.metadata["kind"] == "fact").unwrap();
+        let fact_chunk = chunks
+            .iter()
+            .find(|c| c.metadata["kind"] == "fact")
+            .unwrap();
         assert!(fact_chunk.original_content.chars().count() <= 200);
     }
 
@@ -2182,7 +2193,10 @@ mod tests {
             .iter()
             .map(|c| c.metadata["kind"].as_str().unwrap_or(""))
             .collect();
-        assert!(kinds.iter().all(|k| *k == "episode"), "no facts allowed: {kinds:?}");
+        assert!(
+            kinds.iter().all(|k| *k == "episode"),
+            "no facts allowed: {kinds:?}"
+        );
         assert!(!chunks.is_empty(), "should still emit episode chunks");
         for c in &chunks {
             assert!(
@@ -2195,7 +2209,10 @@ mod tests {
 
     #[test]
     fn consolidation_episode_carries_session_id_and_extractor() {
-        let cons = Box::new(FakeCons { facts: vec![], mode: "extractive" });
+        let cons = Box::new(FakeCons {
+            facts: vec![],
+            mode: "extractive",
+        });
         let chunker = ConsolidationChunker::new(base_chunker(), cons, 1200);
         let chunks = chunker.chunk(&episode_doc("hello world. another sentence here."));
         for c in chunks.iter().filter(|c| c.metadata["kind"] == "episode") {

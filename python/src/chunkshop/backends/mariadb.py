@@ -92,9 +92,16 @@ class MariaDBBackend:
         return f"DROP TABLE {fq}"
 
     def emit_chunks_table_ddl(
-        self, fq: str, cols: list, hnsw: bool, dim: int, engine: str | None = None,
+        self,
+        fq: str,
+        cols: list,
+        hnsw: bool,
+        dim: int,
+        engine: str | None = None,
+        vector_metric: str = "cosine",
     ) -> list[str]:
         del dim
+        del vector_metric
         col_lines = []
         pk_cols = []
         for c in cols:

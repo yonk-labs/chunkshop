@@ -97,9 +97,9 @@ pub use runner::{run_cell, CellResult};
 pub use sinks::{AnySink, ClickhouseSink, MariadbSink, PgSink, Sink, SqliteSink};
 // `Document` is always available; the fetcher sources are gated.
 pub use sources::Document;
-#[cfg(feature = "source")]
-pub use sources::{FilesSource, HttpSource, JsonCorpusSource, S3Source};
 #[cfg(all(feature = "source", feature = "sink"))]
 pub use sources::{
     AnySource, ClickhouseTableSource, MariadbTableSource, PgTableSource, SqliteTableSource,
 };
+#[cfg(feature = "source")]
+pub use sources::{FilesSource, HttpSource, JsonCorpusSource, S3Source};

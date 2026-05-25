@@ -2,15 +2,14 @@
 //! `build_extractor` factory. Stub-extractor errors at build are also covered.
 
 use chunkshop::config::{
-    CompositeExtractorConfig, ExtractorConfig, KeybertPhrasesExtractorConfig,
-    NoneExtractorConfig,
+    CompositeExtractorConfig, ExtractorConfig, KeybertPhrasesExtractorConfig, NoneExtractorConfig,
 };
 use chunkshop::extractor::build_extractor;
 
 #[test]
 fn none_via_factory_returns_empty() {
-    let e = build_extractor(ExtractorConfig::None(NoneExtractorConfig::default()))
-        .expect("build none");
+    let e =
+        build_extractor(ExtractorConfig::None(NoneExtractorConfig::default())).expect("build none");
     let r = e.extract("hello world").expect("extract");
     assert!(r.tags.is_empty());
     assert!(r.metadata.is_empty());

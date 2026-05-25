@@ -43,7 +43,11 @@ pub fn chunker_key(cfg: &ChunkerConfig) -> Result<String> {
             format!("fixed_overlap_w{}_s{}", c.window_words, c.step_words)
         }
         ChunkerConfig::NeighborExpand(c) => {
-            format!("neighbor_expand_w{}_over_{}", c.window, chunker_key(&c.base)?)
+            format!(
+                "neighbor_expand_w{}_over_{}",
+                c.window,
+                chunker_key(&c.base)?
+            )
         }
         ChunkerConfig::Semantic(_) => {
             return Err(anyhow!(
@@ -71,7 +75,11 @@ pub fn chunker_key(cfg: &ChunkerConfig) -> Result<String> {
 
 /// Combo table name: `{chunker_key}__{embedder_key}`.
 pub fn combo_table(chunker: &ChunkerConfig, embedder: &FastembedEmbedderConfig) -> Result<String> {
-    Ok(format!("{}__{}", chunker_key(chunker)?, embedder_key(embedder)))
+    Ok(format!(
+        "{}__{}",
+        chunker_key(chunker)?,
+        embedder_key(embedder)
+    ))
 }
 
 #[cfg(test)]
@@ -97,9 +105,18 @@ mod tests {
 
     #[test]
     fn embedder_key_strips_org_and_punctuation() {
-        assert_eq!(embedder_key(&emb("Xenova/bge-base-en-v1.5-int8")), "bge_base_en_v1_5_int8");
-        assert_eq!(embedder_key(&emb("Xenova/bge-small-en-v1.5-int8")), "bge_small_en_v1_5_int8");
-        assert_eq!(embedder_key(&emb("nomic-ai/nomic-embed-text-v1.5-Q")), "nomic_embed_text_v1_5_q");
+        assert_eq!(
+            embedder_key(&emb("Xenova/bge-base-en-v1.5-int8")),
+            "bge_base_en_v1_5_int8"
+        );
+        assert_eq!(
+            embedder_key(&emb("Xenova/bge-small-en-v1.5-int8")),
+            "bge_small_en_v1_5_int8"
+        );
+        assert_eq!(
+            embedder_key(&emb("nomic-ai/nomic-embed-text-v1.5-Q")),
+            "nomic_embed_text_v1_5_q"
+        );
     }
 
     #[test]

@@ -48,10 +48,7 @@ async fn spawn_test_server() -> Option<(String, tokio::sync::oneshot::Sender<()>
     Some((base, tx))
 }
 
-async fn handle_connection(
-    mut stream: tokio::net::TcpStream,
-    base: String,
-) -> std::io::Result<()> {
+async fn handle_connection(mut stream: tokio::net::TcpStream, base: String) -> std::io::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let mut buf = [0u8; 4096];
@@ -113,13 +110,19 @@ async fn http_source_fetches_two_urls_with_correct_metadata() {
     assert!(html.content.contains("Hello world."));
     assert_eq!(html.metadata["url"], html.id);
     assert_eq!(html.metadata["status_code"], 200);
-    assert!(html.metadata["content_type"].as_str().unwrap().contains("text/html"));
+    assert!(html.metadata["content_type"]
+        .as_str()
+        .unwrap()
+        .contains("text/html"));
 
     let text = &docs[1];
     assert_eq!(text.id, format!("{base}/text"));
     assert_eq!(text.title, None);
     assert_eq!(text.content, PLAIN_TEXT);
-    assert!(text.metadata["content_type"].as_str().unwrap().contains("text/plain"));
+    assert!(text.metadata["content_type"]
+        .as_str()
+        .unwrap()
+        .contains("text/plain"));
 
     let _ = shutdown.send(());
 }
@@ -154,7 +157,11 @@ async fn http_source_dedups_urls_against_sitemap() {
         sitemap: Some(format!("{base}/sitemap.xml")),
     };
     let docs = HttpSource::new(cfg).iter_documents().await.expect("iter");
-    assert_eq!(docs.len(), 2, "/html should appear once despite being in both lists");
+    assert_eq!(
+        docs.len(),
+        2,
+        "/html should appear once despite being in both lists"
+    );
     // First-occurrence ordering: /html came from urls; /text came from sitemap.
     assert_eq!(docs[0].id, format!("{base}/html"));
     assert_eq!(docs[1].id, format!("{base}/text"));
@@ -172,7 +179,11 @@ async fn http_source_errors_on_non_2xx() {
         urls: vec![format!("{base}/missing")],
         sitemap: None,
     };
-    let err = HttpSource::new(cfg).iter_documents().await.unwrap_err().to_string();
+    let err = HttpSource::new(cfg)
+        .iter_documents()
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("404") || err.contains("status"), "got: {err}");
 
     let _ = shutdown.send(());

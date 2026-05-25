@@ -34,9 +34,8 @@ impl MariadbBackend {
     pub async fn pool(&self) -> Result<&MySqlPool> {
         self.pool
             .get_or_try_init(|| async {
-                let dsn = std::env::var(&self.dsn_env).with_context(|| {
-                    format!("DSN env var {} not set", self.dsn_env)
-                })?;
+                let dsn = std::env::var(&self.dsn_env)
+                    .with_context(|| format!("DSN env var {} not set", self.dsn_env))?;
                 // max_connections(1) mirrors postgres.rs and the Python
                 // implementation's short-lived per-document connection
                 // discipline. Concurrent throughput comes from running
@@ -141,8 +140,9 @@ impl BackendDialect for MariadbBackend {
         fq: &str,
         cols: &[ColSpec],
         hnsw: bool,
-        _dim: usize,            // dim is encoded in the embedding column's type_ddl
+        _dim: usize, // dim is encoded in the embedding column's type_ddl
         engine: Option<&str>,
+        _vector_metric: Option<&str>,
     ) -> Vec<String> {
         let mut col_lines: Vec<String> = Vec::with_capacity(cols.len());
         let mut pk_cols: Vec<&str> = Vec::new();
@@ -489,10 +489,7 @@ mod tests {
         let with_composite = b.upsert_clause(&["a", "b"], &["c"]);
         let with_single = b.upsert_clause(&["x"], &["c"]);
         assert_eq!(with_composite, with_single);
-        assert_eq!(
-            with_composite,
-            "ON DUPLICATE KEY UPDATE `c` = VALUES(`c`)"
-        );
+        assert_eq!(with_composite, "ON DUPLICATE KEY UPDATE `c` = VALUES(`c`)");
     }
 
     #[test]
@@ -524,7 +521,7 @@ mod tests {
     fn emit_chunks_table_ddl_no_hnsw() {
         let b = backend();
         let cols = canonical_cols(384);
-        let stmts = b.emit_chunks_table_ddl("`db`.`t`", &cols, false, 384, None);
+        let stmts = b.emit_chunks_table_ddl("`db`.`t`", &cols, false, 384, None, None);
         assert_eq!(stmts.len(), 1);
         let s = &stmts[0];
         assert!(
@@ -544,7 +541,7 @@ mod tests {
     fn emit_chunks_table_ddl_with_hnsw() {
         let b = backend();
         let cols = canonical_cols(384);
-        let stmts = b.emit_chunks_table_ddl("`db`.`t`", &cols, true, 384, None);
+        let stmts = b.emit_chunks_table_ddl("`db`.`t`", &cols, true, 384, None, None);
         assert_eq!(stmts.len(), 1);
         let s = &stmts[0];
         assert!(

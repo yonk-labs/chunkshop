@@ -36,7 +36,11 @@ fn fq_table_parity() {
         let db = inp[0].as_str().unwrap();
         let table = inp[1].as_str().unwrap();
         let expected = case["out"].as_str().unwrap();
-        assert_eq!(b.fq_table(db, table), expected, "fq_table({db:?}, {table:?})");
+        assert_eq!(
+            b.fq_table(db, table),
+            expected,
+            "fq_table({db:?}, {table:?})"
+        );
     }
 }
 
@@ -74,8 +78,18 @@ fn upsert_clause_returns_empty_for_clickhouse() {
     let f = load_fixture();
     for case in f["upsert_clause"].as_array().unwrap() {
         let inp = &case["in"];
-        let keys: Vec<&str> = inp["keys"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
-        let updates: Vec<&str> = inp["updates"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        let keys: Vec<&str> = inp["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        let updates: Vec<&str> = inp["updates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         let expected = case["out"].as_str().unwrap();
         assert_eq!(
             b.upsert_clause(&keys, &updates),
@@ -92,7 +106,11 @@ fn create_database_sql_parity() {
     for case in f["create_database_sql"].as_array().unwrap() {
         let inp = case["in"].as_str().unwrap();
         let expected = case["out"].as_str().unwrap();
-        assert_eq!(b.create_database_sql(inp), expected, "create_database_sql({inp:?})");
+        assert_eq!(
+            b.create_database_sql(inp),
+            expected,
+            "create_database_sql({inp:?})"
+        );
     }
 }
 
@@ -149,17 +167,23 @@ fn emit_chunks_table_ddl_parity() {
         let dim = inp["dim"].as_u64().unwrap() as usize;
         let engine = inp["engine"].as_str();
 
-        let stmts = b.emit_chunks_table_ddl(fq, &cols, hnsw, dim, engine);
+        let stmts = b.emit_chunks_table_ddl(fq, &cols, hnsw, dim, engine, None);
         assert_eq!(stmts.len(), 1, "{name}: expected single CREATE TABLE stmt");
         let stmt = &stmts[0];
 
         for needle in case["out_contains"].as_array().unwrap_or(&vec![]) {
             let n = needle.as_str().unwrap();
-            assert!(stmt.contains(n), "{name}: expected fragment {n:?} in:\n{stmt}");
+            assert!(
+                stmt.contains(n),
+                "{name}: expected fragment {n:?} in:\n{stmt}"
+            );
         }
         for excl in case["out_excludes"].as_array().unwrap_or(&vec![]) {
             let e = excl.as_str().unwrap();
-            assert!(!stmt.contains(e), "{name}: should NOT contain {e:?}, got:\n{stmt}");
+            assert!(
+                !stmt.contains(e),
+                "{name}: should NOT contain {e:?}, got:\n{stmt}"
+            );
         }
     }
 }

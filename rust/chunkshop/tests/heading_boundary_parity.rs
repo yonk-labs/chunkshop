@@ -41,9 +41,8 @@ struct Reference {
 fn rust_heading_boundary_matches_python() {
     let corpus = std::fs::read_to_string(fixtures_dir().join("framer_heading_corpus.md"))
         .expect("read corpus");
-    let ref_json =
-        std::fs::read_to_string(fixtures_dir().join("framer_heading_reference.json"))
-            .expect("read reference");
+    let ref_json = std::fs::read_to_string(fixtures_dir().join("framer_heading_reference.json"))
+        .expect("read reference");
     let r: Reference = serde_json::from_str(&ref_json).expect("parse reference");
 
     let f = HeadingBoundaryFramer::new(HeadingBoundaryFramerConfig {

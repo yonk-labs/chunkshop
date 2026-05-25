@@ -40,9 +40,8 @@ impl ClickhouseBackend {
         let c = self
             .client
             .get_or_try_init(|| async {
-                let dsn = std::env::var(&self.dsn_env).with_context(|| {
-                    format!("DSN env var {} not set", self.dsn_env)
-                })?;
+                let dsn = std::env::var(&self.dsn_env)
+                    .with_context(|| format!("DSN env var {} not set", self.dsn_env))?;
                 build_client_from_dsn(&dsn)
             })
             .await?;
@@ -130,15 +129,26 @@ fn build_client_from_dsn(dsn: &str) -> Result<Client> {
         .host_str()
         .ok_or_else(|| anyhow!("DSN missing host: {dsn:?}"))?;
     let port = parsed.port().unwrap_or(if secure { 8443 } else { 8123 });
-    let url = format!("{}://{}:{}", if secure { "https" } else { "http" }, host, port);
+    let url = format!(
+        "{}://{}:{}",
+        if secure { "https" } else { "http" },
+        host,
+        port
+    );
 
     let user = match parsed.username() {
         "" => "default".to_string(),
-        u => urlencoding::decode(u).map(|c| c.into_owned()).unwrap_or_else(|_| u.to_string()),
+        u => urlencoding::decode(u)
+            .map(|c| c.into_owned())
+            .unwrap_or_else(|_| u.to_string()),
     };
     let password = parsed
         .password()
-        .map(|p| urlencoding::decode(p).map(|c| c.into_owned()).unwrap_or_else(|_| p.to_string()))
+        .map(|p| {
+            urlencoding::decode(p)
+                .map(|c| c.into_owned())
+                .unwrap_or_else(|_| p.to_string())
+        })
         .unwrap_or_default();
     let database = match parsed.path().trim_start_matches('/') {
         "" => "default".to_string(),
@@ -213,10 +223,7 @@ impl BackendDialect for ClickhouseBackend {
         // CH's JSONExtractString takes positional path segments rather than
         // jsonpath syntax. Returns '' for missing paths — chunkshop callers
         // accept null-ish on missing.
-        let segs: Vec<String> = dotted_path
-            .split('.')
-            .map(|s| format!("'{s}'"))
-            .collect();
+        let segs: Vec<String> = dotted_path.split('.').map(|s| format!("'{s}'")).collect();
         format!("JSONExtractString({col_expr}, {})", segs.join(", "))
     }
 
@@ -249,6 +256,7 @@ impl BackendDialect for ClickhouseBackend {
         hnsw: bool,
         _dim: usize,
         engine: Option<&str>,
+        _vector_metric: Option<&str>,
     ) -> Vec<String> {
         let mut col_lines: Vec<String> = Vec::with_capacity(cols.len());
         let mut order_by_cols: Vec<&str> = Vec::new();
@@ -308,10 +316,9 @@ mod tests {
     fn dsn_parses_clickhouse_scheme_with_credentials() {
         // Pure unit test — does not require a live CH. Just verifies the parser
         // accepts the canonical shape without panicking.
-        let _client = build_client_from_dsn(
-            "clickhouse://default:chpw@localhost:8124/chunkshop_test",
-        )
-        .expect("parse");
+        let _client =
+            build_client_from_dsn("clickhouse://default:chpw@localhost:8124/chunkshop_test")
+                .expect("parse");
     }
 
     #[test]
