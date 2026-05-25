@@ -33,6 +33,11 @@ dev = [
     # (already pulled transitively today, but the test path depends on it
     # directly — declare it here for CI determinism).
     "httpx>=0.26",
+    # Exercises the chunker-x-extractor matrix in CI — without these the
+    # rake_keywords cells skip via importorskip and the cross-connector
+    # orthogonality only gets the NoneExtractor lane.
+    "rake-nltk>=1.0",
+    "nltk>=3.8",
 ]
 gdrive = ["httpx>=0.26"]
 github = ["httpx>=0.26"]
