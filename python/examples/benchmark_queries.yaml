@@ -1,0 +1,222 @@
+# Query fixture for benchmark_grep_vs_hybrid.py
+#
+# Each query is a realistic engineering question an engineer might ask while
+# working in the chunkshop repo. Mixes concrete-symbol lookups, conceptual
+# how-to questions, architecture-level questions, and impact analysis.
+#
+# Fields per query:
+#   id                          : short stable identifier
+#   query                       : free-text question as the engineer would phrase it
+#   intent                      : what they actually need to find (guides relevance scoring)
+#   grep_terms                  : terms a co-pilot would grep for (drives Approach A)
+#   by_symbol                   : symbol name (or trailing-* prefix) for Approach C; null skips
+#   impact_fqn                  : FQN for Approach D; null skips
+#   impact_direction            : callers | callees | both (only if impact_fqn set)
+#   expected_answer_locations   : files that MUST appear in a "good" answer
+#   relevance_paths             : substrings/paths that count as "relevant" hits (for precision@k)
+#   judgement_notes             : how we score relevance for this query
+
+queries:
+  - id: q01_incrementalsource_definition
+    query: "Where is IncrementalSource defined?"
+    intent: "Find the file + class declaration of the IncrementalSource Protocol."
+    grep_terms: ["IncrementalSource"]
+    by_symbol: "IncrementalSource"
+    impact_fqn: null
+    impact_direction: null
+    expected_answer_locations:
+      - "python/src/chunkshop/sources/base.py"
+    relevance_paths:
+      - "sources/base.py"
+    judgement_notes: |
+      A hit is relevant if it is the class declaration of IncrementalSource in
+      sources/base.py OR a direct reference that names the Protocol (an implementing
+      class, type annotation, or docstring that quotes the class).
+      Hits that merely mention "incremental" in unrelated contexts are NOT relevant.
+
+  - id: q02_pg_table_iter_changes_since
+    query: "Show me how pg_table.iter_changes_since handles cursor advancement"
+    intent: "Find the iter_changes_since implementation in PgTableSource, in particular the tuple-cursor advancement logic."
+    grep_terms: ["iter_changes_since", "pg_table"]
+    # symbol_aware chunker is function-granularity: methods on classes do NOT
+    # surface as their own symbol_name. The containing class IS indexed, so we
+    # filter to PgTableSource to demonstrate the realistic --by-symbol path.
+    by_symbol: "PgTableSource"
+    impact_fqn: null
+    impact_direction: null
+    expected_answer_locations:
+      - "python/src/chunkshop/sources/pg_table.py"
+    relevance_paths:
+      - "sources/pg_table.py"
+    judgement_notes: |
+      A hit is relevant if it shows the iter_changes_since method body OR the
+      tuple-cursor SQL in pg_table.py. Implementations in OTHER sources (http,
+      gdrive, github) are NOT relevant for this query — the question is
+      specifically about pg_table.
+
+  - id: q03_calls_to_proactive_refresh
+    query: "What calls proactive_refresh?"
+    intent: "List the call sites (callers) of chunkshop.oauth.refresh.proactive_refresh."
+    grep_terms: ["proactive_refresh"]
+    by_symbol: null
+    impact_fqn: "chunkshop.oauth.refresh.proactive_refresh"
+    impact_direction: "callers"
+    expected_answer_locations:
+      - "python/connectors/examples/e2e_gdrive_real_flow.py"
+      - "python/tests/chunkshop/test_oauth_refresh.py"
+    relevance_paths:
+      - "e2e_gdrive_real_flow"
+      - "test_oauth_refresh"
+      - "oauth/refresh"
+    judgement_notes: |
+      Relevant hits = (a) the proactive_refresh definition itself, (b) tests that
+      call it, (c) production call sites. The DEFINITION is "less relevant" than
+      the CALLERS for this specific question — but is included because grep
+      surfaces it and the engineer can read upward from there.
+
+  - id: q04_implement_a_new_connector
+    query: "How do I implement a new connector?"
+    intent: "Find authoring-connectors docs, the Connector Protocol, and at least one verified-tier connector to study as an example."
+    grep_terms: ["connector", "Protocol"]
+    by_symbol: null
+    impact_fqn: null
+    impact_direction: null
+    expected_answer_locations:
+      - "docs/cookbook/authoring-connectors.md"
+      - "python/connectors/src/chunkshop_connectors"
+    relevance_paths:
+      - "authoring-connectors"
+      - "connectors/src/chunkshop_connectors"
+      - "sources/base.py"
+      - "register"
+    judgement_notes: |
+      A hit is relevant if it shows: the authoring-connectors cookbook, the
+      Source/IncrementalSource Protocol declarations, the connector registry, or
+      a verified-tier connector implementation (blob, rss, github, gdrive). NB:
+      this query intentionally tests breadth — the grep baseline on "connector"
+      will pull MANY files, most of which are noise (tests for one connector,
+      experimental stubs, etc.). The conceptually-relevant set is small.
+
+  - id: q05_why_tuple_cursor
+    query: "Why does chunkshop use a tuple cursor for pg_table?"
+    intent: "Find the rationale comment/docstring explaining tuple-cursor boundary-row safety in pg_table.py."
+    grep_terms: ["tuple cursor", "tuple-cursor", "after_id"]
+    by_symbol: null
+    impact_fqn: null
+    impact_direction: null
+    expected_answer_locations:
+      - "python/src/chunkshop/sources/pg_table.py"
+      - "python/src/chunkshop/config.py"
+    relevance_paths:
+      - "sources/pg_table.py"
+      - "config.py"
+    judgement_notes: |
+      A hit is relevant if it contains the rationale (boundary-row safety,
+      same-updated_at silent row-loss, "tuple cursor" comments) OR the
+      PgTableSource cursor-shape docstring in config.py. CLAUDE.md and test
+      files that REFERENCE the rationale are partially relevant.
+
+  - id: q06_pipeline_architecture
+    query: "How does chunkshop chunker, extractor, sink fit together?"
+    intent: "Find the runner.run_cell orchestration that wires Source -> Chunker -> Embedder -> Extractor -> Sink."
+    grep_terms: ["run_cell", "Source", "Chunker", "Sink"]
+    by_symbol: "run_cell"
+    impact_fqn: null
+    impact_direction: null
+    expected_answer_locations:
+      - "python/src/chunkshop/runner.py"
+      - "python/src/chunkshop/pipeline.py"
+    relevance_paths:
+      - "runner.py"
+      - "pipeline.py"
+      - "docs/architecture"
+    judgement_notes: |
+      Relevant = the run_cell / Pipeline orchestration code OR architecture docs
+      that describe the chunker -> extractor -> sink contract. The base.py
+      Protocols are also relevant since they ARE the contract.
+
+  - id: q07_rename_fingerprint_impact
+    query: "If I rename Document.fingerprint, what files break?"
+    intent: "Enumerate every file that reads or writes Document.fingerprint."
+    grep_terms: ["fingerprint"]
+    # Document is the dataclass that owns the `fingerprint` field; that's the
+    # symbol the function-granularity chunker indexes.
+    by_symbol: "Document"
+    impact_fqn: null
+    impact_direction: null
+    expected_answer_locations:
+      - "python/src/chunkshop/sources/base.py"
+      - "python/src/chunkshop/raw_store"
+      - "python/src/chunkshop/sources/http.py"
+      - "python/src/chunkshop/sources/s3.py"
+      - "python/src/chunkshop/config.py"
+    relevance_paths:
+      - "fingerprint"
+    judgement_notes: |
+      Multi-file impact query. Every file that mentions Document.fingerprint is
+      relevant; the engineer needs ALL of them to safely rename. This is a worst
+      case for hybrid search (the engineer wants exhaustive recall, not the top
+      5 most-relevant) and a best case for grep (literal string match across
+      files).
+
+  - id: q08_add_oauth_to_connector
+    query: "I want to add OAuth-based authentication to a new connector"
+    intent: "Find the OAuthProvider Protocol, the proactive_refresh helper, the GoogleOAuthProvider reference implementation, and any existing OAuth-backed connector for a worked example."
+    grep_terms: ["OAuth", "OAuthProvider"]
+    by_symbol: null
+    impact_fqn: null
+    impact_direction: null
+    expected_answer_locations:
+      - "python/src/chunkshop/oauth"
+      - "python/connectors/src/chunkshop_connectors/oauth"
+      - "python/connectors/src/chunkshop_connectors/gdrive"
+    relevance_paths:
+      - "oauth"
+      - "gdrive"
+      - "OAuthProvider"
+      - "proactive_refresh"
+    judgement_notes: |
+      Vague-intent query — the engineer doesn't know the right vocabulary yet.
+      Relevant hits surface: the OAuthProvider Protocol, the existing
+      GoogleOAuthProvider concrete impl, OAuthTokens dataclass, proactive_refresh
+      helper, gdrive connector as a reference. Grep on "OAuth" picks up MANY
+      test files and changelog mentions — high noise expected.
+
+  - id: q09_stalecursorerror
+    query: "What raises StaleCursorError?"
+    intent: "Find every line that raises StaleCursorError so the engineer understands the trigger conditions."
+    grep_terms: ["StaleCursorError"]
+    by_symbol: "StaleCursorError"
+    impact_fqn: null
+    impact_direction: null
+    expected_answer_locations:
+      - "python/src/chunkshop/sources/base.py"
+      - "python/connectors/src/chunkshop_connectors/github/connector.py"
+    relevance_paths:
+      - "StaleCursorError"
+    judgement_notes: |
+      Relevant hits = the class definition + every raise site. Mentions in tests
+      that ASSERT it gets raised count as partially relevant (they document the
+      contract).
+
+  - id: q10_code_vs_symbol_chunker
+    query: "What is the difference between code_aware and symbol_aware chunkers?"
+    intent: "Compare the two chunkers: what each is for, what languages each supports, when to pick one over the other."
+    grep_terms: ["code_aware", "symbol_aware"]
+    by_symbol: null
+    impact_fqn: null
+    impact_direction: null
+    expected_answer_locations:
+      - "python/src/chunkshop/chunkers/code_aware.py"
+      - "python/src/chunkshop/chunkers/symbol_aware.py"
+      - "docs/cookbook/code-aware-chunking.md"
+      - "docs/chunkers.md"
+    relevance_paths:
+      - "chunkers/code_aware"
+      - "chunkers/symbol_aware"
+      - "code-aware-chunking"
+      - "chunkers.md"
+    judgement_notes: |
+      Comparison query. Relevant hits surface BOTH implementations + at least
+      one of the docs that explains the choice. Hits showing only one of the two
+      are partial (rank should reflect that we want symmetry).
