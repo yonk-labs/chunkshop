@@ -39,25 +39,46 @@ SP-2 (chunkshop-connectors bulk port) shipped:
   verifies one user expectation against the live or mocked surface.
   `make_gdrive_mock()` factored out of the pytest fixture so demos
   can drive the Drive mock outside pytest.
+- **`SlackOAuthProvider` + verified `slack` connector** (this session)
+  — `chunkshop_connectors.oauth.slack.SlackOAuthProvider` codifies
+  Slack OAuth v2 quirks (comma-separated scope lists, bot vs user
+  tokens, `ok: false` error surfacing, rotating refresh tokens). The
+  `slack` connector replaces the stub with a real Web-API walker that
+  yields one Document per message, fans out thread replies via
+  `conversations.replies`, and uses a per-channel `{channel_id: ts}`
+  merge-delta cursor. Hermetic mock at
+  `chunkshop_connectors.testing.mocks.slack.slack_mock` via
+  `httpx.MockTransport`. 20 new tests (9 OAuth + 11 connector).
 
 ## Intentionally out-of-scope for SP-2 (this session)
 
 These were on the SP-2 plan but were not pulled into this session.
 Each is queued for its own follow-up.
 
-### 1. Slack OAuth provider (Task 10 — remainder)
+### 1. Remaining OAuth providers (Task 10 — remainder)
 
-Google is done (`46b8517`), GitHub uses PAT (no OAuth needed for
-verified-tier). **Slack** still needs `chunkshop_connectors.oauth.slack`
-plus the hermetic mock — same pattern as Google.
+Google and Slack are done. GitHub uses PAT (no OAuth needed for
+verified-tier). Five OAuth providers still pending, ordered by how
+many stub connectors depend on each:
+
+- **Confluence** — used by the experimental `confluence` connector.
+- **Dropbox** — used by the experimental `dropbox` connector.
+- **Box** — used by the experimental `box` connector.
+- **Gmail** — used by the experimental `gmail` connector (Google's
+  OAuth provider can be reused; Gmail-specific is mostly about scopes
+  + base URL).
+- **Jira** — used by the experimental `jira` connector (Atlassian's
+  OAuth is shared with Confluence).
 
 Reference: chunkshop#22 (OAuth interfaces), SP-1 spec §4.3 (concrete
 providers live in plugin, not core).
 
-### 2. Per-provider OAuth mocks (Task 11) — slack
+### 2. Per-provider OAuth mocks (Task 11) — remaining
 
-`oauth/google.py` has its mock (`tests/test_google_oauth_provider.py`).
-The Slack equivalent is deferred with the Slack provider above.
+Google and Slack have their hermetic mocks
+(`tests/test_google_oauth_provider.py`,
+`tests/test_slack_oauth_provider.py`). Each new OAuth provider lands
+with its mock + tests in the same `MockTransport`-based pattern.
 
 ### 3. Behavioural lifts for experimental tier
 
