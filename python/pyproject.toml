@@ -47,6 +47,13 @@ xlsx = ["openpyxl>=3.1"]
 html = ["beautifulsoup4>=4.12"]
 office = ["chunkshop[pdf,docx,pptx,xlsx]"]
 all-parsers = ["chunkshop[pdf,docx,pptx,xlsx,html]"]
+# Symbol-aware code parsing (SP-A foundation). Lean by design: only
+# Python + Java tree-sitter grammars ship in this extra. Go, TS, and JS
+# work today via the regex fallback in chunkshop.codeparse; their
+# tree-sitter grammars can be added in follow-up extras (e.g.
+# `code-go`, `code-ts`) if/when needed to avoid bloating the [code]
+# wheel set.
+code = ["tree-sitter>=0.21", "tree-sitter-python>=0.21", "tree-sitter-java>=0.21"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 
 [project.scripts]
