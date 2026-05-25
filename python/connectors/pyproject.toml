@@ -56,7 +56,8 @@ all = [
 # entry-point group. Each connector adds one line below as it lands; see
 # docs/cookbook/authoring-connectors.md in the chunkshop core repo.
 [project.entry-points."chunkshop.sources"]
-# populated as connectors are added (Tasks 4-9)
+# Verified tier — behaviourally tested with hermetic mocks.
+blob = "chunkshop_connectors.blob:factory"
 
 [project.urls]
 Homepage = "https://github.com/yonk-labs/chunkshop"
