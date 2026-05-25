@@ -121,7 +121,20 @@ def test_http_source_dedups_urls_against_sitemap(server):
     assert ids[1] == f"{server}/text"
 
 
-def test_http_source_raises_on_non_2xx(server):
-    cfg = Cfg(type="http", urls=[f"{server}/missing"])
-    with pytest.raises((RuntimeError, Exception)):
-        list(HttpSource(cfg).iter_documents())
+def test_http_source_skips_non_2xx_with_warning(server, caplog):
+    """The crawler-aware HttpSource no longer fail-fasts on a single 404 — it
+    logs a warning and continues so one bad link doesn't kill a whole crawl.
+
+    The old behavior (RuntimeError on non-2xx) was correct for a *single-URL*
+    fetcher but wrong for the depth-bounded crawler this source became when
+    ``crawl_depth`` was added. The pydantic model still accepts the old
+    minimal ``urls=[...]`` shape — just the failure mode shifted from raise
+    to skip-with-warning.
+    """
+    import logging
+    cfg = Cfg(type="http", urls=[f"{server}/missing"], request_delay_seconds=0)
+    with caplog.at_level(logging.WARNING):
+        docs = list(HttpSource(cfg).iter_documents())
+    assert docs == []
+    assert any("404" in r.message or "status" in r.message.lower()
+               for r in caplog.records), "expected a warning about the 404"

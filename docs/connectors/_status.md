@@ -23,8 +23,8 @@ its current implementation status.
 |-----------|--------------|-------------|----------------------------|-------|
 | blob      | verified     | implemented | access-key (boto3)         | S3 / R2 / GCS-interop / MinIO via `endpoint_url`. ETag → fingerprint. |
 | rss       | verified     | implemented | none                       | feedparser-backed. GUID → fingerprint. |
-| gdrive    | verified     | planned     | OAuth (google)             | Needs `oauth/google.py` provider (Task 10). |
-| github    | verified     | planned     | OAuth (github) / PAT       | Needs `oauth/github.py` provider (Task 10). |
+| gdrive    | verified     | implemented | OAuth (google)             | httpx-backed Drive v3 walker. Cursor = `{page_token}` via `/changes` API. Text-shaped MIMEs + Google Docs (exported as text); others skipped with `UserWarning`. See `docs/connectors/gdrive.md`. |
+| github    | verified     | implemented | PAT (classic or fine-grained) | httpx-backed REST walker. Cursor = `{after_commit_sha}`. See `docs/connectors/github.md`. |
 | slack     | verified     | planned     | OAuth (slack)              | Needs `oauth/slack.py` provider (Task 10). |
 | notion    | experimental | stub        | OAuth (notion)             | Real impl deferred. |
 | confluence| experimental | stub        | OAuth or API token         | Real impl deferred. |
@@ -50,6 +50,19 @@ its current implementation status.
 | dingtalk  | experimental | stub        | OAuth (dingtalk)           | Real impl deferred. |
 | rest_api  | experimental | stub        | varies                     | Generic JSON-paginated REST connector. |
 
+## OAuth providers
+
+OAuth providers live under `chunkshop_connectors.oauth.*` and
+implement `chunkshop.oauth.OAuthProvider` (Protocol). They wrap the
+per-vendor quirks (Google's `access_type=offline` requirement,
+Slack's v2 token endpoint, etc.) so connectors stay vendor-agnostic.
+
+| Provider | Status      | Used by | Notes |
+|----------|-------------|---------|-------|
+| google   | implemented | gdrive  | `httpx`-backed. Codifies `access_type=offline` + `prompt=consent` on consent URL; preserves prior refresh_token if Google omits one on refresh. |
+| slack    | planned     | slack   | Needs `oauth/slack.py` provider before slack connector lands. |
+| github   | n/a         | github  | github connector uses PAT auth only — no OAuth provider needed. |
+
 ## Re-syncing this table
 
 When you implement an experimental stub, update the row's **Status**
@@ -60,10 +73,11 @@ and document the OAuth provider it relies on.
 
 ## Roadmap
 
-- **Task 10 (deferred):** OAuth provider implementations in
-  `chunkshop_connectors/oauth/{google,github,slack,microsoft,...}.py`
-  and the three verified OAuth-backed connectors (gdrive / github /
-  slack).
+- **Task 10 (partially done):** OAuth provider implementations in
+  `chunkshop_connectors/oauth/`. `google.py` shipped alongside the
+  `gdrive` verified connector. `slack.py` + `microsoft.py` still
+  deferred. `github.py` is intentionally out of scope — the
+  `github` connector uses PAT auth.
 - **Task 11 (deferred):** Per-provider hermetic mocks for the OAuth
   flow (token refresh, scope validation, refresh-token rotation).
 - **Behavioural lifts** of each experimental stub one at a time;

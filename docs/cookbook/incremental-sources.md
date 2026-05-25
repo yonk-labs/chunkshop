@@ -124,6 +124,74 @@ cursor = src.cursor_from(first[-1])                        # {"after": "<iso ts 
 again = list(src.iter_changes_since(cursor))
 ```
 
+### HTTP: `{url: {etag, last_modified}}` + optional depth-bounded crawl (`chunkshop.sources.http.HttpSource`)
+
+`sync_mode = SyncMode.CURSOR`. The cursor is a **per-URL** map of conditional-GET
+headers. On each sync, every URL is re-fetched with `If-None-Match: <etag>` and
+`If-Modified-Since: <last_modified>`; a `304 Not Modified` response is skipped
+silently. New ETags / Last-Modified values are emitted as a per-doc cursor delta
+that consumers merge into a running map (same shape as S3).
+
+```python
+from chunkshop.config import HttpSource as Cfg
+from chunkshop.sources.http import HttpSource
+
+cfg = Cfg(
+    type="http",
+    urls=["https://docs.example.com/index"],
+    crawl_depth=1,            # follow <a href> one hop
+    allow_external=False,     # default — same-host only
+    request_delay_seconds=0.5,
+    respect_robots=True,
+    max_pages=200,
+    user_agent="myorg-bot/1.0 (+https://myorg.example/bot)",
+)
+src = HttpSource(cfg)
+
+cursor = src.empty_cursor()                          # {}
+first  = list(src.iter_changes_since(cursor))        # everything
+# Each Document carries metadata["etag"] / ["last_modified"] when the server
+# sends them. cursor_from(doc) returns the per-URL delta; merge into running map:
+new_cursor = dict(cursor)
+for d in first:
+    new_cursor.update(src.cursor_from(d))
+# new_cursor == {url: {"etag": "...", "last_modified": "..."}, ...}
+
+# Next sync: unchanged URLs return 304 and are skipped.
+again  = list(src.iter_changes_since(new_cursor))
+```
+
+**Crawl semantics.** `crawl_depth=0` is the legacy behavior (fetch only the
+URLs in `cfg.urls` / `cfg.sitemap`). `crawl_depth>=1` does a BFS:
+
+- Extracts `<a href>` links from `text/html` bodies via `beautifulsoup4`
+  (`[html]` extra).
+- Skips `mailto:`, `javascript:`, `tel:`, and fragment-only links.
+- Resolves relative hrefs with `urljoin` against the page URL.
+- Normalizes URLs (lowercase scheme/host, strip fragment) before the
+  visited-set check — so `http://a.test`, `http://A.TEST/`, and
+  `http://a.test/#section` collapse to one fetch.
+- Filters out off-host links unless `allow_external=True`.
+- Caps the total crawl at `max_pages` (default 1000) — a defensive belt
+  against runaway link graphs.
+
+**Politeness.** A minimum delay of `request_delay_seconds` (default 0.5s) is
+enforced between outbound requests; `respect_robots=True` fetches each host's
+`/robots.txt` once and honors `Disallow:` rules; the `User-Agent` is
+configurable so target sites can identify the crawler.
+
+**Non-text MIMEs.** Bodies with a Content-Type that isn't `text/*` or
+`application/json` / `application/xml` are skipped with a warning. To ingest
+PDFs/DOCX/etc., download with `yonk-doctools` and feed via the `files` source.
+
+**Cookbook example.** `python/examples/crawl_url.py` is a runnable demo:
+
+```bash
+python examples/crawl_url.py https://example.com 2
+```
+
+prints one line per fetched URL with byte count.
+
 ## Stale cursors
 
 A cursor can outlive what the source can honor — an API page token expires, a

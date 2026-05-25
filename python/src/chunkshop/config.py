@@ -160,6 +160,20 @@ class HttpSource(_Base):
     type: Literal["http"]
     urls: list[str] = Field(default_factory=list)
     sitemap: Optional[str] = None
+    # Depth-bounded link crawl. 0 = current behavior (fetch only the listed URLs).
+    # >=1 follows that many link-hops from each seed via <a href="..."> extraction.
+    crawl_depth: int = Field(default=0, ge=0, le=5)
+    # By default the crawler only follows same-host links. Flip to True to
+    # follow off-host links too (politely — still rate-limited, still subject
+    # to max_pages).
+    allow_external: bool = False
+    # Politeness controls. request_delay_seconds is the minimum delay between
+    # outbound requests (per source, not per host); respect_robots toggles
+    # robots.txt enforcement; max_pages is a hard runaway cap.
+    request_delay_seconds: float = Field(default=0.5, ge=0)
+    respect_robots: bool = True
+    max_pages: int = Field(default=1000, ge=1)
+    user_agent: str = "chunkshop/0.5 (+https://github.com/yonk-labs/chunkshop)"
 
 
 class S3Source(_Base):
@@ -470,6 +484,33 @@ class ConsolidationChunker(_Base):
         return self
 
 
+class CodeAwareChunker(_Base):
+    """Split source code at function/class boundaries via the stdlib ``ast`` module.
+
+    For ``.py`` files (or ``language='python'``) the chunker walks top-level AST
+    nodes and emits one chunk per function/class. Module-level statements
+    (imports, constants) gather into a leading ``module_block`` chunk. With
+    ``include_imports=True`` (default), each chunk's ``embedded_content`` is
+    prefixed with the file's import block so embeddings carry context like
+    "uses BeautifulSoup". ``original_content`` always holds the raw source
+    segment without that framing.
+
+    For any other extension the chunker delegates to the configured
+    ``if_oversize`` chunker (falling back to ``sentence_aware`` when unset).
+    Malformed Python (``ast.parse`` raises ``SyntaxError``) emits one chunk
+    holding the whole doc with ``strategy='code_aware_fallback'``.
+    """
+    type: Literal["code_aware"]
+    max_chars: int = 4000  # soft cap; oversize functions stay whole unless if_oversize is set
+    min_chars: int = 100   # smaller-than-this module-level statements may still emit as a block
+    include_imports: bool = True
+    language: Literal["python", "auto"] = "auto"
+    if_oversize: Optional["ChunkerConfig"] = None
+
+    def effective_max_chars(self) -> Optional[int]:
+        return self.max_chars
+
+
 class HierarchicalSummaryChunker(_Base):
     """Emit base (fine) chunks plus coarse summary chunks linked by group_id."""
     type: Literal["hierarchical_summary"]
@@ -515,6 +556,7 @@ ChunkerConfig = Annotated[
         ConsolidationChunker,
         HierarchicalSummaryChunker,
         SemanticChunker,
+        CodeAwareChunker,
     ],
     Field(discriminator="type"),
 ]
@@ -526,6 +568,7 @@ SemanticChunker.model_rebuild()
 SummaryEmbedChunker.model_rebuild()
 ConsolidationChunker.model_rebuild()
 HierarchicalSummaryChunker.model_rebuild()
+CodeAwareChunker.model_rebuild()
 
 
 class IdentityFramerConfig(_Base):

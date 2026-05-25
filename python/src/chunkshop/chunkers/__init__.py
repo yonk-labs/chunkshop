@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from chunkshop.chunkers.base import Chunk, Chunker
+from chunkshop.chunkers.code_aware import CodeAwareChunker
 from chunkshop.chunkers.fixed_overlap import FixedOverlapChunker
 from chunkshop.chunkers.hierarchy import HierarchyChunker
 from chunkshop.chunkers.neighbor_expand import NeighborExpandChunker
@@ -15,6 +16,7 @@ from chunkshop.chunkers.consolidation import ConsolidationChunker
 from chunkshop.config import (
     ChunkerConfig,
     EmbedderConfig,
+    CodeAwareChunker as CodeAwareCfg,
     FixedOverlapChunker as FixedCfg,
     HierarchyChunker as HierCfg,
     NeighborExpandChunker as NeighborCfg,
@@ -90,6 +92,8 @@ def load_chunker(
         base = load_chunker(cfg.base, main_embedder=main_embedder,
                             shared_boundary_model=shared_boundary_model)
         return ConsolidationChunker(cfg, base, build_chunker=_build)
+    if isinstance(cfg, CodeAwareCfg):
+        return CodeAwareChunker(cfg, build_chunker=_build)
     if isinstance(cfg, SemanticCfg):
         main_model_name = getattr(main_embedder, "model_name", None) if main_embedder else None
         # Only pass shared_boundary_model when the chunker actually wants "same".
