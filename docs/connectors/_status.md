@@ -25,7 +25,7 @@ its current implementation status.
 | rss       | verified     | implemented | none                       | feedparser-backed. GUID → fingerprint. |
 | gdrive    | verified     | implemented | OAuth (google)             | httpx-backed Drive v3 walker. Cursor = `{page_token}` via `/changes` API. Text-shaped MIMEs + Google Docs (exported as text); others skipped with `UserWarning`. See `docs/connectors/gdrive.md`. |
 | github    | verified     | implemented | PAT (classic or fine-grained) | httpx-backed REST walker. Cursor = `{after_commit_sha}`. See `docs/connectors/github.md`. |
-| slack     | verified     | planned     | OAuth (slack)              | Needs `oauth/slack.py` provider (Task 10). |
+| slack     | verified     | implemented | OAuth (slack)              | httpx-backed Slack Web API walker. Cursor = per-channel `{channel_id: ts}` map (merge-delta). Threads fan out via `conversations.replies`. See `docs/connectors/slack.md`. |
 | notion    | experimental | stub        | OAuth (notion)             | Real impl deferred. |
 | confluence| experimental | stub        | OAuth or API token         | Real impl deferred. |
 | jira      | experimental | stub        | OAuth or API token         | Real impl deferred. |
@@ -60,7 +60,7 @@ Slack's v2 token endpoint, etc.) so connectors stay vendor-agnostic.
 | Provider | Status      | Used by | Notes |
 |----------|-------------|---------|-------|
 | google   | implemented | gdrive  | `httpx`-backed. Codifies `access_type=offline` + `prompt=consent` on consent URL; preserves prior refresh_token if Google omits one on refresh. |
-| slack    | planned     | slack   | Needs `oauth/slack.py` provider before slack connector lands. |
+| slack    | implemented | slack   | `httpx`-backed. Comma-separated scope lists (Slack OAuth v2 quirk). Bot token is primary; user token (when `user_scopes` requested) lives in `provider_extras["user_access_token"]`. Surfaces `{"ok": false}` payloads as `SlackOAuthError`. |
 | github   | n/a         | github  | github connector uses PAT auth only — no OAuth provider needed. |
 
 ## Re-syncing this table
@@ -74,12 +74,13 @@ and document the OAuth provider it relies on.
 ## Roadmap
 
 - **Task 10 (partially done):** OAuth provider implementations in
-  `chunkshop_connectors/oauth/`. `google.py` shipped alongside the
-  `gdrive` verified connector. `slack.py` + `microsoft.py` still
-  deferred. `github.py` is intentionally out of scope — the
-  `github` connector uses PAT auth.
-- **Task 11 (deferred):** Per-provider hermetic mocks for the OAuth
-  flow (token refresh, scope validation, refresh-token rotation).
+  `chunkshop_connectors/oauth/`. `google.py` and `slack.py` shipped
+  alongside their verified connectors. `microsoft.py` still deferred.
+  `github.py` is intentionally out of scope — the `github` connector
+  uses PAT auth.
+- **Task 11 (partially done):** Per-provider hermetic mocks for the OAuth
+  flow (token refresh, scope validation, refresh-token rotation). Google
+  and Slack done; `microsoft.py` pending.
 - **Behavioural lifts** of each experimental stub one at a time;
   each lift gets its own test file under
   `python/connectors/tests/test_<name>_connector.py` plus a mock
