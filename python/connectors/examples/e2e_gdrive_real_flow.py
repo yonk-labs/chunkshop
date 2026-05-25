@@ -245,6 +245,34 @@ def authenticate(client_id: str, client_secret: str, scopes: list[str], force: b
 # ---------- Ingest ----------
 
 
+def _explain_drive_error(resp) -> str:
+    """Turn a Drive API error response into an actionable diagnostic.
+
+    Google's 403 responses include a JSON body that names the exact reason
+    (API not enabled, daily quota, insufficient scope, file-not-found-or-
+    not-shared, etc.) — surface it so the user doesn't have to dig.
+    """
+    try:
+        body = resp.json()
+        err = body.get("error", {})
+        msg = err.get("message", "")
+        reasons = [e.get("reason", "") for e in err.get("errors", [])]
+        details = err.get("details", [])
+    except Exception:
+        return f"HTTP {resp.status_code}: {resp.text[:500]}"
+    reason_blob = ", ".join(r for r in reasons if r)
+    extras = []
+    for d in details:
+        if d.get("@type", "").endswith("ErrorInfo"):
+            metadata = d.get("metadata", {})
+            link = metadata.get("activationUrl") or metadata.get("url")
+            if link:
+                extras.append(f"  -> Enable / fix at: {link}")
+    if extras:
+        return f"HTTP {resp.status_code} ({reason_blob}): {msg}\n" + "\n".join(extras)
+    return f"HTTP {resp.status_code} ({reason_blob}): {msg}"
+
+
 def _fetch_single_doc(file_id: str, tokens):
     """Single-doc URLs bypass the connector and go straight to the Drive REST API."""
     import httpx
@@ -262,7 +290,21 @@ def _fetch_single_doc(file_id: str, tokens):
     )
     if meta_resp.status_code == 401:
         raise RuntimeError(
-            "Drive returned 401 — token may be expired or the file isn't shared with you."
+            "Drive returned 401 — access token expired. Re-run with --auth to refresh."
+        )
+    if meta_resp.status_code == 403:
+        raise RuntimeError(
+            "Drive returned 403 (forbidden). Common causes:\n"
+            "  1. The Google Drive API is not ENABLED in your Cloud project.\n"
+            "     Enable it at: https://console.developers.google.com/apis/api/drive.googleapis.com/overview\n"
+            "  2. The OAuth consent screen grants different scopes than the connector requested.\n"
+            "     Re-run with --auth and re-consent to drive.readonly.\n"
+            "  3. The file isn't shared with the account you authenticated as.\n"
+            f"\n  Google said: {_explain_drive_error(meta_resp)}"
+        )
+    if meta_resp.status_code == 404:
+        raise RuntimeError(
+            f"Drive returned 404 — file id {file_id!r} not found or not shared with you."
         )
     meta_resp.raise_for_status()
     meta = meta_resp.json()
