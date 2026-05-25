@@ -24,7 +24,7 @@ its current implementation status.
 | blob      | verified     | implemented | access-key (boto3)         | S3 / R2 / GCS-interop / MinIO via `endpoint_url`. ETag → fingerprint. |
 | rss       | verified     | implemented | none                       | feedparser-backed. GUID → fingerprint. |
 | gdrive    | verified     | planned     | OAuth (google)             | Needs `oauth/google.py` provider (Task 10). |
-| github    | verified     | planned     | OAuth (github) / PAT       | Needs `oauth/github.py` provider (Task 10). |
+| github    | verified     | implemented | PAT (classic or fine-grained) | httpx-backed REST walker. Cursor = `{after_commit_sha}`. See `docs/connectors/github.md`. |
 | slack     | verified     | planned     | OAuth (slack)              | Needs `oauth/slack.py` provider (Task 10). |
 | notion    | experimental | stub        | OAuth (notion)             | Real impl deferred. |
 | confluence| experimental | stub        | OAuth or API token         | Real impl deferred. |
