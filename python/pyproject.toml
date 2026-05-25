@@ -42,6 +42,7 @@ clickhouse = ["clickhouse-connect>=0.7"]
 all-backends = ["chunkshop[sqlite,mariadb,clickhouse]"]
 pdf = ["pypdf>=4.0"]
 docx = ["python-docx>=1.1"]
+html = ["beautifulsoup4>=4.12"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 
 [project.scripts]
