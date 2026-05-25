@@ -45,7 +45,20 @@ class IncrementalSource(Protocol):
     """
     def empty_cursor(self) -> dict: ...
     def iter_changes_since(self, cursor: dict) -> Iterable[Document]: ...
-    def cursor_from(self, last_document: Document) -> dict: ...
+    def cursor_from(self, last_document: Document) -> dict:
+        """Returns a cursor *delta* for ``last_document``. Consumers build the
+        next cursor by starting from the previous cursor and merging each emitted
+        document's delta in iteration order::
+
+            next = dict(prev)
+            for d in docs:
+                next.update(source.cursor_from(d))
+
+        For map-style cursors (S3 ``{key:etag}``) this accumulates the full
+        manifest and preserves unchanged keys; for monotonic cursors
+        (pg ``{after_*: ...}``) the last doc wins.
+        """
+        ...
 
 
 @runtime_checkable

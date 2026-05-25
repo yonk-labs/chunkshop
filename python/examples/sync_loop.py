@@ -47,7 +47,11 @@ async def _run_one(name, source, cursor, on_document, on_delete, sem) -> TaskRes
                 docs = await asyncio.to_thread(lambda: list(source.iter_changes_since(cursor)))
                 for d in docs:
                     on_document(name, d)
-                new_cursor = source.cursor_from(docs[-1]) if docs else cursor
+                # cursor_from returns a per-doc DELTA; merge each into the running
+                # cursor in iteration order (see IncrementalSource.cursor_from).
+                new_cursor = dict(cursor)
+                for d in docs:
+                    new_cursor.update(source.cursor_from(d))
                 return TaskResult(SourceTaskType.SYNC, True, len(docs), 0, new_cursor, None,
                                   int((time.time() - start) * 1000))
             else:
