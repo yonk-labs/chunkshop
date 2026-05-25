@@ -57,3 +57,44 @@ def test_pg_table_cursor_only_returns_newer_rows(table):
         conn.commit()
     again = list(src.iter_changes_since(cur))
     assert {d.id for d in again} == {"c"}
+
+
+def test_pg_table_handles_row_inserted_at_cursor_boundary(table):
+    """A row inserted at the same updated_at as the cursor boundary, AFTER
+    the cursor has advanced past a sibling row at that timestamp, must still
+    be picked up on the next sync. The strict `WHERE updated_at > %s` cursor
+    silently drops it; the tuple cursor (after_ts, after_id) yields it.
+    """
+    from datetime import datetime, timezone
+
+    from chunkshop.sources.pg_table import PgTableSource as Src
+    from chunkshop.testing import _merge_cursor
+    schema, name = table
+    boundary = datetime.now(timezone.utc)
+    # Sync 1: row c1 exists at the boundary timestamp.
+    with psycopg.connect(DSN) as conn, (c := conn.cursor()):
+        c.execute(f"INSERT INTO {schema}.{name} (id, body, updated_at) VALUES ('c1','cc1', %s)", [boundary])
+        conn.commit()
+    src = Src(_cfg(*table))
+    first = list(src.iter_changes_since(src.empty_cursor()))
+    assert {d.id for d in first} == {"a", "b", "c1"}
+    cursor = _merge_cursor(src, src.empty_cursor(), first)
+    # Concurrent writer commits c2 at the SAME boundary timestamp as c1 —
+    # mimics the realistic race: their SELECT happened before our cursor advance.
+    with psycopg.connect(DSN) as conn, (c := conn.cursor()):
+        c.execute(f"INSERT INTO {schema}.{name} (id, body, updated_at) VALUES ('c2','cc2', %s)", [boundary])
+        conn.commit()
+    # Sync 2: c2 must be emitted. Strict-`>` silently drops it; tuple cursor catches it.
+    again = list(src.iter_changes_since(cursor))
+    assert {d.id for d in again} == {"c2"}, (
+        f"expected c2 on next sync (boundary-row), got {[d.id for d in again]}")
+
+
+def test_pg_table_satisfies_incremental_helpers(table):
+    from chunkshop.sources.pg_table import PgTableSource as Src
+    from chunkshop.testing import assert_cursor_advances, assert_idempotent_on_re_emit
+    src = Src(_cfg(*table))
+    assert_cursor_advances(src)
+    # Source is stateless w.r.t. cursors; a fresh instance sees the same DB rows.
+    src2 = Src(_cfg(*table))
+    assert_idempotent_on_re_emit(src2)

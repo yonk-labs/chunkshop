@@ -85,12 +85,20 @@ class PgTableSource:
             s=sql.Identifier(self.cfg.database_name),
             t=sql.Identifier(self.cfg.table),
         )
-        params = []
-        after = cursor.get("after")
-        if after is not None:
-            q = q + sql.SQL(" WHERE ") + sql.Identifier(self.cfg.updated_at_column) + sql.SQL(" > %s")
-            params.append(after)
-        q = q + sql.SQL(" ORDER BY ") + sql.Identifier(self.cfg.updated_at_column)
+        params: list = []
+        # Tuple cursor: (after_ts, after_id) > (cursor.after_ts, cursor.after_id).
+        # Casting id_col::text on both sides makes this uniform across int/uuid/text id
+        # types — sync only needs the ordering to be CONSISTENT across runs, and
+        # lexicographic-on-text is consistent.
+        after_ts = cursor.get("after_ts")
+        after_id = cursor.get("after_id")
+        if after_ts is not None and after_id is not None:
+            q = q + sql.SQL(" WHERE (") + sql.Identifier(self.cfg.updated_at_column) + sql.SQL(
+                ", ") + sql.Identifier(self.cfg.id_column) + sql.SQL("::text) > (%s, %s)")
+            params.append(_dt.datetime.fromisoformat(after_ts))
+            params.append(str(after_id))
+        q = q + sql.SQL(" ORDER BY ") + sql.Identifier(self.cfg.updated_at_column) + sql.SQL(
+            ", ") + sql.Identifier(self.cfg.id_column) + sql.SQL("::text")
         with self.backend.connect() as conn, conn.cursor() as cur:
             cur.execute(q, params)
             for row in cur:
@@ -108,4 +116,4 @@ class PgTableSource:
 
     def cursor_from(self, last_document: Document) -> dict:
         ua = (last_document.metadata or {}).get("_updated_at")
-        return {"after": ua}
+        return {"after_ts": ua, "after_id": last_document.id}
