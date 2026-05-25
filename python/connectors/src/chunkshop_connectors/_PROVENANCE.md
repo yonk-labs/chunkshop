@@ -40,6 +40,19 @@ can diff against upstream cleanly:
    preserved with a `# NOTE: upstream typo preserved for diff-tracking`
    marker so this package stays diff-compatible with RAGFlow.
 
+## Deferred lifts (UNAVAILABLE_AT_LIFT_TIME)
+
+- **`_base/utils.py`** — 1284 lines upstream; module-level imports of
+  `boto3`, `botocore`, `chardet`, `googleapiclient`, `mypy_boto3_s3`,
+  `slack_sdk`, and `retry` make a wholesale lift un-importable without
+  every per-connector extra installed. Stubbed to an empty module with
+  a TODO. Tasks 4-8 (verified-tier connector lifts) will pull in the
+  helpers each connector actually references.
+- **`_base/retry.py`** — lifted but needs the `retry` library at import
+  time. Imports cleanly when the verified-tier connector extras land.
+- **`_base/rate_limit.py`** — lifted; uses `requests`, which is already
+  in the test env via pytest-httpserver. Imports cleanly today.
+
 ## Re-syncing from upstream
 
 To refresh against a newer RAGFlow SHA:
