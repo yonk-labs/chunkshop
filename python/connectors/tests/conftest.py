@@ -5,3 +5,4 @@ Re-exports per-connector mock fixtures from
 don't have to know which module defines each fixture.
 """
 from chunkshop_connectors.testing.mocks.blob import blob_mock  # noqa: F401
+from chunkshop_connectors.testing.mocks.rss import rss_mock  # noqa: F401

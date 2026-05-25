@@ -58,6 +58,7 @@ all = [
 [project.entry-points."chunkshop.sources"]
 # Verified tier — behaviourally tested with hermetic mocks.
 blob = "chunkshop_connectors.blob:factory"
+rss = "chunkshop_connectors.rss:factory"
 
 [project.urls]
 Homepage = "https://github.com/yonk-labs/chunkshop"
