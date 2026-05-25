@@ -27,7 +27,6 @@ from chunkshop_connectors._tier import tier_of
 EXPERIMENTAL = [
     "confluence",
     "jira",
-    "dropbox",
     "box",
     "gitlab",
     "bitbucket",
