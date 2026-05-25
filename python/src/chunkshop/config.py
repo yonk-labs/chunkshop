@@ -179,6 +179,24 @@ class InlineSource(_Base):
     type: Literal["inline"]
 
 
+class LocalRawStoreConfig(_Base):
+    type: Literal["local"]
+    root: str
+
+
+class S3RawStoreConfig(_Base):
+    type: Literal["s3"]
+    bucket: str
+    prefix: str = ""
+    endpoint_url: Optional[str] = None
+
+
+RawStoreConfig = Annotated[
+    Union[LocalRawStoreConfig, S3RawStoreConfig],
+    Field(discriminator="type"),
+]
+
+
 class SyncSettings(_Base):
     """Declares how a connector source detects changes. Consumer-driven —
     chunkshop does not schedule; these values inform the consumer's orchestrator."""
@@ -196,9 +214,7 @@ class ConnectorSource(_Base):
     connector: str
     config: dict = Field(default_factory=dict)
     sync: Optional[SyncSettings] = None
-    # Temporary type until Task 9 lands RawStoreConfig; Task 9 replaces this
-    # with Optional["RawStoreConfig"] and adds ConnectorSource.model_rebuild().
-    raw_store: Optional[dict] = None
+    raw_store: Optional[RawStoreConfig] = None
 
     @field_validator("connector")
     @classmethod
