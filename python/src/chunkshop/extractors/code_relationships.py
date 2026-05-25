@@ -107,6 +107,15 @@ def _key(fqn: str) -> str:
 class CodeRelationshipsExtractor:
     """See module docstring."""
 
+    # Opt-in signal: the runner reads this flag and, when True, passes
+    # ``source_path=`` / ``language=`` kwargs derived from chunk metadata
+    # into ``extract``. Other extractors that satisfy ``Extractor(Protocol)``
+    # don't carry this attribute and the runner calls them with text only —
+    # which keeps the Protocol surface (``extract(text) -> ExtractResult``)
+    # untouched while still letting code-aware extractors receive the
+    # file/language hints they need for stable FQNs.
+    accepts_chunk_context: bool = True
+
     def __init__(self, cfg: Cfg):
         self.cfg = cfg
         # symbols: fqn -> {language, file_path, symbol}

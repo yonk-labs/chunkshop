@@ -96,7 +96,36 @@ def run_cell(cfg: CellConfig) -> CellResult:
                     doc_record_metadata = {**doc_record_metadata, **doc_extract.metadata}
                 texts = [c.embedded_content for c in chunks]
                 embeddings = embedder.embed(texts)
-                results = [extractor.extract(c.original_content) for c in chunks]
+                # Some extractors (e.g. code_relationships) want chunk-level
+                # hints — source file path + language — so their FQN /
+                # node_id derivation matches what the symbol_aware chunker
+                # already stamped. Opt-in via ``accepts_chunk_context = True``
+                # so the legacy ``extract(text)`` Protocol surface stays
+                # stable for every other extractor.
+                if getattr(extractor, "accepts_chunk_context", False):
+                    results = []
+                    for c in chunks:
+                        cmeta = c.metadata or {}
+                        kwargs = {}
+                        # Prefer the chunker-stamped path; fall back to
+                        # framer/source metadata; finally to doc.id.
+                        path = (
+                            cmeta.get("path")
+                            or cmeta.get("source_path")
+                            or cmeta.get("file_path")
+                            or (doc.metadata or {}).get("path")
+                            or (doc.metadata or {}).get("source_path")
+                            or doc.id
+                        )
+                        if path:
+                            kwargs["source_path"] = path
+                        if cmeta.get("language"):
+                            kwargs["language"] = cmeta["language"]
+                        results.append(
+                            extractor.extract(c.original_content, **kwargs)
+                        )
+                else:
+                    results = [extractor.extract(c.original_content) for c in chunks]
                 tags = [r.tags for r in results]
                 # Layered metadata merge with chunker-wins semantics:
                 #   1. doc.metadata — framer-produced (framer, frame_seq)
@@ -128,6 +157,58 @@ def run_cell(cfg: CellConfig) -> CellResult:
                     f"heartbeat docs={docs_processed} chunks={chunks_written} elapsed={elapsed:.1f}s",
                     log_path,
                 )
+
+        # Two-phase extractors (e.g. code_relationships) expose a finalize()
+        # method that walks corpus-level state collected during extract() and
+        # returns cross-document edges. The runner is the right home for the
+        # write side: it knows the cell's target schema + DSN. Extractors
+        # without finalize() — every other extractor in v1 — skip this block,
+        # so legacy cell YAMLs keep working unchanged.
+        finalize = getattr(extractor, "finalize", None)
+        if callable(finalize):
+            try:
+                edges = finalize(project_id=cfg.cell_name)
+            except TypeError:
+                # Defensive: an extractor whose finalize() doesn't take
+                # project_id — fall back to no-arg call.
+                edges = finalize()
+            if edges:
+                # Pick the target schema for the edges table. The
+                # code_relationships extractor's ``target_schema`` knob, when
+                # set, overrides the chunks-table schema. Default: write the
+                # edges alongside the chunks so a JOIN to surface
+                # file_path / line_range works without a cross-schema query.
+                target_schema = (
+                    getattr(cfg.extractor, "target_schema", None)
+                    or cfg.target.database_name
+                )
+                if cfg.target.type != "postgres":
+                    _log(
+                        f"extractor.finalize() emitted {len(edges)} edges but "
+                        f"target.type={cfg.target.type!r}; edges materialization "
+                        "currently supports postgres only — skipping write.",
+                        log_path,
+                    )
+                else:
+                    # Lazy import so non-code-relationship runs never pay the
+                    # import cost.
+                    from chunkshop.extractors.code_relationships import (
+                        write_edges,
+                        write_edges_schema,
+                    )
+
+                    dsn = cfg.target.resolve_dsn()
+                    write_edges_schema(dsn, schema=target_schema)
+                    n_written = write_edges(
+                        extractor,
+                        dsn=dsn,
+                        schema=target_schema,
+                        project_id=cfg.cell_name,
+                    )
+                    _log(
+                        f"wrote {n_written} edges to {target_schema}.code_edges",
+                        log_path,
+                    )
 
         wall = time.time() - start
         _log(
