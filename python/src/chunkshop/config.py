@@ -760,6 +760,41 @@ class CompositeExtractor(_Base):
     extractors: list["ExtractorConfig"] = Field(default_factory=list)
 
 
+class CodeSummaryExtractor(_Base):
+    """Per-chunk natural-language summary for code chunks (SP-D).
+
+    Stamps:
+      - ``metadata.summary`` — a 1-3 sentence summary of every non-empty chunk.
+      - ``metadata.file_summary`` — a file-level rollup, stamped only on the
+        first chunk of each file (heuristic: ``chunk.metadata.start_line == 1``
+        or ``chunk.metadata.symbol_type == "module"``). Disabled by setting
+        ``file_summary: false``.
+
+    Three backends:
+      - ``"lede"`` (default) — chunkshop's extractive lede shim. Requires the
+        ``[lede]`` extra. Falls back to ``first_n_sentences`` with a one-time
+        ``RuntimeWarning`` if lede is missing.
+      - ``"callable"`` — BYO summarizer; supply ``callable_path`` as
+        ``"module.path:function"`` implementing
+        ``summarize(text: str, **kwargs) -> str``. Useful for LLM-backed
+        summarizers without coupling chunkshop to any vendor.
+      - ``"first_n_sentences"`` — zero-dep regex sentence split. The whole-
+        sentence boundary means actual summary length may land below
+        ``max_length`` but never exceed it.
+
+    The ``callable_path`` import happens lazily on the first ``extract`` call so
+    ``load_extractor`` never triggers vendor SDK imports at config-load time.
+    """
+
+    type: Literal["code_summary"]
+    backend: Literal["lede", "callable", "first_n_sentences"] = "lede"
+    # ``module.path:function`` — only consulted when backend == "callable".
+    callable_path: Optional[str] = None
+    max_length: int = Field(default=300, ge=1)
+    # When False, ``file_summary`` is never stamped (per-chunk summary only).
+    file_summary: bool = True
+
+
 ExtractorConfig = Annotated[
     Union[
         NoneExtractor,
@@ -770,6 +805,7 @@ ExtractorConfig = Annotated[
         LedeTopTermsExtractor,
         LedeReportExtractor,
         CompositeExtractor,
+        CodeSummaryExtractor,
     ],
     Field(discriminator="type"),
 ]
