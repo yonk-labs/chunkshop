@@ -73,6 +73,44 @@ def parse_file(
     )
 
 
+def parse_text(
+    content: str,
+    *,
+    language: str,
+    file_path: str = "<text>",
+    project_id: str = "default",
+) -> ParseResult:
+    """Parse a source string and return its ParseResult.
+
+    The in-memory companion to :func:`parse_file`. Used by the
+    ``code_relationships`` extractor (SP-C), which receives chunk-body
+    strings from the runner and needs to re-parse them without round-
+    tripping through a tempfile.
+
+    ``language`` is mandatory here — without a path to detect from, the
+    caller must say what they're parsing. Unknown languages return an
+    empty ``ParseResult`` rather than raising, matching
+    :func:`parse_file`'s posture.
+    """
+    if language not in _SUPPORTED_LANGUAGES:
+        return ParseResult(language=language)
+    if isinstance(content, str):
+        source = content.encode("utf-8")
+    else:  # pragma: no cover — defensive: callers pass strings
+        source = bytes(content)
+    return _dispatch(
+        source=source,
+        file_path=file_path,
+        language=language,
+        project_id=project_id,
+    )
+
+
+_SUPPORTED_LANGUAGES = frozenset(
+    {"python", "java", "go", "typescript", "javascript"}
+)
+
+
 def _dispatch(
     *,
     source: bytes,
@@ -144,4 +182,4 @@ def _dispatch(
     )
 
 
-__all__ = ["parse_file"]
+__all__ = ["parse_file", "parse_text"]

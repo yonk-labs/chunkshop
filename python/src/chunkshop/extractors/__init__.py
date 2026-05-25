@@ -1,4 +1,5 @@
 from chunkshop.config import (
+    CodeRelationshipsExtractor as CodeRelCfg,
     CodeSummaryExtractor as CodeSummaryCfg,
     CompositeExtractor as CompositeCfg,
     ExtractorConfig,
@@ -11,6 +12,7 @@ from chunkshop.config import (
     SpacyEntitiesExtractor as SpacyCfg,
 )
 from chunkshop.extractors.base import Extractor
+from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
 from chunkshop.extractors.code_summary import CodeSummaryExtractor
 from chunkshop.extractors.composite import CompositeExtractor
 from chunkshop.extractors.keybert_phrases import KeyBertPhrasesExtractor
@@ -42,6 +44,8 @@ def load_extractor(cfg: ExtractorConfig) -> Extractor:
         return CompositeExtractor(cfg)
     if isinstance(cfg, CodeSummaryCfg):
         return CodeSummaryExtractor(cfg)
+    if isinstance(cfg, CodeRelCfg):
+        return CodeRelationshipsExtractor(cfg)
     raise ValueError(f"unknown extractor type: {type(cfg).__name__}")
 
 
