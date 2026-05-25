@@ -11,10 +11,15 @@ def proactive_refresh(tokens: OAuthTokens, *, provider: OAuthProvider,
     """Refresh tokens if they expire within leeway_minutes, else return None.
 
     Avoids the reactive-401 refresh race where two concurrent callers both see
-    a 401 and both try to refresh, one losing its refresh token."""
+    a 401 and both try to refresh, one losing its refresh token.
+
+    `tokens.expires_at` may be naive — common when tokens round-trip through
+    JSON storage that strips tzinfo. Naive timestamps are interpreted as UTC.
+    """
     if tokens.refresh_token is None:
         return None
+    exp = tokens.expires_at if tokens.expires_at.tzinfo is not None else tokens.expires_at.replace(tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
-    if tokens.expires_at - now <= timedelta(minutes=leeway_minutes):
+    if exp - now <= timedelta(minutes=leeway_minutes):
         return provider.refresh_token(tokens.refresh_token)
     return None

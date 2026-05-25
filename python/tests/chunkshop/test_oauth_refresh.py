@@ -26,3 +26,23 @@ def test_mock_provider_predictable_tokens():
     t = prov.exchange_code("code", "https://cb")
     assert t.provider == "mock"
     assert t.access_token.startswith("mock-access-")
+
+
+def test_refresh_when_naive_expires_at_within_leeway():
+    """Naive datetimes are interpreted as UTC — within-leeway must still refresh."""
+    prov = MockOAuthProvider()
+    naive = datetime.utcnow() + timedelta(minutes=2)  # NAIVE, no tzinfo
+    tok = OAuthTokens(access_token="a", refresh_token="r", expires_at=naive,
+                      scopes=["read"], provider="mock", provider_extras={})
+    out = proactive_refresh(tok, provider=prov, leeway_minutes=5)
+    assert out is not None
+    assert out.access_token != "a"
+
+
+def test_no_refresh_when_naive_expires_at_outside_leeway():
+    """Naive datetimes far in the future must not trigger refresh."""
+    prov = MockOAuthProvider()
+    naive = datetime.utcnow() + timedelta(minutes=60)
+    tok = OAuthTokens(access_token="a", refresh_token="r", expires_at=naive,
+                      scopes=["read"], provider="mock", provider_extras={})
+    assert proactive_refresh(tok, provider=prov, leeway_minutes=5) is None
