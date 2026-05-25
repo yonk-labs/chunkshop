@@ -17,7 +17,7 @@ as a library or driven from the command line.
 languages: Python is the reference; Rust ships to crates.io. Vectors written
 by either are interchangeable.
 
-## v0.4.0 — modular backends + cross-language matrix
+## v0.5.0 — modular backends + document-table groundwork
 
 - **4 sink backends** (postgres, mariadb, sqlite, clickhouse) — all 4 in
   Python AND Rust.
@@ -29,6 +29,10 @@ by either are interchangeable.
 - **Cross-backend bakeoff** — one YAML, one `chunkshop bakeoff` command,
   leaderboards across all 4 backends side-by-side (Python; Rust bakeoff is
   PG-only for now).
+- **Opt-in Postgres document table** — Python/Postgres can write a companion
+  one-row-per-document table with `target.documents.enabled: true`. This is
+  Python/Postgres-only in v0.5.0; Rust rejects enabled document stores until
+  Rust/Postgres parity lands.
 - **Identical retrieval quality across backends.** The v0.4.0 validation
   bakeoff (NTSB corpus, 20 docs, 12 gold queries, 2 chunkers, 1 embedder)
   produced **identical MRR (0.903 sentence_aware, 0.896 hierarchy) on all 4
@@ -107,16 +111,13 @@ The bakeoff is **step 1 of every adoption**, not a sample. It's the
 experiment that picks the recipe you'll ship with.
 
 ```bash
-# 1a. Install from source — required for the 0.4.x modular backends
-#     (the sample corpora and dev tooling also live in the repo, not the wheel):
+# 1a. Install from source when you want samples, dev tooling, or the
+#     freshest branch work:
 git clone https://github.com/yonk-labs/chunkshop && cd chunkshop
 cd python && uv sync --extra dev --extra all-backends && cd ..
 
-# 1b. pip ships the CLI + library, but PyPI currently serves the 0.3.x
-#     (Postgres-only) line. For 0.4.x modular backends until the PyPI
-#     publish lands, pin the immutable tag:
-#       pip install 'chunkshop[all-backends] @ \
-#         git+https://github.com/yonk-labs/chunkshop.git@v0.4.1#subdirectory=python'
+# 1b. Install the published Python package:
+pip install 'chunkshop[all-backends]'
 
 # 2. Pick your backend. Postgres is the default; SQLite for zero-server.
 export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
@@ -166,6 +167,7 @@ test-pinned. See [`docs/mixing-sources-and-sinks.md`](docs/mixing-sources-and-si
 | **16-cell cross-backend matrix (4 sources × 4 sinks)** | ✅ | ✅ |
 | `chunkshop bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ multi-backend | ✅ PG-only |
 | `chunkshop orchestrate` (N cells as parallel subprocesses) | ✅ | ❌ |
+| `target.documents` companion document table | ✅ Postgres only | ❌ fails loudly |
 | Embedder registry breadth | full fastembed catalogue + custom-registered HF | BGE int8 (bit-near-exact) + nomic v1.5 + stock fastembed-rs catalogue + YAML-driven HF |
 
 ## Defaults
@@ -229,6 +231,10 @@ MariaDB uses `VECTOR(N)` + `JSON` columns; SQLite uses a two-table dance
 (main + vec0 virtual); ClickHouse uses `Array(Float32)` + `MergeTree`
 engine. Storage shape is identical; only column types differ. See
 [`docs/storage-model.md`](docs/storage-model.md) and per-engine docs.
+
+Python/Postgres can also write an opt-in companion document table with
+`target.documents.enabled: true`; that support is not universal backend or
+Rust parity yet. See [`docs/storage-model.md`](docs/storage-model.md).
 
 ## Documentation
 

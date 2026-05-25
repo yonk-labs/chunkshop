@@ -52,6 +52,7 @@ async fn cross_language_top_k_parity() -> anyhow::Result<()> {
         promote_metadata: vec![],
         force_overwrite: false,
         delete_orphans: false,
+        documents: None,
     };
     let backend = MariadbBackend::new(DSN_ENV.to_string());
     let sink = MariadbSink::new(cfg, backend, dim);

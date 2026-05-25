@@ -380,6 +380,7 @@ fn pg_target(schema: &str) -> TargetConfig {
         force_overwrite: false,
         delete_orphans: false,
         memory: None,
+        documents: None,
     })
 }
 
@@ -395,6 +396,7 @@ fn mariadb_target(database: &str) -> TargetConfig {
         promote_metadata: vec![],
         force_overwrite: false,
         delete_orphans: false,
+        documents: None,
     })
 }
 
@@ -410,6 +412,7 @@ fn sqlite_target(env_var: &str) -> TargetConfig {
         promote_metadata: vec![],
         force_overwrite: false,
         delete_orphans: false,
+        documents: None,
     })
 }
 
@@ -425,6 +428,7 @@ fn clickhouse_target(database: &str) -> TargetConfig {
         force_overwrite: false,
         delete_orphans: false,
         engine: None,
+        documents: None,
     })
 }
 

@@ -11,7 +11,7 @@ def _has(module: str) -> bool:
 
 
 def _has_spacy_model(name="en_core_web_sm") -> bool:
-    if not _has("spacy"):
+    if not _has("spacy") or not _has("lede_spacy"):
         return False
     import spacy
     try:

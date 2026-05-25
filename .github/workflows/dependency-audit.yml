@@ -1,0 +1,83 @@
+name: Dependency audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: pip-audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "python/uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Export locked Python requirements
+        working-directory: python
+        run: |
+          uv export --frozen --all-extras --no-hashes --no-emit-project \
+            --output-file /tmp/chunkshop-pip-audit.txt
+
+      - name: Run pip-audit
+        working-directory: python
+        run: |
+          uv run --with pip-audit pip-audit \
+            -r /tmp/chunkshop-pip-audit.txt \
+            --no-deps \
+            --disable-pip \
+            --skip-editable
+
+  rust:
+    name: cargo audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-audit-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            cargo-audit-${{ runner.os }}-
+
+      - name: Install cargo-audit
+        run: |
+          if ! command -v cargo-audit >/dev/null 2>&1; then
+            cargo install cargo-audit --locked
+          fi
+
+      - name: Run cargo audit
+        working-directory: rust
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2023-0071 \
+            --ignore RUSTSEC-2024-0436
+
+          # RUSTSEC-2023-0071: rsa 0.9.10 via sqlx-mysql. No fixed upgrade is
+          # available; Chunkshop documents the MariaDB mitigation in
+          # docs/engines/mariadb.md and recommends TLS/trusted network path or
+          # mysql_native_password so the RSA auth path is not exercised.
+          #
+          # RUSTSEC-2024-0436: paste 1.0.15 unmaintained warning via
+          # tokenizers/fastembed/clickhouse transitive trees. Waived until
+          # upstreams remove or replace it.

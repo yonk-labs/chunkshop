@@ -13,6 +13,7 @@ production. Use as the default unless you have a reason not to.
 | HNSW index (`target.hnsw: true`) | ✅ pgvector native |
 | `delete_orphans` (per-doc shrink cleanup) | ✅ |
 | `promote_metadata` (typed columns from jsonb) | ✅ |
+| `target.documents` companion document table | ✅ Python only; Rust rejects until parity lands |
 | Multi-source `source_tag` provenance | ✅ |
 | Bakeoff CLI (Python — `chunkshop bakeoff`) | ✅ multi-backend |
 | Bakeoff CLI (Rust — `chunkshop-rs bakeoff`) | ✅ PG-only |
@@ -91,6 +92,16 @@ target:
 ```
 
 A full sample lives at [`docs/samples/sample.yaml`](../samples/sample.yaml).
+
+## Optional document table
+
+Python/Postgres can write a companion one-row-per-document table by enabling
+`target.documents.enabled: true`. This stores document-level content, lede
+summary/facts/TOC fields, optional full text, FTS text, and document-level
+promoted metadata beside the chunk table. It is disabled by default and is not
+implemented in Rust yet; Rust rejects enabled document stores at config load.
+
+See [`../storage-model.md`](../storage-model.md) for the exact schema.
 
 ## Sink modes
 

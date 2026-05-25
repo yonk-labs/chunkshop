@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-chunkshop is in alpha (v0.2.x). Only the latest minor version receives
+chunkshop is in beta (v0.5.x). Only the latest minor version receives
 security fixes. Older versions should upgrade.
 
 | Version | Supported |
 |---------|-----------|
-| 0.2.x   | :white_check_mark: |
-| < 0.2   | :x: |
+| 0.5.x   | :white_check_mark: |
+| < 0.5   | :x: |
 
 ## Reporting a vulnerability
 
@@ -39,8 +39,8 @@ In your report, include:
 
 **In scope:**
 
-- Code in `python/src/chunkshop/` — source, framer, chunker, embedder,
-  extractor, sink, runner, orchestrator, CLI.
+- Code in `python/src/chunkshop/` and `rust/chunkshop/src/` — source, framer,
+  chunker, embedder, extractor, sink, runner, orchestrator/CLI surfaces.
 - Shipped YAML configs in `python/src/chunkshop/configs/` and
   `docs/samples/`.
 - GitHub Actions workflows under `.github/workflows/`.
@@ -51,17 +51,18 @@ In your report, include:
   their maintainers.
 - ONNX models hosted on Hugging Face — the hosting provider controls the
   weights.
-- Postgres / pgvector itself.
+- Postgres / pgvector, MariaDB, SQLite/sqlite-vec, or ClickHouse itself.
 
 ## Hardening notes
 
 For reference, chunkshop's current hardening posture:
 
-- All SQL identifiers (`schema`, `table`, `source_tag`, promoted column
-  names) are regex-allowlisted at config-load time. SQL injection at the
-  sink is prevented by construction, not by sanitization.
-- The sink uses `psycopg.sql.Identifier` / `sql.SQL` composition
-  throughout — never f-string interpolation of user input into SQL.
+- SQL identifiers (`database`/schema, `table`, `source_tag`, promoted column
+  names, document table names) are regex-allowlisted at config-load time
+  before any generated SQL uses them.
+- SQL values are bound parameters. Generated SQL may use f-strings or format
+  strings only for trusted fragments: quoted/allowlisted identifiers,
+  allowlisted type/operator/language literals, or backend-owned templates.
 - The `source` column is write-once on `ON CONFLICT` upserts — provenance
   is preserved across collisions.
 - Pydantic's `extra="forbid"` catches typos or hostile extra fields in

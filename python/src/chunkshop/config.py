@@ -790,8 +790,9 @@ class FtsConfig(_Base):
 class DocumentStoreConfig(_Base):
     """Optional 1:M document table beside the chunks table.
 
-    This is initially implemented by the Postgres sink. Other backends may
-    accept the config and ignore it until parity support lands.
+    This is currently implemented only by the Python Postgres sink. Non-Postgres
+    Python targets reject enabled document stores, and Rust rejects
+    ``target.documents.enabled: true`` until Rust/Postgres parity lands.
     """
 
     enabled: bool = False

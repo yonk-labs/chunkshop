@@ -1,10 +1,11 @@
 # Document Table Plan
 
 Chunkshop's default persisted model is still chunk rows directly. The pipeline
-has a `Document` object and every chunk carries `doc_id`. Postgres targets now
-have an opt-in companion document table with one row per source document via
-`target.documents.enabled: true`; non-Postgres targets and Rust parity still
-need to catch up.
+has a `Document` object and every chunk carries `doc_id`. The Python Postgres
+sink now has an opt-in companion document table with one row per source
+document via `target.documents.enabled: true`; non-Postgres targets and Rust
+parity still need to catch up. Until then, non-Postgres Python targets and Rust
+configs fail loudly when the document store is enabled.
 
 The deep benchmark work needs document-level summaries, facts, TOC/headings,
 metadata, and full-document context. Reconstructing those from repeated chunk
@@ -29,10 +30,10 @@ CREATE TABLE {schema}.{table} (
 );
 ```
 
-Postgres can now create a document table when `target.documents.enabled: true`.
-It is disabled by default for compatibility. SQLite has a two-table layout only
-because vectors live in a `vec0` virtual table; that is not a document/chunk
-1:M model.
+Python/Postgres can now create a document table when
+`target.documents.enabled: true`. It is disabled by default for compatibility.
+SQLite has a two-table layout only because vectors live in a `vec0` virtual
+table; that is not a document/chunk 1:M model.
 
 ## Target Model
 

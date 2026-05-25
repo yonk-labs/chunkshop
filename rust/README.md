@@ -1,6 +1,6 @@
 # chunkshop-rs
 
-Rust port of chunkshop. Same YAML config, same pgvector target table, same
+Rust port of chunkshop. Same YAML config, same chunk table shape, same
 ordering of chunks — vectors written by `chunkshop-rs ingest` are compatible
 with vectors written by the Python reference (`../scripts/parity_check.py`),
 and the same bakeoff YAML produces equivalent leaderboards in both languages
@@ -24,8 +24,9 @@ and the same bakeoff YAML produces equivalent leaderboards in both languages
 > ±2.5pp MRR with consistent ordering on distinct-MRR pairs. The
 > orchestrator port is the next major piece.
 
-**Status:** v0.1.x. Single-cell pipeline + bakeoff at parity with Python
-(modulo two NLP-heavy extractors that need spaCy). The same canonical
+**Status:** v0.5.0 beta. Single-cell pipeline + bakeoff at parity with Python
+for the chunk-table path (modulo two NLP-heavy extractors that need spaCy).
+The same canonical
 YAML — `docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml` — runs from both
 languages and produces equivalent leaderboards. Wire-format proof of the
 cross-language claim at both the cell layer (vectors interchangeable) AND
@@ -67,12 +68,19 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 | chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`, `summary_embed`, `hierarchical_summary` (all byte-identical to Python), `semantic` (algorithm-parity; chunks NOT byte-identical due to MB-1's ~1e-3 ORT drift) — **all 6 Python chunkers ship in Rust**. Summarizer dispatch supports `passthrough` + `external` natively; `callable` mode recognizes `chunkshop.summarizers.passthrough` always, and `chunkshop.summarizers.lede` behind the `lede` cargo feature (`cargo build --features lede` pulls `lede` from crates.io). |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
 | extractor | `none` (default), `composite`, `rake_keywords` (hand-rolled RAKE + 150-word EN stopword list — algorithm-only parity), `lang_detect` (via `whatlang` crate, ISO 639-3 → 639-1 conversion — algorithm-only parity), `keybert_phrases` + `spacy_entities` (Python-only stubs that error at config-load) |
-| target    | pgvector table; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once on `ON CONFLICT`; `promote_metadata` jsonb-to-typed-column writes; HNSW index optional; concurrent-cell safe via schema-name advisory lock |
+| target    | Postgres, MariaDB, SQLite, and ClickHouse chunk tables; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once where the backend supports upsert; `promote_metadata`; HNSW/index knobs where backend-native |
 
 ## What does NOT work yet
 
-The two extractor stubs are deliberate Python-only. Orchestrator and the
-embedder-registry breadth are real parity gaps.
+The two extractor stubs are deliberate Python-only. Orchestrator, the
+embedder-registry breadth, and the Python/Postgres companion document table are
+real parity gaps.
+
+### Python/Postgres document table
+
+`target.documents.enabled: true` is currently Python/Postgres-only. Rust
+rejects enabled document stores at config load so a shared YAML cannot appear
+to ingest successfully while silently omitting the companion document rows.
 
 ### Meta-runner gap
 

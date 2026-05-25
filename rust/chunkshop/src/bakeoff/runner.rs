@@ -131,6 +131,7 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             force_overwrite: false,
             delete_orphans: false,
             memory: None,
+            documents: None,
         }),
         BakeoffTargetEntry::Mariadb(t) => TargetConfig::Mariadb(MariadbTargetConfig {
             dsn_env: t.dsn_env.clone(),
@@ -143,6 +144,7 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             promote_metadata: vec![],
             force_overwrite: false,
             delete_orphans: false,
+            documents: None,
         }),
         BakeoffTargetEntry::Sqlite(t) => TargetConfig::Sqlite(SqliteTargetConfig {
             dsn_env: t.dsn_env.clone(),
@@ -155,6 +157,7 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             promote_metadata: vec![],
             force_overwrite: false,
             delete_orphans: false,
+            documents: None,
         }),
         BakeoffTargetEntry::Clickhouse(t) => TargetConfig::Clickhouse(ClickhouseTargetConfig {
             dsn_env: t.dsn_env.clone(),
@@ -167,6 +170,7 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             force_overwrite: false,
             delete_orphans: false,
             engine: t.engine.clone(),
+            documents: None,
         }),
     }
 }

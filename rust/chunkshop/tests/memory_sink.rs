@@ -86,6 +86,7 @@ fn mk_cfg(database: &str, source_tag: &str, namespace: Option<&str>) -> Postgres
             supersede: true,
             namespace: namespace.map(|s| s.to_string()),
         }),
+        documents: None,
     }
 }
 

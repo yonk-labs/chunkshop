@@ -2,9 +2,11 @@
 
 > Current state: chunkshop's canonical persisted model is one row per chunk.
 > There is a `Document` object in the ingest pipeline, and every chunk row has
-> `doc_id`. Postgres targets can now opt into a companion one-row-per-document
-> table with `target.documents.enabled: true`; it is still off by default for
-> strict compatibility. The broader 1:M document/chunk design is captured in
+> `doc_id`. The Python Postgres sink can now opt into a companion
+> one-row-per-document table with `target.documents.enabled: true`; it is still
+> off by default for strict compatibility. Non-Postgres Python targets reject
+> the setting, and Rust rejects it until Rust/Postgres parity lands. The broader
+> 1:M document/chunk design is captured in
 > [`document-table-plan.md`](document-table-plan.md).
 
 Every row chunkshop writes carries **three text payloads**, not one. Knowing
@@ -83,8 +85,8 @@ still pending for the document table).
 
 ## Optional Postgres Document Table
 
-For Postgres targets, set `target.documents.enabled: true` to write a companion
-document table in the same schema:
+For Python Postgres targets, set `target.documents.enabled: true` to write a
+companion document table in the same schema:
 
 ```yaml
 target:
