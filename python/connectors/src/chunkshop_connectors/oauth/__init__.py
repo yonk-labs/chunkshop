@@ -9,9 +9,11 @@ endpoint; etc.) so connector code can stay vendor-agnostic.
 Available providers
 -------------------
 * :class:`chunkshop_connectors.oauth.google.GoogleOAuthProvider`
+* :class:`chunkshop_connectors.oauth.slack.SlackOAuthProvider`
 """
 from __future__ import annotations
 
 from chunkshop_connectors.oauth.google import GoogleOAuthProvider
+from chunkshop_connectors.oauth.slack import SlackOAuthProvider
 
-__all__ = ["GoogleOAuthProvider"]
+__all__ = ["GoogleOAuthProvider", "SlackOAuthProvider"]
