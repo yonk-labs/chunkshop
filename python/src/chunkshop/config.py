@@ -187,9 +187,31 @@ class SyncSettings(_Base):
     prune_freq_seconds: Optional[int] = Field(default=None, ge=1)
 
 
+class ConnectorSource(_Base):
+    """Generic plugin-source kind. Resolved at load time against the
+    ``chunkshop.sources`` entry-point registry. The ``config`` dict is opaque
+    to core — the plugin validates it. ``extra='forbid'`` still applies to the
+    top-level keys here (type/connector/config/sync/raw_store)."""
+    type: Literal["connector"]
+    connector: str
+    config: dict = Field(default_factory=dict)
+    sync: Optional[SyncSettings] = None
+    # Temporary type until Task 9 lands RawStoreConfig; Task 9 replaces this
+    # with Optional["RawStoreConfig"] and adds ConnectorSource.model_rebuild().
+    raw_store: Optional[dict] = None
+
+    @field_validator("connector")
+    @classmethod
+    def _safe_name(cls, v):
+        if not re.match(r"^[a-z_][a-z0-9_]*$", v):
+            raise ValueError(f"connector name must match ^[a-z_][a-z0-9_]*$, got {v!r}")
+        return v
+
+
 SourceConfig = Annotated[
     Union[FilesSource, JsonCorpusSource, SessionStagingSource, PgTableSource, SqliteTableSource,
-          MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource],
+          MariaDbTableSource, ClickhouseTableSource, HttpSource, S3Source, InlineSource,
+          ConnectorSource],
     Field(discriminator="type"),
 ]
 
