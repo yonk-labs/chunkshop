@@ -33,3 +33,28 @@ class Source(Protocol):
     sync_mode: SyncMode = SyncMode.FULL_RESYNC
 
     def iter_documents(self) -> Iterator[Document]: ...
+
+
+@runtime_checkable
+class IncrementalSource(Protocol):
+    """Sources that support cursor-based incremental sync implement this.
+
+    The cursor shape is source-specific (ETag map for S3, timestamp for DB
+    tables, HEAD-SHA for git, opaque page token for APIs). Consumers treat it
+    as an opaque dict and persist it between calls. chunkshop never stores it.
+    """
+    def empty_cursor(self) -> dict: ...
+    def iter_changes_since(self, cursor: dict) -> Iterable[Document]: ...
+    def cursor_from(self, last_document: Document) -> dict: ...
+
+
+@runtime_checkable
+class PrunableSource(Protocol):
+    """Sources that can enumerate source-side deletions implement this.
+
+    Typically called at a lower cadence than iter_changes_since because prune
+    detection often requires walking the full source manifest. Returns
+    source-IDs (the Document.id field), not Document objects.
+    """
+    def empty_prune_cursor(self) -> dict: ...
+    def iter_deleted_since(self, cursor: dict) -> Iterable[str]: ...
