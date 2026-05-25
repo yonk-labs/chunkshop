@@ -95,6 +95,23 @@ def _fq(backend: PostgresBackend, schema: str, table: str) -> str:
     return backend.fq_table(schema, table)
 
 
+# Allowlist regex for column identifiers spliced into ``column_in`` /
+# ``column_like`` predicates. Same shape as the PromoteColumn validator —
+# lowercase ident, underscores, digits, double-underscore for nested paths.
+# The column NAME is interpolated (psycopg cannot bind identifiers); the
+# VALUES are always bound params, so the only injection surface is the
+# column name itself — gate it with this allowlist.
+_COLUMN_IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _check_column_ident(name: str) -> None:
+    if not _COLUMN_IDENT_RE.match(name):
+        raise ValueError(
+            f"column name must match ^[a-z_][a-z0-9_]*$, got {name!r} "
+            "(allowlisted because column identifiers cannot be bound parameters)"
+        )
+
+
 def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
     """Build a parameterized WHERE fragment + params from a filter dict.
 
@@ -105,8 +122,12 @@ def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
       - {"tags": [...]}            -> tags && ARRAY[...]::text[]   (overlap)
       - {"source": "..."}          -> source = %s
       - {"metadata": {k: v, ...}}  -> metadata @> %s::jsonb        (containment)
+      - {"column_in": {col: [v, ...]}}  -> col = ANY(%s::text[])   (one per col)
+      - {"column_like": {col: "pat%"}}  -> col LIKE %s             (one per col)
 
-    All values are bound params; none are interpolated.
+    All values are bound params; none are interpolated. Column NAMES for the
+    last two keys are allowlist-validated against ``^[a-z_][a-z0-9_]*$`` so
+    they can be safely spliced into the SQL — psycopg cannot bind identifiers.
 
     CAUTION (I-6): prefer this filter for STRUCTURED fields (source, category,
     tenant, date). Do NOT gate recall on free-text keyword `tags` — query and
@@ -121,7 +142,7 @@ def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
 
-    unknown = set(where) - {"tags", "source", "metadata"}
+    unknown = set(where) - {"tags", "source", "metadata", "column_in", "column_like"}
     if unknown:
         raise ValueError(f"unsupported where keys: {sorted(unknown)}")
 
@@ -149,6 +170,33 @@ def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
             raise ValueError("where['metadata'] must be a dict")
         clauses.append("metadata @> %s::jsonb")
         params.append(json.dumps(meta))
+
+    column_in = where.get("column_in")
+    if column_in is not None:
+        if not isinstance(column_in, dict):
+            raise ValueError("where['column_in'] must be a dict[str, list]")
+        for col, values in column_in.items():
+            _check_column_ident(col)
+            if not isinstance(values, (list, tuple)) or not values:
+                raise ValueError(
+                    f"where['column_in'][{col!r}] must be a non-empty list"
+                )
+            clauses.append(f"{col} = ANY(%s::text[])")
+            # ANY() takes a Postgres array — psycopg adapts a Python list.
+            params.append([str(v) for v in values])
+
+    column_like = where.get("column_like")
+    if column_like is not None:
+        if not isinstance(column_like, dict):
+            raise ValueError("where['column_like'] must be a dict[str, str]")
+        for col, pattern in column_like.items():
+            _check_column_ident(col)
+            if not isinstance(pattern, str):
+                raise ValueError(
+                    f"where['column_like'][{col!r}] must be a string LIKE pattern"
+                )
+            clauses.append(f"{col} LIKE %s")
+            params.append(pattern)
 
     return " AND ".join(clauses), params
 

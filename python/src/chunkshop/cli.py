@@ -600,6 +600,33 @@ def _parse_where(opts) -> dict:
     return where
 
 
+def _parse_by_symbol(value: str) -> tuple[list[str], list[str]]:
+    """Parse a ``--by-symbol`` argument into (exact_names, like_patterns).
+
+    Accepts comma-separated names. A name ending in ``*`` (or containing the
+    SQL glob ``%``) is routed to the LIKE list with the appropriate pattern;
+    the rest are exact-match candidates folded into an ``IN (...)`` predicate.
+
+    Example::
+
+        "BaseConnector,HttpSource*"
+          -> (["BaseConnector"], ["HttpSource%"])
+    """
+    exact: list[str] = []
+    like: list[str] = []
+    for raw in value.split(","):
+        name = raw.strip()
+        if not name:
+            continue
+        if name.endswith("*"):
+            like.append(name[:-1] + "%")
+        elif "%" in name:
+            like.append(name)
+        else:
+            exact.append(name)
+    return exact, like
+
+
 @cli.command()
 @click.option(
     "--config", required=True,
@@ -629,9 +656,19 @@ def _parse_where(opts) -> dict:
     "--where", "where_opts", multiple=True,
     help="Filter as KEY=VALUE (source=x, tags=a,b, metadata.k=v). Repeatable.",
 )
+@click.option(
+    "--by-symbol", "by_symbol",
+    default=None,
+    help=(
+        "Narrow results to chunks whose symbol_name matches. Comma-separated "
+        "names act as IN(...). A trailing '*' or '%' enables LIKE prefix-match. "
+        "Requires the cell's target.promote_metadata to surface symbol_name "
+        "as a real column (see docs/cookbook/code-search.md)."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True,
               help="Emit results as JSON instead of human-readable text.")
-def search(config, query, k, return_mode, legs, vector_metric, where_opts, as_json):
+def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_symbol, as_json):
     """Hybrid-search a cell's target; optionally summarize the hits.
 
     Embeds the query with the cell's configured embedder, runs a hybrid
@@ -646,6 +683,8 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, as_js
         chunkshop search --config cell.yaml --query "alpha" --k 5 --json
         chunkshop search --config cell.yaml --query "alpha" \\
             --return summary+chunks --where source=infra
+        chunkshop search --config cell.yaml --query "iter changes" \\
+            --by-symbol HttpSource
     """
     import json as _json
 
@@ -665,7 +704,33 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, as_js
         if return_mode != "chunks":
             from chunkshop.summarizers.lede import summarize as summarize_fn  # type: ignore[assignment]
 
-        parsed_where = _parse_where(where_opts) or None
+        parsed_where = _parse_where(where_opts) or {}
+
+        if by_symbol:
+            exact, like = _parse_by_symbol(by_symbol)
+            if not exact and not like:
+                raise click.UsageError(
+                    "--by-symbol must include at least one name (got empty after parsing)"
+                )
+            if exact:
+                parsed_where.setdefault("column_in", {})["symbol_name"] = exact
+            # SQL LIKE on a column allows one pattern per call — for multiple
+            # globs we'd need OR, but Click users typically supply one prefix.
+            # If they supplied many, take the first; the rest is an exact-match
+            # contract. The CLI documents the comma-separated shape as
+            # IN()-style; trailing-star is the documented wildcard.
+            if like:
+                if len(like) == 1:
+                    parsed_where["column_like"] = {"symbol_name": like[0]}
+                else:
+                    # Multiple wildcards: fall back to exact-match for each LIKE
+                    # pattern by stripping the trailing %. Better than silently
+                    # ignoring the rest.
+                    parsed_where.setdefault("column_in", {})
+                    parsed_where["column_in"].setdefault("symbol_name", []).extend(
+                        [p.rstrip("%") for p in like]
+                    )
+
         res = _search(
             tgt.resolve_dsn(),
             schema=tgt.database_name,
@@ -674,12 +739,14 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, as_js
             query_vec=qv,
             k=k,
             legs=tuple(legs.split(",")),
-            where=parsed_where,
+            where=parsed_where or None,
             return_mode=return_mode,
             summarize_fn=summarize_fn,
             language=(tgt.fts.language if tgt.fts else "english"),
             vector_metric=vector_metric or tgt.vector_metric,
         )
+    except click.ClickException:
+        raise
     except Exception as exc:
         raise click.ClickException(str(exc))
 
@@ -694,6 +761,7 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, as_js
                     "score": h.score,
                     "text": h.text,
                     "legs": list(h.legs),
+                    "metadata": h.metadata,
                 }
                 for h in res.chunks
             ],
@@ -702,7 +770,413 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, as_js
         if res.summary:
             click.echo(f"SUMMARY:\n{res.summary}\n")
         for i, h in enumerate(res.chunks, 1):
-            click.echo(f"{i}. [{h.score:.4f}] {h.doc_id}#{h.seq_num}  {h.text[:120]}")
+            sym = h.metadata.get("symbol_name") if h.metadata else None
+            fqn = h.metadata.get("fqn") if h.metadata else None
+            path = (
+                h.metadata.get("path")
+                or h.metadata.get("source_path")
+                or h.metadata.get("file_path")
+                if h.metadata
+                else None
+            )
+            suffix = ""
+            if sym or fqn or path:
+                bits = []
+                if sym:
+                    bits.append(f"symbol={sym}")
+                if fqn and fqn != sym:
+                    bits.append(f"fqn={fqn}")
+                if path:
+                    bits.append(f"path={path}")
+                suffix = "  " + " ".join(bits)
+            click.echo(
+                f"{i}. [{h.score:.4f}] {h.doc_id}#{h.seq_num}  {h.text[:120]}{suffix}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# impact-of subcommand (SP-E)
+# ---------------------------------------------------------------------------
+
+# Hard cap on recursive-CTE depth so a malformed CLI invocation can't ask
+# Postgres to walk an arbitrary number of hops. 10 is comfortably past any
+# real-world impact-of question (the call graph rarely exceeds 5 hops in
+# human-readable explanations) while bounding worst-case fanout cost.
+_IMPACT_MAX_DEPTH = 10
+
+# Allowlist regex for the project_id parameter. We bind it as a query
+# parameter so injection isn't the concern — but a stray uppercase / space
+# usually means a misconfigured cell, and a clear early error beats an empty
+# result set.
+_IMPACT_PROJECT_RE = __import__("re").compile(r"^[A-Za-z0-9_.\-]+$")
+
+
+def _impact_query_one_direction(
+    dsn: str,
+    *,
+    schema: str,
+    fqn: str,
+    direction: str,
+    depth: int,
+    project_id: str,
+    confidence_floor: float,
+    edge_type: str,
+) -> list[dict]:
+    """Walk the code_edges table N hops from ``fqn`` and return rows.
+
+    direction='callers' walks dst -> src; direction='callees' walks src -> dst.
+
+    Returns one dict per discovered FQN with keys::
+
+      {"fqn", "hop", "confidence", "evidence", "src_fqn", "dst_fqn",
+       "src_node_id", "dst_node_id"}
+
+    Schema/table identifiers are spliced (psycopg cannot bind them) but
+    validated by :func:`chunkshop.extractors.code_relationships._validate_ident`
+    before this function is called.
+    """
+    import psycopg
+    from psycopg import sql
+
+    from chunkshop.extractors.code_relationships import _validate_ident
+
+    _validate_ident(schema, kind="schema")
+    if direction not in ("callers", "callees"):
+        raise ValueError(f"direction must be 'callers' or 'callees', got {direction!r}")
+    if not (1 <= depth <= _IMPACT_MAX_DEPTH):
+        raise ValueError(
+            f"depth must be between 1 and {_IMPACT_MAX_DEPTH}, got {depth}"
+        )
+
+    schema_id = sql.Identifier(schema)
+    table_id = sql.Identifier("code_edges")
+    fq = sql.SQL("{}.{}").format(schema_id, table_id)
+
+    # callers: walk DST=fqn -> SRC; callees: walk SRC=fqn -> DST.
+    if direction == "callers":
+        anchor_col = "dst_fqn"
+        next_col = "src_fqn"
+        next_id_col = "src_node_id"
+    else:
+        anchor_col = "src_fqn"
+        next_col = "dst_fqn"
+        next_id_col = "dst_node_id"
+
+    # Recursive CTE: anchor row at hop=1, then expand via the next direction.
+    # Stop when hop reaches depth (bound by Python before splicing, so it's
+    # always a safe literal — but we cast to int defensively).
+    cte = sql.SQL(
+        "WITH RECURSIVE walk AS ("
+        " SELECT {next_col} AS fqn, {next_id_col} AS node_id, edge_type, confidence,"
+        "        evidence, src_fqn, dst_fqn, 1::int AS hop"
+        " FROM {fq}"
+        " WHERE project_id = %s AND edge_type = %s AND {anchor_col} = %s"
+        "       AND confidence >= %s"
+        " UNION ALL"
+        " SELECT e.{next_col} AS fqn, e.{next_id_col} AS node_id, e.edge_type,"
+        "        e.confidence, e.evidence, e.src_fqn, e.dst_fqn, w.hop + 1"
+        " FROM {fq} e"
+        " JOIN walk w ON w.fqn = e.{anchor_col}"
+        " WHERE e.project_id = %s AND e.edge_type = %s AND e.confidence >= %s"
+        "       AND w.hop < {depth}"
+        ")"
+        " SELECT fqn, MIN(hop) AS hop, MAX(confidence) AS confidence,"
+        " (ARRAY_AGG(evidence ORDER BY confidence DESC))[1] AS evidence,"
+        " (ARRAY_AGG(src_fqn ORDER BY confidence DESC))[1] AS src_fqn,"
+        " (ARRAY_AGG(dst_fqn ORDER BY confidence DESC))[1] AS dst_fqn"
+        " FROM walk GROUP BY fqn ORDER BY hop ASC, confidence DESC"
+    ).format(
+        fq=fq,
+        next_col=sql.Identifier(next_col),
+        next_id_col=sql.Identifier(next_id_col),
+        anchor_col=sql.Identifier(anchor_col),
+        depth=sql.Literal(int(depth)),
+    )
+
+    params = (
+        project_id, edge_type, fqn, confidence_floor,
+        project_id, edge_type, confidence_floor,
+    )
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(cte, params)
+        rows = cur.fetchall()
+
+    return [
+        {
+            "fqn": r[0],
+            "hop": int(r[1]),
+            "confidence": float(r[2]),
+            "evidence": r[3] or {},
+            "src_fqn": r[4],
+            "dst_fqn": r[5],
+        }
+        for r in rows
+    ]
+
+
+def _enrich_with_chunk_metadata(
+    dsn: str,
+    *,
+    schema: str,
+    table: str,
+    rows: list[dict],
+) -> list[dict]:
+    """Best-effort join: enrich each row with file_path + line range + summary.
+
+    Looks up the chunk(s) whose ``fqn`` column matches. Skips silently if the
+    chunks table doesn't carry an ``fqn`` column (the user didn't promote it).
+    """
+    if not rows:
+        return rows
+    import psycopg
+    from psycopg import sql
+
+    fqns = list({r["fqn"] for r in rows})
+
+    schema_id = sql.Identifier(schema)
+    table_id = sql.Identifier(table)
+    fq = sql.SQL("{}.{}").format(schema_id, table_id)
+
+    try:
+        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+            # First check: does the table have an fqn column?
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = %s",
+                (schema, table),
+            )
+            cols = {row[0] for row in cur.fetchall()}
+            if "fqn" not in cols:
+                return rows
+            has_path = "path" in cols
+            has_start = "start_line" in cols
+            has_end = "end_line" in cols
+            has_summary = "summary" in cols
+            select_parts = ["fqn"]
+            if has_path:
+                select_parts.append("path")
+            if has_start:
+                select_parts.append("start_line")
+            if has_end:
+                select_parts.append("end_line")
+            if has_summary:
+                select_parts.append("summary")
+            cur.execute(
+                sql.SQL(
+                    "SELECT {cols} FROM {fq} WHERE fqn = ANY(%s) "
+                    "ORDER BY seq_num ASC"
+                ).format(
+                    cols=sql.SQL(", ").join(sql.Identifier(c) for c in select_parts),
+                    fq=fq,
+                ),
+                (fqns,),
+            )
+            # Use the FIRST row for each FQN (chunks are seq_num-ordered).
+            by_fqn: dict[str, dict] = {}
+            for r in cur.fetchall():
+                idx = 1
+                payload = {}
+                if has_path:
+                    payload["path"] = r[idx]
+                    idx += 1
+                if has_start:
+                    payload["start_line"] = r[idx]
+                    idx += 1
+                if has_end:
+                    payload["end_line"] = r[idx]
+                    idx += 1
+                if has_summary:
+                    payload["summary"] = r[idx]
+                    idx += 1
+                by_fqn.setdefault(r[0], payload)
+    except Exception:
+        # The enrichment is best-effort; never let it break the main query.
+        return rows
+
+    for r in rows:
+        extra = by_fqn.get(r["fqn"])
+        if extra:
+            r.update(extra)
+    return rows
+
+
+def _render_impact_text(target: str, callers: list[dict], callees: list[dict]) -> str:
+    lines = [f"impact-of: {target}"]
+    if callers:
+        lines.append("")
+        lines.append("CALLERS:")
+        for r in callers:
+            prefix = "  " * r["hop"]
+            path = r.get("path")
+            range_bit = ""
+            if path:
+                range_bit = f"  ({path}"
+                if r.get("start_line") and r.get("end_line"):
+                    range_bit += f":{r['start_line']}-{r['end_line']}"
+                range_bit += ")"
+            lines.append(
+                f"{prefix}- [{r['confidence']:.2f}] {r['fqn']} (hop={r['hop']}){range_bit}"
+            )
+            if r.get("summary"):
+                lines.append(f"{prefix}    {r['summary']}")
+    if callees:
+        lines.append("")
+        lines.append("CALLEES:")
+        for r in callees:
+            prefix = "  " * r["hop"]
+            path = r.get("path")
+            range_bit = ""
+            if path:
+                range_bit = f"  ({path}"
+                if r.get("start_line") and r.get("end_line"):
+                    range_bit += f":{r['start_line']}-{r['end_line']}"
+                range_bit += ")"
+            lines.append(
+                f"{prefix}- [{r['confidence']:.2f}] {r['fqn']} (hop={r['hop']}){range_bit}"
+            )
+            if r.get("summary"):
+                lines.append(f"{prefix}    {r['summary']}")
+    if not callers and not callees:
+        lines.append("  (no edges found)")
+    return "\n".join(lines)
+
+
+@cli.command(name="impact-of")
+@click.option(
+    "--config", required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to the cell YAML; only target.dsn + target.database_name are read.",
+)
+@click.option(
+    "--fqn", required=True,
+    help="Fully-qualified name to find callers/callees for (e.g. pkg.module.func).",
+)
+@click.option(
+    "--depth", type=int, default=1, show_default=True,
+    help=f"Number of edge hops to walk. Hard-capped at {_IMPACT_MAX_DEPTH}.",
+)
+@click.option(
+    "--direction",
+    type=click.Choice(["callers", "callees", "both"]),
+    default="callers", show_default=True,
+    help="Walk callers (who calls X), callees (what X calls), or both.",
+)
+@click.option(
+    "--edge-type", default="CALLS", show_default=True,
+    help="Edge type to follow. Currently CALLS, INHERITS, IMPLEMENTS.",
+)
+@click.option(
+    "--confidence", "confidence_floor",
+    type=float, default=0.7, show_default=True,
+    help="Minimum edge confidence (0.0-1.0). Ambiguous-name edges are 0.5.",
+)
+@click.option(
+    "--project-id",
+    default=None,
+    help=(
+        "project_id scope for the edges table. Defaults to the cell's "
+        "cell_name (matching what the runner stamps)."
+    ),
+)
+@click.option(
+    "--json", "as_json", is_flag=True,
+    help="Emit JSON instead of human-readable tree text.",
+)
+def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, project_id, as_json):
+    """Walk the code_edges table for callers/callees of a fully-qualified name.
+
+    The cell YAML supplies the Postgres DSN and the schema; the impact query
+    runs against ``<schema>.code_edges`` populated by the code_relationships
+    extractor's finalize() pass.
+
+    Examples:
+
+    \b
+        chunkshop impact-of --config cell.yaml --fqn pkg.module.func
+        chunkshop impact-of --config cell.yaml --fqn pkg.module.Class \\
+            --direction both --depth 2 --json
+    """
+    import json as _json
+
+    import yaml as _yaml
+
+    from chunkshop.config import CellConfig
+
+    if depth < 1 or depth > _IMPACT_MAX_DEPTH:
+        raise click.UsageError(
+            f"--depth must be between 1 and {_IMPACT_MAX_DEPTH}, got {depth}"
+        )
+
+    try:
+        cfg = CellConfig.model_validate(_yaml.safe_load(Path(config).read_text()))
+        tgt = cfg.target
+        if tgt.type != "postgres":
+            raise click.UsageError(
+                f"impact-of currently supports postgres targets only, got {tgt.type!r}"
+            )
+
+        pid = project_id or cfg.cell_name
+        if not _IMPACT_PROJECT_RE.match(pid):
+            raise click.UsageError(
+                f"project_id must match ^[A-Za-z0-9_.\\-]+$, got {pid!r}"
+            )
+
+        dsn = tgt.resolve_dsn()
+        schema = tgt.database_name
+        table = tgt.table
+
+        callers: list[dict] = []
+        callees: list[dict] = []
+        if direction in ("callers", "both"):
+            callers = _impact_query_one_direction(
+                dsn,
+                schema=schema,
+                fqn=fqn,
+                direction="callers",
+                depth=depth,
+                project_id=pid,
+                confidence_floor=confidence_floor,
+                edge_type=edge_type,
+            )
+            callers = _enrich_with_chunk_metadata(
+                dsn, schema=schema, table=table, rows=callers
+            )
+        if direction in ("callees", "both"):
+            callees = _impact_query_one_direction(
+                dsn,
+                schema=schema,
+                fqn=fqn,
+                direction="callees",
+                depth=depth,
+                project_id=pid,
+                confidence_floor=confidence_floor,
+                edge_type=edge_type,
+            )
+            callees = _enrich_with_chunk_metadata(
+                dsn, schema=schema, table=table, rows=callees
+            )
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+
+    if as_json:
+        out: dict = {
+            "target": fqn,
+            "project_id": pid,
+            "depth": depth,
+            "direction": direction,
+            "edge_type": edge_type,
+            "confidence_floor": confidence_floor,
+        }
+        if direction in ("callers", "both"):
+            out["callers"] = callers
+        if direction in ("callees", "both"):
+            out["callees"] = callees
+        click.echo(_json.dumps(out, indent=2, default=str))
+    else:
+        click.echo(_render_impact_text(fqn, callers, callees))
 
 
 if __name__ == "__main__":
