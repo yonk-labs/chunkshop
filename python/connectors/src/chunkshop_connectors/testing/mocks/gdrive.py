@@ -277,11 +277,14 @@ class _GDriveMockHandle:
         )
 
 
-# ---- pytest fixture ----------------------------------------------------
-@pytest.fixture
-def gdrive_mock():
-    """Provide a Drive v3 mock seeded with one google-doc, one text file,
-    and one image (the image is silently skipped by the connector).
+def make_gdrive_mock():
+    """Return a fresh ``_GDriveMockHandle`` seeded with the default fixture set.
+
+    The default seed mirrors the ``gdrive_mock`` pytest fixture below: one
+    google-doc, one text file, one image (the image is silently skipped by the
+    connector with a UserWarning). This factory is what standalone scripts
+    (e.g. ``connectors/examples/e2e_gdrive_mocked.py``) call to drive the
+    connector outside pytest.
     """
     handle = _GDriveMockHandle()
     handle.add_file(
@@ -305,4 +308,13 @@ def gdrive_mock():
     return handle
 
 
-__all__ = ["gdrive_mock"]
+# ---- pytest fixture ----------------------------------------------------
+@pytest.fixture
+def gdrive_mock():
+    """Provide a Drive v3 mock seeded with one google-doc, one text file,
+    and one image (the image is silently skipped by the connector).
+    """
+    return make_gdrive_mock()
+
+
+__all__ = ["gdrive_mock", "make_gdrive_mock"]
