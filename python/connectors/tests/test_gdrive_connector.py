@@ -209,3 +209,133 @@ def test_gdrive_sends_bearer_token(gdrive_mock):
     with pytest.warns(UserWarning):
         list(src.iter_documents())
     assert "fake-at" in gdrive_mock.seen_tokens
+
+
+# ---------------------------------------------------------------------------
+# Mode B — explicit file_ids selection (single-file / multi-select ingest)
+# ---------------------------------------------------------------------------
+def _file_ids_config(mock, ids, *, reprocess=False):
+    """Build a connector config in file_ids mode from the mock's valid_config."""
+    cfg = dict(mock.valid_config)
+    cfg.pop("folder_id")
+    cfg["file_ids"] = list(ids)
+    if reprocess:
+        cfg["reprocess"] = True
+    return cfg
+
+
+def test_gdrive_config_accepts_file_ids():
+    from chunkshop_connectors.gdrive import ConfigModel
+
+    # file_ids alone is a valid selector.
+    ConfigModel.model_validate({"file_ids": ["abc", "def"]})
+    # file_ids cannot be combined with folder_id/query — distinct modes.
+    with pytest.raises(Exception):
+        ConfigModel.model_validate({"file_ids": ["abc"], "folder_id": "f1"})
+    with pytest.raises(Exception):
+        ConfigModel.model_validate({"file_ids": ["abc"], "query": "name = 'x'"})
+    # Unsafe ids are rejected (same allowlist as folder_id).
+    with pytest.raises(Exception):
+        ConfigModel.model_validate({"file_ids": ["ok", "bad id!"]})
+
+
+def test_gdrive_file_ids_yields_selected_documents(gdrive_mock):
+    from chunkshop_connectors.gdrive import factory
+
+    src = factory(_file_ids_config(gdrive_mock, ["file-doc-1", "file-txt-1"]))
+    src._transport = gdrive_mock.transport
+    src._reset_client()
+
+    docs = list(src.iter_documents())
+    by_id = {d.id: d for d in docs}
+    # Exactly the selected files — no folder walk, no image.
+    assert set(by_id) == {"file-doc-1", "file-txt-1"}
+    assert "exported google-doc content" in by_id["file-doc-1"].content
+    assert "raw text content" in by_id["file-txt-1"].content
+    assert by_id["file-doc-1"].metadata["drive_id"] == "file-doc-1"
+
+
+def test_gdrive_file_ids_incremental_skips_unchanged(gdrive_mock):
+    from chunkshop_connectors.gdrive import factory
+
+    src1 = factory(_file_ids_config(gdrive_mock, ["file-doc-1", "file-txt-1"]))
+    src1._transport = gdrive_mock.transport
+    src1._reset_client()
+
+    cursor = src1.empty_cursor()
+    assert cursor == {}
+    docs1 = list(src1.iter_changes_since(cursor))
+    assert {d.id for d in docs1} == {"file-doc-1", "file-txt-1"}
+
+    advanced = dict(cursor)
+    for d in docs1:
+        advanced.update(src1.cursor_from(d))
+    # Cursor is a {file_id: modifiedTime} map.
+    assert advanced == {
+        "file-doc-1": "2026-05-25T12:00:00.000Z",
+        "file-txt-1": "2026-05-25T12:00:00.000Z",
+    }
+
+    # Second sync, nothing changed → zero docs re-emitted.
+    src2 = factory(_file_ids_config(gdrive_mock, ["file-doc-1", "file-txt-1"]))
+    src2._transport = gdrive_mock.transport
+    src2._reset_client()
+    docs2 = list(src2.iter_changes_since(advanced))
+    assert docs2 == []
+
+
+def test_gdrive_file_ids_incremental_reemits_changed(gdrive_mock):
+    from chunkshop_connectors.gdrive import factory
+
+    src1 = factory(_file_ids_config(gdrive_mock, ["file-doc-1", "file-txt-1"]))
+    src1._transport = gdrive_mock.transport
+    src1._reset_client()
+    docs1 = list(src1.iter_changes_since(src1.empty_cursor()))
+    advanced = {}
+    for d in docs1:
+        advanced.update(src1.cursor_from(d))
+
+    # Edit file-txt-1 — bump its modifiedTime.
+    gdrive_mock.add_file(
+        file_id="file-txt-1",
+        name="readme.txt",
+        mime_type="text/plain",
+        content=b"updated text content",
+        modified_time="2026-05-26T09:00:00.000Z",
+    )
+
+    src2 = factory(_file_ids_config(gdrive_mock, ["file-doc-1", "file-txt-1"]))
+    src2._transport = gdrive_mock.transport
+    src2._reset_client()
+    docs2 = list(src2.iter_changes_since(advanced))
+    # Only the edited file re-emits.
+    assert {d.id for d in docs2} == {"file-txt-1"}
+    assert "updated text content" in docs2[0].content
+
+    advanced2 = dict(advanced)
+    for d in docs2:
+        advanced2.update(src2.cursor_from(d))
+    # Unchanged file keeps its old timestamp; edited file advances.
+    assert advanced2 == {
+        "file-doc-1": "2026-05-25T12:00:00.000Z",
+        "file-txt-1": "2026-05-26T09:00:00.000Z",
+    }
+
+
+def test_gdrive_file_ids_reprocess_reemits_unchanged(gdrive_mock):
+    from chunkshop_connectors.gdrive import factory
+
+    # Seed a populated cursor as if both files were already ingested.
+    cursor = {
+        "file-doc-1": "2026-05-25T12:00:00.000Z",
+        "file-txt-1": "2026-05-25T12:00:00.000Z",
+    }
+    src = factory(
+        _file_ids_config(gdrive_mock, ["file-doc-1", "file-txt-1"], reprocess=True)
+    )
+    src._transport = gdrive_mock.transport
+    src._reset_client()
+
+    # Nothing changed, but reprocess forces re-emit of all selected files.
+    docs = list(src.iter_changes_since(cursor))
+    assert {d.id for d in docs} == {"file-doc-1", "file-txt-1"}

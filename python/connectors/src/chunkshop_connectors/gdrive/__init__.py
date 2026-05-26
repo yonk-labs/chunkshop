@@ -7,22 +7,30 @@ Consumers configure with a YAML ``ConnectorSource``::
       type: connector
       connector: gdrive
       config:
-        folder_id: 0BabcXYZ                  # OR `query`
+        folder_id: 0BabcXYZ                  # OR `query` OR `file_ids`
         scopes:
           - https://www.googleapis.com/auth/drive.readonly
         oauth_tokens: ${GDRIVE_OAUTH_TOKENS} # optional — env fallback used
                                              #   if omitted
+
+Two selection modes, mutually exclusive:
+
+* **Folder/query** (``folder_id`` and/or ``query``) — walks the folder
+  via ``files.list`` and syncs incrementally off the Drive ``/changes``
+  feed (cursor ``{"page_token": "<token>"}``).
+* **Explicit IDs** (``file_ids: [<id>, ...]``) — ingests exactly the
+  given files (e.g. the rows a UI picker selected). No folder walk;
+  each file is fetched directly via ``files.get``. Sync is a
+  modified-time delta (cursor ``{file_id: modifiedTime}``): only files
+  whose ``modifiedTime`` advanced are re-emitted. Set ``reprocess:
+  true`` to force re-emit of every selected file regardless of
+  ``modifiedTime``.
 
 OAuth tokens are produced by
 :class:`chunkshop_connectors.oauth.google.GoogleOAuthProvider`. The
 config field accepts a serialised ``OAuthTokens`` dict (the same shape
 the dataclass produces); the connector resolves it lazily on first
 API call.
-
-Sync mode is ``cursor`` — cursor shape is
-``{"page_token": "<token>"}``. The connector seeds the token on first
-sync via ``GET /drive/v3/changes/startPageToken``, and advances it
-via ``GET /drive/v3/changes?pageToken=...`` on subsequent syncs.
 """
 from __future__ import annotations
 
@@ -44,6 +52,14 @@ class ConfigModel(BaseModel):
 
     folder_id: Optional[str] = None
     query: Optional[str] = None
+    # Explicit selection mode: ingest exactly these Drive file IDs (e.g.
+    # the rows a UI picker selected). Mutually exclusive with
+    # folder_id/query. Sync is modified-time delta, not the /changes feed.
+    file_ids: Optional[list[str]] = None
+    # file_ids mode only: re-emit every selected file on each sync
+    # regardless of modifiedTime — forces the sink to overwrite even
+    # unchanged documents.
+    reprocess: bool = False
     scopes: list[str] = Field(
         default_factory=lambda: ["https://www.googleapis.com/auth/drive.readonly"]
     )
@@ -55,10 +71,18 @@ class ConfigModel(BaseModel):
     drive_base_url: str = "https://www.googleapis.com/drive/v3"
 
     @model_validator(mode="after")
-    def _need_folder_or_query(self) -> "ConfigModel":
-        if not self.folder_id and not self.query:
+    def _need_selector(self) -> "ConfigModel":
+        has_folder_query = bool(self.folder_id or self.query)
+        has_file_ids = bool(self.file_ids)
+        if not has_folder_query and not has_file_ids:
             raise ValueError(
-                "gdrive config: either `folder_id` or `query` is required"
+                "gdrive config: one of `folder_id`, `query`, or `file_ids` "
+                "is required"
+            )
+        if has_file_ids and has_folder_query:
+            raise ValueError(
+                "gdrive config: `file_ids` cannot be combined with "
+                "`folder_id`/`query` — they are distinct selection modes"
             )
         return self
 
@@ -70,12 +94,23 @@ class ConfigModel(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _safe_file_ids(self) -> "ConfigModel":
+        for fid in self.file_ids or []:
+            if not _FOLDER_RE.match(fid):
+                raise ValueError(
+                    f"file_ids entries must match {_FOLDER_RE.pattern!r}, "
+                    f"got {fid!r}"
+                )
+        return self
+
     def __repr__(self) -> str:
         # Redact oauth_tokens in repr — they contain access/refresh
         # tokens that must never leak to logs / crash reporters.
         oauth_repr = "<redacted>" if self.oauth_tokens else None
         return (
             f"ConfigModel(folder_id={self.folder_id!r}, query={self.query!r}, "
+            f"file_ids={self.file_ids!r}, reprocess={self.reprocess!r}, "
             f"scopes={self.scopes!r}, oauth_tokens={oauth_repr}, "
             f"drive_base_url={self.drive_base_url!r})"
         )

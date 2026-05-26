@@ -86,6 +86,8 @@ class GDriveConnector:
     def __init__(self, config: dict[str, Any]) -> None:
         self.folder_id: Optional[str] = config.get("folder_id")
         self.query: Optional[str] = config.get("query")
+        self.file_ids: Optional[list[str]] = config.get("file_ids")
+        self.reprocess: bool = bool(config.get("reprocess", False))
         self.scopes: list[str] = config.get("scopes", [])
         self._config_oauth_tokens: Optional[dict] = config.get("oauth_tokens")
         self.base_url: str = config.get(
@@ -202,6 +204,27 @@ class GDriveConnector:
             if not page_token:
                 return
 
+    def _fetch_metadata(self, file_id: str) -> Optional[dict[str, Any]]:
+        """Fetch a single file's metadata record (file_ids mode).
+
+        Returns the Drive file record (id, name, mimeType, modifiedTime,
+        parents) or ``None`` with a ``UserWarning`` if the id is missing
+        / inaccessible.
+        """
+        try:
+            return self._get_json(
+                f"/files/{file_id}",
+                fields="id,name,mimeType,modifiedTime,parents",
+            )
+        except httpx.HTTPStatusError as exc:
+            warnings.warn(
+                f"gdrive: skipping {file_id!r}: metadata fetch failed "
+                f"({exc.response.status_code})",
+                UserWarning,
+                stacklevel=3,
+            )
+            return None
+
     def _export_doc(self, file_id: str) -> Optional[str]:
         """Export a Google Doc as UTF-8 plain text. Returns None on failure."""
         try:
@@ -294,6 +317,18 @@ class GDriveConnector:
     # Public Source / IncrementalSource surface
     # ------------------------------------------------------------------
     def iter_documents(self) -> Iterator[Document]:
+        if self.file_ids:
+            # Explicit selection mode — no folder walk, no /changes feed.
+            # Fetch each selected file directly and emit all of them.
+            for file_id in self.file_ids:
+                rec = self._fetch_metadata(file_id)
+                if rec is None:
+                    continue
+                doc = self._file_to_document(rec, next_page_token=None)
+                if doc is not None:
+                    yield doc
+            return
+
         # Even on a flat ``iter_documents`` call we want subsequent
         # incremental syncs to resume cleanly — fetch the start page
         # token first so it can ride on the metadata.
@@ -311,6 +346,26 @@ class GDriveConnector:
         return {}
 
     def iter_changes_since(self, cursor: dict) -> Iterable[Document]:
+        if self.file_ids:
+            # Modified-time delta: re-fetch each selected file's metadata
+            # and only re-emit content when its modifiedTime advanced past
+            # the cursor (or reprocess forces it). The cursor is a
+            # ``{file_id: modifiedTime}`` map; unchanged files retain their
+            # prior entry via the merge contract in
+            # ``chunkshop.testing.merge_cursor``.
+            for file_id in self.file_ids:
+                rec = self._fetch_metadata(file_id)
+                if rec is None:
+                    continue
+                current = rec.get("modifiedTime")
+                prior_mtime = cursor.get(file_id)
+                if not self.reprocess and prior_mtime is not None and prior_mtime == current:
+                    continue
+                doc = self._file_to_document(rec, next_page_token=None)
+                if doc is not None:
+                    yield doc
+            return
+
         prior = cursor.get("page_token")
         if not prior:
             # First sync — defer to iter_documents which seeds the token.
@@ -348,12 +403,22 @@ class GDriveConnector:
                 yield doc
 
     def cursor_from(self, last_document: Document) -> dict:
+        meta = last_document.metadata or {}
+        if self.file_ids:
+            # Map-style cursor delta: each emitted doc contributes its own
+            # ``{file_id: modifiedTime}`` entry. The merge accumulates the
+            # full manifest and preserves unchanged files' prior timestamps.
+            drive_id = meta.get("drive_id")
+            mtime = meta.get("modified_time")
+            if drive_id is None or mtime is None:
+                return {}
+            return {drive_id: mtime}
+
         # Monotonic cursor — every doc emitted in a single sync carries
         # the same ``next_page_token`` (the response's
         # ``newStartPageToken``), so the merge in
         # ``chunkshop.testing.merge_cursor`` converges to the same
         # value regardless of iteration order.
-        meta = last_document.metadata or {}
         token = meta.get("next_page_token")
         if token is None:
             return {}
