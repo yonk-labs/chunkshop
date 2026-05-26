@@ -358,6 +358,14 @@ pub struct PgTableSourceConfig {
     /// specific keys as typed columns in the target table.
     #[serde(default)]
     pub metadata_columns: Vec<String>,
+    /// RM-B Task 2 / Python ff01268: optional timestamp column enabling
+    /// cursor-based incremental sync. When set, the source implements
+    /// `IncrementalSource` with a tuple cursor of shape
+    /// `{"after_ts": "<iso ts>", "after_id": "<id>"}`. The tuple ordering
+    /// defends against silent row loss when multiple rows commit at the
+    /// boundary timestamp.
+    #[serde(default)]
+    pub updated_at_column: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -425,6 +433,58 @@ pub struct HttpSourceConfig {
     pub urls: Vec<String>,
     #[serde(default)]
     pub sitemap: Option<String>,
+    /// RM-B Task 4 / Python fcbad65: Depth-bounded link crawl. 0 = current
+    /// behavior (fetch only listed URLs + sitemap entries). `>=1` follows
+    /// that many link-hops from each seed via `<a href>` extraction.
+    /// Capped at 5 to match Python's `ge=0, le=5` Field constraint.
+    #[serde(default)]
+    pub crawl_depth: u32,
+    /// By default the crawler only follows same-host links. Flip to true to
+    /// follow off-host links too (still rate-limited, still subject to
+    /// `max_pages` and `respect_robots`).
+    #[serde(default)]
+    pub allow_external: bool,
+    /// Minimum delay between outbound requests (per source, not per host).
+    /// Default 0.5s matches Python.
+    #[serde(default = "default_request_delay_seconds")]
+    pub request_delay_seconds: f64,
+    /// Enforce robots.txt. One fetch per host, cached. Default true.
+    #[serde(default = "default_respect_robots")]
+    pub respect_robots: bool,
+    /// Hard runaway cap on number of pages fetched per call. Default 1000.
+    #[serde(default = "default_max_pages")]
+    pub max_pages: u64,
+    /// User-Agent header. Default matches Python's `chunkshop/0.6 (+https://…)`.
+    #[serde(default = "default_user_agent")]
+    pub user_agent: String,
+}
+
+fn default_request_delay_seconds() -> f64 {
+    0.5
+}
+fn default_respect_robots() -> bool {
+    true
+}
+fn default_max_pages() -> u64 {
+    1000
+}
+fn default_user_agent() -> String {
+    "chunkshop/0.6 (+https://github.com/yonk-labs/chunkshop)".to_string()
+}
+
+impl Default for HttpSourceConfig {
+    fn default() -> Self {
+        Self {
+            urls: Vec::new(),
+            sitemap: None,
+            crawl_depth: 0,
+            allow_external: false,
+            request_delay_seconds: default_request_delay_seconds(),
+            respect_robots: default_respect_robots(),
+            max_pages: default_max_pages(),
+            user_agent: default_user_agent(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

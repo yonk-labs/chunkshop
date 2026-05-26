@@ -43,6 +43,7 @@ impl FilesSource {
                 content: text,
                 title,
                 metadata: json!({ "source_path": p.display().to_string() }),
+                fingerprint: None,
             });
         }
         Ok(out)

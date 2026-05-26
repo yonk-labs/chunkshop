@@ -55,6 +55,7 @@ fn rust_fixed_overlap_chunks_match_python() {
         content: corpus,
         title: None,
         metadata: json!({}),
+        fingerprint: None,
     };
     let chunker = FixedOverlapChunker::new(cfg).expect("valid cfg");
     let actual = chunker.chunk(&doc);

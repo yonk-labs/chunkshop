@@ -66,6 +66,7 @@ fn rust_hierarchy_chunks_match_python() {
         content: corpus,
         title: r.doc_title.clone(),
         metadata: json!({}),
+        fingerprint: None,
     };
     let chunker = HierarchyChunker::new(cfg).expect("build hierarchy chunker");
     let actual = chunker.chunk(&doc);

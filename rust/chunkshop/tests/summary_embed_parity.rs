@@ -97,6 +97,7 @@ fn rust_summary_embed_passthrough_matches_python() {
         content: corpus,
         title: None,
         metadata: json!({}),
+        fingerprint: None,
     };
     let actual = chunker.chunk(&doc);
     assert_chunks_match(&actual, &r.chunks);
@@ -122,6 +123,7 @@ fn rust_summary_embed_external_matches_python() {
         content: corpus,
         title: None,
         metadata: r.doc_metadata,
+        fingerprint: None,
     };
     let actual = chunker.chunk(&doc);
     assert_chunks_match(&actual, &r.chunks);

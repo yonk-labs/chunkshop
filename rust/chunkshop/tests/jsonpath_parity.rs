@@ -56,6 +56,7 @@ fn rust_jsonpath_matches_python() {
         content: corpus,
         title: r.raw_title.clone(),
         metadata: json!({}),
+        fingerprint: None,
     };
     let actual = f.frame(&raw).expect("frame");
     assert_eq!(actual.len(), r.frames.len(), "frame count");

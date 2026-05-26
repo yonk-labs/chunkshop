@@ -89,6 +89,7 @@ impl SqliteTableSource {
                         content,
                         title,
                         metadata: serde_json::Value::Object(meta),
+                        fingerprint: None,
                     })
                 })
                 .context("query source rows")?;

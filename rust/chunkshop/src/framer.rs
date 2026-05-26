@@ -40,6 +40,7 @@ impl FramerImpl for IdentityFramer {
             content: raw.content.clone(),
             title: raw.title.clone(),
             metadata: stamp_meta(&raw.metadata, "identity", 0),
+            fingerprint: None,
         }])
     }
 }
@@ -80,6 +81,7 @@ impl FramerImpl for HeadingBoundaryFramer {
                 content: content.clone(),
                 title: raw.title.clone(),
                 metadata: stamp_meta(&raw.metadata, "heading_boundary", 0),
+                fingerprint: None,
             }]);
         }
 
@@ -95,6 +97,7 @@ impl FramerImpl for HeadingBoundaryFramer {
                     content: preamble.to_string(),
                     title: raw.title.clone(),
                     metadata: stamp_meta(&raw.metadata, "heading_boundary", frame_seq),
+                    fingerprint: None,
                 });
             }
         }
@@ -131,6 +134,7 @@ impl FramerImpl for HeadingBoundaryFramer {
                 content: full,
                 title,
                 metadata: stamp_meta(&raw.metadata, "heading_boundary", frame_seq),
+                fingerprint: None,
             });
         }
         Ok(frames)
@@ -175,6 +179,7 @@ impl FramerImpl for RegexBoundaryFramer {
                 content: content.clone(),
                 title: raw.title.clone(),
                 metadata: stamp_meta(&raw.metadata, "regex_boundary", 0),
+                fingerprint: None,
             }]);
         }
 
@@ -208,6 +213,7 @@ impl FramerImpl for RegexBoundaryFramer {
                 content: body,
                 title,
                 metadata: stamp_meta(&raw.metadata, "regex_boundary", frame_seq),
+                fingerprint: None,
             });
         }
         Ok(frames)
@@ -304,6 +310,7 @@ impl FramerImpl for JsonPathFramer {
                 content: body,
                 title,
                 metadata: stamp_meta(&raw.metadata, "jsonpath", frame_seq),
+                fingerprint: None,
             });
         }
         Ok(frames)
@@ -417,6 +424,7 @@ impl FramerImpl for SessionEpisodeFramer {
                 content: lines.join("\n"),
                 title: raw.title.clone(),
                 metadata: Value::Object(m),
+                fingerprint: None,
             });
             frame_seq += 1;
         }
@@ -435,6 +443,7 @@ mod tests {
             content: content.into(),
             title: None,
             metadata: json!({}),
+            fingerprint: None,
         }
     }
 
@@ -491,6 +500,7 @@ mod tests {
             content: String::new(),
             title: None,
             metadata: json!({ "session_id": "s1", "_session_events": events }),
+            fingerprint: None,
         }
     }
 
@@ -603,6 +613,7 @@ mod tests {
             content: String::new(),
             title: None,
             metadata: json!({"session_id": "s"}),
+            fingerprint: None,
         };
         assert_eq!(f.frame(&doc).unwrap().len(), 0);
     }

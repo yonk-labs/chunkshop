@@ -44,6 +44,7 @@ fn semantic_oversize_logs_warning() {
         content: body,
         title: None,
         metadata: json!({}),
+        fingerprint: None,
     };
     let chunks = chunker.chunk(&doc);
     eprintln!("semantic_warning: produced {} chunks", chunks.len());

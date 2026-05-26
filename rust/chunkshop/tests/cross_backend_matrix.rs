@@ -316,6 +316,7 @@ fn pg_source(name: &str) -> SourceConfig {
         title_column: None,
         where_clause: None,
         metadata_columns: vec![],
+        updated_at_column: None,
     })
 }
 

@@ -268,6 +268,7 @@ impl SessionStagingSource {
                 content: lines.join("\n"),
                 title: None,
                 metadata: Value::Object(meta),
+                fingerprint: None,
             });
             emitted_sessions.push(sid);
         }

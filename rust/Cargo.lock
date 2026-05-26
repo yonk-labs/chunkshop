@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "chunkshop-rs"
-version = "0.5.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "blake2",
@@ -410,6 +410,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha1",
+ "sha2",
  "sqlite-vec",
  "sqlx",
  "tempfile",
