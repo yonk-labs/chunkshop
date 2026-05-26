@@ -199,10 +199,7 @@ async fn pg_table_empty_cursor_emits_all_existing_rows_in_canonical_order() {
         updated_at_column: Some("updated_at".to_string()),
     };
     let src = PgTableSource::new(cfg);
-    let docs = src
-        .iter_changes_since(&src.empty_cursor())
-        .await
-        .unwrap();
+    let docs = src.iter_changes_since(&src.empty_cursor()).await.unwrap();
     let ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
     assert_eq!(ids, vec!["a", "b", "c"], "ascending (updated_at, id) order");
 

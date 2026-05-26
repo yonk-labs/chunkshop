@@ -79,9 +79,7 @@ impl RawStore for LocalRawStore {
 
     fn get(&self, ref_: &str) -> impl Future<Output = Result<Vec<u8>>> + Send {
         let path = PathBuf::from(ref_);
-        async move {
-            std::fs::read(&path).with_context(|| format!("read blob {}", path.display()))
-        }
+        async move { std::fs::read(&path).with_context(|| format!("read blob {}", path.display())) }
     }
 
     fn exists(
@@ -125,5 +123,7 @@ impl RawStore for LocalRawStore {
 }
 
 fn blob_exists(path: &Path) -> bool {
-    std::fs::metadata(path).map(|m| m.is_file()).unwrap_or(false)
+    std::fs::metadata(path)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
 }

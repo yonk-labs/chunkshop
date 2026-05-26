@@ -65,10 +65,7 @@ async fn local_doc_id_with_path_separators_is_safe() {
     let tmp = TempDir::new().unwrap();
     let store = LocalRawStore::new(tmp.path()).unwrap();
     let evil_id = "s3://b/k/../../etc";
-    let ref_ = store
-        .put(evil_id, b"x", "text/plain", None)
-        .await
-        .unwrap();
+    let ref_ = store.put(evil_id, b"x", "text/plain", None).await.unwrap();
     let bytes = store.get(&ref_).await.unwrap();
     assert_eq!(bytes, b"x");
     assert!(store.exists(evil_id, None).await.unwrap());
@@ -121,10 +118,7 @@ async fn factory_constructs_local_from_config() {
         #[cfg(feature = "source")]
         _ => panic!("expected local variant"),
     }
-    let ref_ = store
-        .put("d1", b"abc", "text/plain", None)
-        .await
-        .unwrap();
+    let ref_ = store.put("d1", b"abc", "text/plain", None).await.unwrap();
     assert_eq!(store.get(&ref_).await.unwrap(), b"abc");
 }
 
@@ -195,10 +189,7 @@ mod s3_tests {
     async fn s3_delete_removes_object() {
         let store_impl: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
         let store = S3RawStore::with_store(cfg(), store_impl);
-        store
-            .put("doc::1", b"x", "text/plain", None)
-            .await
-            .unwrap();
+        store.put("doc::1", b"x", "text/plain", None).await.unwrap();
         store.delete("doc::1").await.unwrap();
         assert!(!store.exists("doc::1", None).await.unwrap());
     }

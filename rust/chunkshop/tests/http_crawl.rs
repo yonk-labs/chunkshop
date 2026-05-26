@@ -132,7 +132,10 @@ async fn handle_conn(
     };
 
     let resp_bytes = match route {
-        None => b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found".to_vec(),
+        None => {
+            b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found"
+                .to_vec()
+        }
         Some(r) => {
             // 304 if If-None-Match matches the route's ETag.
             let etag_matches = match (&if_none_match, &r.etag) {
@@ -148,10 +151,7 @@ async fn handle_conn(
                 if let Some(e) = &r.etag {
                     hdrs.push_str(&format!("ETag: {e}\r\n"));
                 }
-                format!(
-                    "HTTP/1.1 304 Not Modified\r\n{hdrs}Connection: close\r\n\r\n"
-                )
-                .into_bytes()
+                format!("HTTP/1.1 304 Not Modified\r\n{hdrs}Connection: close\r\n\r\n").into_bytes()
             } else {
                 let mut hdrs = format!(
                     "HTTP/1.1 {status} OK\r\nContent-Type: {ctype}\r\nContent-Length: {len}\r\n",
@@ -224,7 +224,9 @@ async fn crawl_depth_0_does_not_follow_links() {
     );
     s.add_html("/page1", "p1v1", r#"<html><body>page1</body></html>"#);
     let state = Arc::new(Mutex::new(s));
-    let Some((base, shutdown)) = spawn_server(state).await else { return };
+    let Some((base, shutdown)) = spawn_server(state).await else {
+        return;
+    };
 
     let cfg = fast_cfg(vec![format!("{base}/seed")]);
     let docs = HttpSource::new(cfg).iter_documents().await.unwrap();
@@ -246,13 +248,20 @@ async fn crawl_respects_max_pages() {
     s.add_html("/b", "b", "<p>B</p>");
     s.add_html("/c", "c", "<p>C</p>");
     let state = Arc::new(Mutex::new(s));
-    let Some((base, shutdown)) = spawn_server(state).await else { return };
+    let Some((base, shutdown)) = spawn_server(state).await else {
+        return;
+    };
 
     let mut cfg = fast_cfg(vec![format!("{base}/seed")]);
     cfg.crawl_depth = 1;
     cfg.max_pages = 2;
     let docs = HttpSource::new(cfg).iter_documents().await.unwrap();
-    assert_eq!(docs.len(), 2, "max_pages caps emission: got {} docs", docs.len());
+    assert_eq!(
+        docs.len(),
+        2,
+        "max_pages caps emission: got {} docs",
+        docs.len()
+    );
 
     let _ = shutdown.send(());
 }
@@ -263,7 +272,9 @@ async fn cursor_skips_unchanged_etag_via_304() {
     s.add_text("/a", "v1", "hello a");
     s.add_text("/b", "v1", "hello b");
     let state = Arc::new(Mutex::new(s));
-    let Some((base, shutdown)) = spawn_server(state.clone()).await else { return };
+    let Some((base, shutdown)) = spawn_server(state.clone()).await else {
+        return;
+    };
 
     let cfg = fast_cfg(vec![format!("{base}/a"), format!("{base}/b")]);
     let src = HttpSource::new(cfg);
@@ -283,7 +294,10 @@ async fn cursor_skips_unchanged_etag_via_304() {
 
     // Second sync — server returns 304 for both → no docs emitted.
     let second = src.iter_changes_since(&cursor1).await.unwrap();
-    assert!(second.is_empty(), "unchanged sync should be empty: {second:?}");
+    assert!(
+        second.is_empty(),
+        "unchanged sync should be empty: {second:?}"
+    );
 
     // Change /b's etag — only /b should re-emit.
     {
@@ -304,7 +318,9 @@ async fn cursor_from_returns_per_url_delta() {
     let mut s = ServerState::default();
     s.add_text("/a", "etag-a", "body a");
     let state = Arc::new(Mutex::new(s));
-    let Some((base, shutdown)) = spawn_server(state).await else { return };
+    let Some((base, shutdown)) = spawn_server(state).await else {
+        return;
+    };
 
     let cfg = fast_cfg(vec![format!("{base}/a")]);
     let src = HttpSource::new(cfg);
@@ -326,7 +342,9 @@ async fn robots_txt_disallow_skips_url() {
     s.add_text("/public", "pub", "hello public");
     s.add_text("/private", "pri", "hello private");
     let state = Arc::new(Mutex::new(s));
-    let Some((base, shutdown)) = spawn_server(state.clone()).await else { return };
+    let Some((base, shutdown)) = spawn_server(state.clone()).await else {
+        return;
+    };
 
     let cfg = HttpSourceConfig {
         urls: vec![format!("{base}/public"), format!("{base}/private")],
@@ -337,7 +355,11 @@ async fn robots_txt_disallow_skips_url() {
     };
     let docs = HttpSource::new(cfg).iter_documents().await.unwrap();
     let ids: Vec<String> = docs.iter().map(|d| d.id.clone()).collect();
-    assert_eq!(ids.len(), 1, "robots.txt should block /private; got {ids:?}");
+    assert_eq!(
+        ids.len(),
+        1,
+        "robots.txt should block /private; got {ids:?}"
+    );
     assert!(ids[0].ends_with("/public"));
 
     // robots.txt was fetched.
@@ -348,7 +370,10 @@ async fn robots_txt_disallow_skips_url() {
         .get("/robots.txt")
         .copied()
         .unwrap_or(0);
-    assert!(robots_fetches >= 1, "robots.txt must be fetched at least once");
+    assert!(
+        robots_fetches >= 1,
+        "robots.txt must be fetched at least once"
+    );
 
     let _ = shutdown.send(());
 }
@@ -366,7 +391,9 @@ async fn off_host_links_filtered_by_default() {
     );
     s.add_html("/local", "l", "<p>local</p>");
     let state = Arc::new(Mutex::new(s));
-    let Some((base, shutdown)) = spawn_server(state).await else { return };
+    let Some((base, shutdown)) = spawn_server(state).await else {
+        return;
+    };
 
     let mut cfg = fast_cfg(vec![format!("{base}/seed")]);
     cfg.crawl_depth = 1;
@@ -389,7 +416,9 @@ async fn url_dedup_via_normalization() {
     let mut s = ServerState::default();
     s.add_text("/a", "v", "hello");
     let state = Arc::new(Mutex::new(s));
-    let Some((base, shutdown)) = spawn_server(state).await else { return };
+    let Some((base, shutdown)) = spawn_server(state).await else {
+        return;
+    };
 
     // Two URLs that should normalize to the same identity.
     let cfg = fast_cfg(vec![format!("{base}/a"), format!("{base}/a#section")]);

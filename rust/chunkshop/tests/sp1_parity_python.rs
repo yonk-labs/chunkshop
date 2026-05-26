@@ -105,11 +105,7 @@ fn raw_store_local_layout_is_python_byte_identical() {
     // here too as part of the parity suite so a regression on either side
     // is obvious in this consolidated test.
     use sha2::{Digest, Sha256};
-    for doc_id in [
-        "doc::1",
-        "s3://bucket/key",
-        "https://example.test/path?q=1",
-    ] {
+    for doc_id in ["doc::1", "s3://bucket/key", "https://example.test/path?q=1"] {
         let mut h = Sha256::new();
         h.update(doc_id.as_bytes());
         let rust_hex = format!("{:x}", h.finalize());

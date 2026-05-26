@@ -86,7 +86,11 @@ impl RobotsRules {
                 }
                 "allow" => {
                     for u in &current_uas {
-                        groups.entry(u.clone()).or_default().allow.push(value.clone());
+                        groups
+                            .entry(u.clone())
+                            .or_default()
+                            .allow
+                            .push(value.clone());
                     }
                 }
                 _ => {}
@@ -467,7 +471,13 @@ impl IncrementalSource for HttpSource {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let mut delta = BTreeMap::new();
-        delta.insert(url, HttpUrlCursor { etag, last_modified });
+        delta.insert(
+            url,
+            HttpUrlCursor {
+                etag,
+                last_modified,
+            },
+        );
         delta
     }
 }
@@ -479,7 +489,7 @@ fn normalize_url(url: &str) -> String {
         Ok(mut u) => {
             u.set_fragment(None);
             if u.path().is_empty() {
-                let _ = u.set_path("/");
+                u.set_path("/");
             }
             let scheme = u.scheme().to_lowercase();
             let host = u.host_str().map(|s| s.to_lowercase()).unwrap_or_default();

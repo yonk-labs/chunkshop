@@ -32,22 +32,17 @@ pub struct Document {
 
 /// How a Source detects changes between runs. Mirrors
 /// `chunkshop.sources.base.SyncMode` exactly (snake_case wire format).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncMode {
     /// Re-emit all documents on every run; consumer dedupes by content hash.
+    #[default]
     FullResync,
     /// Source implements `IncrementalSource`; consumer persists an opaque cursor.
     Cursor,
     /// Source enumerates all documents with a per-doc `fingerprint`; consumer
     /// diffs against its prior set.
     Fingerprint,
-}
-
-impl Default for SyncMode {
-    fn default() -> Self {
-        SyncMode::FullResync
-    }
 }
 
 /// Raised by `iter_changes_since` when a server-side cursor is too old to honor.
@@ -105,12 +100,7 @@ impl StaleCursorError {
 pub trait IncrementalSource: Send + Sync {
     /// Per-source cursor type. Must serde-round-trip (so the consumer can
     /// persist it as JSON / YAML / a column).
-    type Cursor: Default
-        + Serialize
-        + for<'de> Deserialize<'de>
-        + Clone
-        + Send
-        + Sync;
+    type Cursor: Default + Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync;
 
     /// Initial cursor for a never-synced state. Returned by the consumer's
     /// first call before any documents are emitted.
@@ -134,12 +124,7 @@ pub trait IncrementalSource: Send + Sync {
 /// prune detection often requires walking the full source manifest. Returns
 /// source-IDs (the `Document.id` field), not full `Document` objects.
 pub trait PrunableSource: Send + Sync {
-    type Cursor: Default
-        + Serialize
-        + for<'de> Deserialize<'de>
-        + Clone
-        + Send
-        + Sync;
+    type Cursor: Default + Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync;
 
     fn empty_prune_cursor(&self) -> Self::Cursor;
 
