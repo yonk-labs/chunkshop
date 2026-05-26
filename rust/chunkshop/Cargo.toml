@@ -103,6 +103,12 @@ lede = { version = "0.3", optional = true }
 # tests.
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 tempfile = "3"
+# RM-B Task 1: tests/sync_primitives.rs drives the IncrementalSource and
+# PrunableSource futures via futures::executor::block_on (no tokio runtime
+# needed for the smoke path). Declared in dev-deps so the test compiles
+# regardless of whether the `source` feature (which also pulls `futures`) is
+# enabled.
+futures = "0.3"
 
 [features]
 # Default = full feature set for backward compatibility. Existing consumers

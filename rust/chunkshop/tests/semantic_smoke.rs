@@ -45,6 +45,7 @@ fn semantic_chunker_runs_end_to_end() {
         content,
         title: None,
         metadata: json!({}),
+        fingerprint: None,
     };
     let chunks = chunker.chunk(&doc);
     assert!(!chunks.is_empty(), "semantic chunker emitted zero chunks");

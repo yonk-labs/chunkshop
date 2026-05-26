@@ -196,6 +196,7 @@ pub fn apply_if_oversize(
             content: c.original_content.clone(),
             title: document.title.clone(),
             metadata: document.metadata.clone(),
+            fingerprint: None,
         };
         let fallback =
             build_chunker(if_cfg.clone()).map_err(|_| oversize::OversizeError::Recursion {
@@ -1727,6 +1728,7 @@ mod tests {
             content: "Just a short sentence.".into(),
             title: None,
             metadata: json!({}),
+            fingerprint: None,
         };
         let chunker = SentenceAwareChunker::new(SentenceAwareChunkerConfig {
             doc_type: "prose".into(),
@@ -1748,6 +1750,7 @@ mod tests {
             content: content.into(),
             title: None,
             metadata: json!({}),
+            fingerprint: None,
         };
         let chunker = SentenceAwareChunker::new(SentenceAwareChunkerConfig {
             doc_type: "prose".into(),
@@ -1780,6 +1783,7 @@ mod tests {
             content: content.into(),
             title: Some("Doc".into()),
             metadata: json!({}),
+            fingerprint: None,
         };
         let chunker = HierarchyChunker::new(HierarchyChunkerConfig {
             prefix_heading: true,
@@ -1817,6 +1821,7 @@ mod tests {
             content: content.into(),
             title: None,
             metadata: json!({}),
+            fingerprint: None,
         };
         let chunker = HierarchyChunker::new(HierarchyChunkerConfig {
             prefix_heading: false,
@@ -1955,6 +1960,7 @@ mod tests {
             content: "First sentence here. Second sentence here. Third sentence here.".into(),
             title: None,
             metadata: json!({}),
+            fingerprint: None,
         };
         let chunks = chunker.chunk(&doc);
         assert!(
@@ -2112,6 +2118,7 @@ mod tests {
                 "episode_start_ts": 100.0_f64,
                 "episode_end_ts": 200.0_f64,
             }),
+            fingerprint: None,
         }
     }
 

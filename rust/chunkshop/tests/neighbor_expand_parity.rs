@@ -68,6 +68,7 @@ fn rust_neighbor_expand_chunks_match_python() {
         content: corpus,
         title: None,
         metadata: json!({}),
+        fingerprint: None,
     };
     let actual = chunker.chunk(&doc);
 

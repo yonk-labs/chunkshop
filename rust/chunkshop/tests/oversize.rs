@@ -16,6 +16,7 @@ fn doc(text: &str) -> Document {
         content: text.to_string(),
         title: None,
         metadata: json!({}),
+        fingerprint: None,
     }
 }
 

@@ -94,6 +94,7 @@ impl HttpSource {
                     "status_code": status,
                     "content_type": ctype,
                 }),
+                fingerprint: None,
             });
         }
         Ok(out)

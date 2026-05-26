@@ -92,6 +92,7 @@ fn rust_hierarchical_summary_fixed_n_matches_python() {
         content: corpus,
         title: None,
         metadata: json!({}),
+        fingerprint: None,
     };
     let actual = chunker.chunk(&doc);
     assert_chunks_match(&actual, &r.chunks);
@@ -113,6 +114,7 @@ fn rust_hierarchical_summary_section_aware_matches_python() {
         content: corpus,
         title: None,
         metadata: json!({}),
+        fingerprint: None,
     };
     let actual = chunker.chunk(&doc);
     assert_chunks_match(&actual, &r.chunks);

@@ -85,6 +85,7 @@ impl JsonCorpusSource {
                 content,
                 title,
                 metadata: serde_json::Value::Object(meta),
+                fingerprint: None,
             });
         }
         Ok(out)

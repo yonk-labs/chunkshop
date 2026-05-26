@@ -89,6 +89,7 @@ impl Pipeline {
             content: text.to_string(),
             title: None,
             metadata,
+            fingerprint: None,
         };
         self.ingest_document(&doc).await
     }

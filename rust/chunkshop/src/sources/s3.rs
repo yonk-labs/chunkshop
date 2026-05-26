@@ -62,6 +62,7 @@ impl S3Source {
                     "size": meta.size,
                     "etag": etag,
                 }),
+                fingerprint: None,
             });
         }
         Ok(out)
