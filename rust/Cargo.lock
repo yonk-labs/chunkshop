@@ -410,6 +410,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha1",
+ "sha2",
  "sqlite-vec",
  "sqlx",
  "tempfile",

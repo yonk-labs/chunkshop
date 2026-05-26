@@ -66,6 +66,10 @@ pub mod sinks;
 // are themselves cfg-gated behind the `source` (and, for DB-table sources,
 // `sink`) features.
 pub mod sources;
+// RM-B Task 5: pluggable raw-bytes storage (filesystem + S3). Always-on for
+// LocalRawStore; the S3 backend is `source`-feature-gated for the
+// object_store dep.
+pub mod raw_store;
 // RM-A: zero-network Rust consolidator default + trait. Always-on (only the
 // staging/source/sink layer is `memory`-feature-gated).
 pub mod consolidators;
