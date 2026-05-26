@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.6.1 — 2026-05-26
+
+Rust parity + connector papercuts. No Python-package API changes; the
+`chunkshop` wheel and `chunkshop-rs` crate are bumped in lockstep.
+
+**Rust — SP-1 sync primitives + RawStore parity (RM-B).** Closes the
+v0.6.0 Python-vs-Rust behavioural gap: `SyncMode` / `IncrementalSource`
+/ `PrunableSource` / `StaleCursorError` / `Document.fingerprint`, the
+`pg_table` tuple cursor (boundary-row safety), the `s3` ETag
+`IncrementalSource`, the `http` depth-crawl + ETag/Last-Modified cursor
++ robots.txt, and the `RawStore` primitive (filesystem + S3). 40 new
+Rust tests; a Python↔Rust parity test asserts identical chunk output.
+
+**Connectors — GitHub connector fixes.**
+- **Auto-detect default branch (#27).** Omit `branch` to resolve the
+  repo's `default_branch` via `GET /repos`; a wrong pinned branch now
+  falls back to the default and retries instead of 404-ing. Opt out
+  with `branch_strict: true`.
+- **Clone-based walk (#28).** Set `clone: true` to `git clone --depth 1`
+  the branch once and walk the tree locally, instead of one
+  `/contents` API call per file — a single fetch regardless of file
+  count. Bounded by `max_clone_mb` (default 200); falls back to the
+  REST walk if the `git` binary is unavailable.
+
+**Security.** The 3 Dependabot advisories tracked in #11 (urllib3
+high+high, idna medium) were remediated in 0.6.0 (`urllib3` 2.7.0,
+`idna` 3.16); confirmed zero open alerts.
+
 ## 0.6.0 — 2026-05-25
 
 Connector platform + code understanding. Adds the SP-1 plugin-foundation
