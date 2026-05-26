@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "chunkshop-rs"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "blake2",

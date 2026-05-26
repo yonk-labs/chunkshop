@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 0.6.2 — 2026-05-26
+
+Connectors papercut. No core API changes; the `chunkshop` wheel and
+`chunkshop-rs` crate are bumped in lockstep with no behavioural change
+to either.
+
+**Connectors — gdrive explicit `file_ids` selection mode.** The
+verified Google Drive connector gains a second selection mode for
+single-file / multi-select ingest (e.g. the rows a UI file-picker
+selected), alongside the existing `folder_id`/`query` folder walk:
+
+- **`file_ids: [<id>, ...]`** — ingest exactly the given Drive file IDs.
+  Each is fetched directly via `files.get` (no folder walk, no
+  `/changes` feed). Mutually exclusive with `folder_id`/`query`.
+- **Modified-time delta sync.** Cursor is a `{file_id: modifiedTime}`
+  map; on re-sync only files whose `modifiedTime` advanced are
+  re-emitted, and unchanged files retain their prior entry via the
+  `IncrementalSource` merge contract.
+- **`reprocess: true`** — force re-emit of every selected file
+  regardless of `modifiedTime`, so the sink overwrites even unchanged
+  documents.
+
 ## 0.6.1 — 2026-05-26
 
 Rust parity + connector papercuts. No Python-package API changes; the
