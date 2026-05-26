@@ -100,6 +100,9 @@ async fn http_source_fetches_two_urls_with_correct_metadata() {
     let cfg = HttpSourceConfig {
         urls: vec![format!("{base}/html"), format!("{base}/text")],
         sitemap: None,
+        request_delay_seconds: 0.0,
+        respect_robots: false,
+        ..Default::default()
     };
     let docs = HttpSource::new(cfg).iter_documents().await.expect("iter");
     assert_eq!(docs.len(), 2);
@@ -136,6 +139,9 @@ async fn http_source_walks_sitemap() {
     let cfg = HttpSourceConfig {
         urls: Vec::new(),
         sitemap: Some(format!("{base}/sitemap.xml")),
+        request_delay_seconds: 0.0,
+        respect_robots: false,
+        ..Default::default()
     };
     let docs = HttpSource::new(cfg).iter_documents().await.expect("iter");
     assert_eq!(docs.len(), 2);
@@ -155,6 +161,9 @@ async fn http_source_dedups_urls_against_sitemap() {
     let cfg = HttpSourceConfig {
         urls: vec![format!("{base}/html")],
         sitemap: Some(format!("{base}/sitemap.xml")),
+        request_delay_seconds: 0.0,
+        respect_robots: false,
+        ..Default::default()
     };
     let docs = HttpSource::new(cfg).iter_documents().await.expect("iter");
     assert_eq!(
@@ -170,21 +179,28 @@ async fn http_source_dedups_urls_against_sitemap() {
 }
 
 #[tokio::test]
-async fn http_source_errors_on_non_2xx() {
+async fn http_source_skips_non_2xx() {
+    // RM-B Task 4: mirror Python http.py behavior — non-2xx responses are
+    // logged-and-skipped, not raised. Pre-RM-B Rust raised on 404; this
+    // confirms the new behavior matches Python.
     let Some((base, shutdown)) = spawn_test_server().await else {
         eprintln!("skipping: can't bind local HTTP test server");
         return;
     };
     let cfg = HttpSourceConfig {
-        urls: vec![format!("{base}/missing")],
+        urls: vec![format!("{base}/missing"), format!("{base}/html")],
         sitemap: None,
+        request_delay_seconds: 0.0,
+        respect_robots: false,
+        ..Default::default()
     };
-    let err = HttpSource::new(cfg)
+    let docs = HttpSource::new(cfg)
         .iter_documents()
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("404") || err.contains("status"), "got: {err}");
+        .expect("non-2xx must NOT propagate as error");
+    let ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+    // /missing is skipped silently; /html is still emitted.
+    assert_eq!(ids, vec![format!("{base}/html").as_str()]);
 
     let _ = shutdown.send(());
 }
