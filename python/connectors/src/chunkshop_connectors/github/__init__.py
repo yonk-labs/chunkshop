@@ -9,7 +9,14 @@ Consumers configure with a YAML ``ConnectorSource``::
       config:
         owner: acme
         repo: widgets
-        branch: main                # optional, defaults to "main"
+        branch: main                # optional — omit to auto-detect the
+                                    # repo's default_branch (#27)
+        branch_strict: false        # optional — if true, a missing pinned
+                                    # branch is a hard error (no fallback)
+        clone: false                # optional — shallow-clone + walk the
+                                    # tree locally instead of one API call
+                                    # per file (#28); needs the git binary
+        max_clone_mb: 200           # optional — refuse clones over this
         paths_glob: ["**/*.md"]     # optional, default = all files
         token: ${GITHUB_TOKEN}      # optional — env-var fallback used
                                     # if omitted
@@ -46,7 +53,17 @@ class ConfigModel(BaseModel):
 
     owner: str = Field(..., min_length=1)
     repo: str = Field(..., min_length=1)
-    branch: str = "main"
+    # None → auto-detect the repo's default branch at runtime (#27).
+    branch: Optional[str] = None
+    # If a pinned branch 404s, fall back to the repo default unless strict.
+    branch_strict: bool = False
+    # When true, full syncs shallow-clone the repo and walk the working
+    # tree locally instead of one /contents API call per file (#28).
+    # Requires the `git` binary; falls back to the REST walk if absent.
+    clone: bool = False
+    # Refuse to process a shallow clone larger than this (MB) — bounds
+    # disk footprint on accidental huge-repo attaches.
+    max_clone_mb: int = 200
     paths_glob: Optional[list[str]] = None
     token: Optional[str] = None  # falls back to ${GITHUB_TOKEN} at runtime
     base_url: str = "https://api.github.com"
@@ -67,7 +84,9 @@ class ConfigModel(BaseModel):
 
     @field_validator("branch")
     @classmethod
-    def _safe_branch(cls, v: str) -> str:
+    def _safe_branch(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:  # auto-detect sentinel — nothing to validate
+            return v
         if not _BRANCH_RE.match(v):
             raise ValueError(f"branch must match {_BRANCH_RE.pattern!r}, got {v!r}")
         return v

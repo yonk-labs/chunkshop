@@ -9,6 +9,9 @@ which need it).
 
 Endpoints consumed
 ------------------
+* ``GET /repos/{owner}/{repo}``
+    Resolves the repo's ``default_branch`` when the caller didn't pin
+    one (or as a fallback when a pinned branch 404s). See #27.
 * ``GET /repos/{owner}/{repo}/branches/{branch}``
     Resolves the current head SHA of the branch.
 * ``GET /repos/{owner}/{repo}/git/trees/{branch_sha}?recursive=1``
@@ -55,6 +58,9 @@ import base64
 import fnmatch
 import logging
 import os
+import shutil
+import subprocess
+import tempfile
 import warnings
 from typing import Any, Iterable, Iterator, Optional
 
@@ -75,7 +81,16 @@ class GitHubConnector:
         # ConfigModel validation has already happened in the factory.
         self.owner: str = config["owner"]
         self.repo: str = config["repo"]
-        self.branch: str = config.get("branch", "main")
+        # branch may be None → auto-detect the repo's default branch
+        # (GET /repos reports `.default_branch`). This avoids the classic
+        # 404 when a repo's default is `master`, not `main` (see #27).
+        self._configured_branch: Optional[str] = config.get("branch")
+        # When True, a pinned branch that 404s is a hard error rather than
+        # falling back to the repo default.
+        self.branch_strict: bool = config.get("branch_strict", False)
+        self._resolved_branch: Optional[str] = None
+        self.clone: bool = config.get("clone", False)
+        self.max_clone_mb: int = config.get("max_clone_mb", 200)
         self.paths_glob: Optional[list[str]] = config.get("paths_glob")
         self._explicit_token: Optional[str] = config.get("token")
         self.base_url: str = config.get("base_url", "https://api.github.com").rstrip("/")
@@ -94,6 +109,28 @@ class GitHubConnector:
     # ------------------------------------------------------------------
     # Auth
     # ------------------------------------------------------------------
+    @property
+    def branch(self) -> str:
+        """The branch this connector operates on.
+
+        Resolves lazily: if the caller pinned a branch it's used as-is;
+        otherwise the repo's ``default_branch`` is auto-detected via
+        ``GET /repos/{owner}/{repo}`` (one extra API call, cached). This
+        is the fix for #27 — repos whose default is ``master`` (most of
+        the older PG ecosystem) no longer 404 on a hardcoded ``main``.
+        """
+        if self._resolved_branch is None:
+            self._resolved_branch = (
+                self._configured_branch
+                if self._configured_branch is not None
+                else self._default_branch()
+            )
+        return self._resolved_branch
+
+    def _default_branch(self) -> str:
+        data = self._get_json(f"/repos/{self.owner}/{self.repo}")
+        return data["default_branch"]
+
     def _resolve_token(self) -> Optional[str]:
         """Resolve PAT lazily on each request.
 
@@ -115,9 +152,13 @@ class GitHubConnector:
 
     def __repr__(self) -> str:  # pragma: no cover -- defensive
         # Redact token so it can never leak via logs.
+        # Show the resolved branch if we've already detected it, else the
+        # configured value (``None`` = auto-detect). Never trigger the
+        # lazy ``branch`` property here — __repr__ must not do network I/O.
+        branch = self._resolved_branch or self._configured_branch
         return (
             f"GitHubConnector(owner={self.owner!r}, repo={self.repo!r}, "
-            f"branch={self.branch!r}, token={'***' if self._explicit_token else None})"
+            f"branch={branch!r}, token={'***' if self._explicit_token else None})"
         )
 
     # ------------------------------------------------------------------
@@ -136,7 +177,25 @@ class GitHubConnector:
         return resp.json()
 
     def _head_sha(self) -> str:
-        data = self._get_json(f"/repos/{self.owner}/{self.repo}/branches/{self.branch}")
+        try:
+            data = self._get_json(
+                f"/repos/{self.owner}/{self.repo}/branches/{self.branch}"
+            )
+        except self._httpx.HTTPStatusError as exc:
+            # A pinned branch that doesn't exist 404s here. Unless the
+            # caller asked for strict behaviour, fall back to the repo's
+            # real default branch and retry once (#27).
+            if (
+                exc.response.status_code == 404
+                and self._configured_branch is not None
+                and not self.branch_strict
+            ):
+                self._resolved_branch = self._default_branch()
+                data = self._get_json(
+                    f"/repos/{self.owner}/{self.repo}/branches/{self._resolved_branch}"
+                )
+            else:
+                raise
         return data["commit"]["sha"]
 
     def _list_tree(self, branch_sha: str) -> list[dict[str, Any]]:
@@ -224,6 +283,16 @@ class GitHubConnector:
     # Public Source / IncrementalSource surface
     # ------------------------------------------------------------------
     def iter_documents(self) -> Iterator[Document]:
+        if self.clone:
+            if shutil.which("git") is not None:
+                yield from self._iter_clone_documents()
+                return
+            warnings.warn(
+                "github: clone=True but the `git` binary is unavailable; "
+                "falling back to the REST per-file walk.",
+                UserWarning,
+                stacklevel=2,
+            )
         branch_sha = self._head_sha()
         for entry in self._list_tree(branch_sha):
             path = entry["path"]
@@ -240,6 +309,95 @@ class GitHubConnector:
                 size=meta["size"],
                 branch_sha=branch_sha,
             )
+
+    # ---- clone-based walk (#28) -------------------------------------
+    def _clone_url(self) -> str:
+        """HTTPS clone URL, with the PAT inlined for private repos.
+
+        Overridable in tests to point at a local file:// remote so the
+        clone path stays hermetic.
+        """
+        token = self._resolve_token()
+        host = "github.com"
+        if token:
+            return f"https://{token}@{host}/{self.owner}/{self.repo}.git"
+        return f"https://{host}/{self.owner}/{self.repo}.git"
+
+    def _git(self, *args: str, cwd: Optional[str] = None) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(
+                proc.returncode, ["git", *args], proc.stdout, proc.stderr
+            )
+        return proc.stdout
+
+    def _shallow_clone(self, dest: str) -> None:
+        """`git clone --depth 1` into ``dest``, with default-branch fallback."""
+        url = self._clone_url()
+        args = ["clone", "--depth", "1", "--single-branch"]
+        if self._configured_branch is not None:
+            args += ["--branch", self._configured_branch]
+        try:
+            self._git(*args, url, dest)
+        except subprocess.CalledProcessError:
+            # Pinned branch likely doesn't exist. Unless strict, retry
+            # cloning the repo's default branch (mirrors REST #27 fallback).
+            if self._configured_branch is None or self.branch_strict:
+                raise
+            self._git("clone", "--depth", "1", url, dest)
+
+    def _iter_clone_documents(self) -> Iterator[Document]:
+        tmpdir = tempfile.mkdtemp(prefix="chunkshop-gh-")
+        try:
+            self._shallow_clone(tmpdir)
+            # One `ls-tree` lists every tracked blob with sha + size, so we
+            # never touch `.git` internals and get parity metadata for free.
+            listing = self._git("ls-tree", "-r", "-l", "HEAD", cwd=tmpdir)
+            entries = _parse_ls_tree(listing)
+            total_bytes = sum(size for _, _, size in entries)
+            limit = self.max_clone_mb * 1024 * 1024
+            if total_bytes > limit:
+                raise RuntimeError(
+                    f"github: {self.owner}/{self.repo} clone is "
+                    f"{total_bytes / 1024 / 1024:.1f} MB, over the "
+                    f"max_clone_mb={self.max_clone_mb} limit. Raise the "
+                    f"limit or use clone=False (REST walk)."
+                )
+            # Resolve branch/head SHA locally — no REST round-trips.
+            head_sha = self._git("rev-parse", "HEAD", cwd=tmpdir).strip()
+            self._resolved_branch = (
+                self._configured_branch
+                or self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=tmpdir).strip()
+            )
+            for sha, path, size in entries:
+                if not self._matches_glob(path):
+                    continue
+                blob = (os.path.join(tmpdir, path))
+                with open(blob, "rb") as fh:
+                    raw = fh.read()
+                try:
+                    content = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    warnings.warn(
+                        f"github: skipping binary file {path!r} (not valid UTF-8)",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                yield self._make_document(
+                    path=path,
+                    content=content,
+                    file_sha=sha,
+                    size=size,
+                    branch_sha=head_sha,
+                )
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     # ---- IncrementalSource ------------------------------------------
     def empty_cursor(self) -> dict:
@@ -288,6 +446,35 @@ class GitHubConnector:
         if sha is None:
             return {}
         return {"after_commit_sha": sha}
+
+
+# ----------------------------------------------------------------------
+# git ls-tree parsing
+# ----------------------------------------------------------------------
+def _parse_ls_tree(output: str) -> list[tuple[str, str, int]]:
+    """Parse ``git ls-tree -r -l HEAD`` into ``(sha, path, size)`` tuples.
+
+    Each line looks like::
+
+        100644 blob <sha>   <size>\\t<path>
+
+    Only ``blob`` entries are returned (submodule ``commit`` entries have
+    size ``-`` and no checked-out file, so they're skipped).
+    """
+    entries: list[tuple[str, str, int]] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        meta, _, path = line.partition("\t")
+        parts = meta.split()
+        # parts == [mode, type, sha, size]
+        if len(parts) != 4 or parts[1] != "blob":
+            continue
+        _mode, _type, sha, size_s = parts
+        if not size_s.isdigit():
+            continue
+        entries.append((sha, path, int(size_s)))
+    return entries
 
 
 # ----------------------------------------------------------------------

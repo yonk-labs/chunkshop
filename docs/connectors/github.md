@@ -50,7 +50,10 @@ source:
   config:
     owner: acme
     repo: widgets
-    branch: main                 # optional, default "main"
+    branch: main                 # optional — omit to auto-detect default
+    branch_strict: false         # optional — error on missing pinned branch
+    clone: false                 # optional — shallow-clone + local walk
+    max_clone_mb: 200            # optional — refuse clones over this size
     paths_glob:                  # optional, default = all files
       - "**/*.md"
       - "src/**/*.py"
@@ -58,14 +61,36 @@ source:
     base_url: https://api.github.com   # optional, override for GH Enterprise
 ```
 
-| Key          | Type                  | Required | Notes                                                            |
-|--------------|-----------------------|----------|------------------------------------------------------------------|
-| `owner`      | string                | yes      | Org or user that owns the repo. Matches `^[A-Za-z0-9-]+$`.       |
-| `repo`       | string                | yes      | Repo name. Matches `^[A-Za-z0-9._-]+$`.                          |
-| `branch`     | string                | no       | Defaults to `main`. Use full branch name, not a SHA.             |
-| `paths_glob` | list of strings       | no       | Each pattern is matched against the file path. `**` allowed.     |
-| `token`      | string                | no       | PAT. If omitted, the connector reads `GITHUB_TOKEN` from the env.|
-| `base_url`   | string                | no       | Defaults to `https://api.github.com`. Set for GitHub Enterprise. |
+| Key             | Type            | Required | Notes                                                            |
+|-----------------|-----------------|----------|------------------------------------------------------------------|
+| `owner`         | string          | yes      | Org or user that owns the repo. Matches `^[A-Za-z0-9-]+$`.       |
+| `repo`          | string          | yes      | Repo name. Matches `^[A-Za-z0-9._-]+$`.                          |
+| `branch`        | string          | no       | Omit to auto-detect the repo's `default_branch`. Full name, not a SHA. |
+| `branch_strict` | bool            | no       | Default `false`. If `true`, a missing pinned branch is a hard error (no fallback). |
+| `clone`         | bool            | no       | Default `false`. If `true`, shallow-clone the repo and walk the tree locally instead of one API call per file. Needs the `git` binary; falls back to the REST walk if absent. |
+| `max_clone_mb`  | int             | no       | Default `200`. Refuse to process a shallow clone larger than this. |
+| `paths_glob`    | list of strings | no       | Each pattern is matched against the file path. `**` allowed.     |
+| `token`         | string          | no       | PAT. If omitted, the connector reads `GITHUB_TOKEN` from the env.|
+| `base_url`      | string          | no       | Defaults to `https://api.github.com`. Set for GitHub Enterprise. |
+
+### Branch auto-detection
+
+If you omit `branch`, the connector probes `GET /repos/{owner}/{repo}`
+and uses the repo's reported `default_branch`. This sidesteps the most
+common gotcha — repos whose default is `master`, not `main`. If you
+*do* pin a branch and it 404s, the connector falls back to the default
+branch and retries once, unless `branch_strict: true`.
+
+### Clone mode vs. REST walk
+
+By default the connector reads each file via the REST API
+(`GET /contents/{path}`), which is one request per file. For large
+repos that's slow and quota-hungry (see [Rate limits](#rate-limits)).
+Set `clone: true` to instead `git clone --depth 1` the branch once and
+walk the working tree locally — a single network fetch regardless of
+file count. Clone mode needs the `git` binary on `PATH`; if it's
+missing, the connector warns and falls back to the REST walk. Private
+repos clone over HTTPS with the PAT inlined into the URL.
 
 ### `paths_glob` semantics
 
@@ -118,11 +143,17 @@ follow-up that adds `PrunableSource` here.
 
 ## Rate limits
 
-The connector uses the un-cached REST endpoints, so each file costs
+The default REST walk uses the un-cached endpoints, so each file costs
 one `contents/{path}` call. For a 5,000-file repo on a token with the
 default 5,000 req/h limit, expect to consume the bulk of the hourly
 budget on a full resync. Plan your `refresh_freq_seconds` accordingly
 and prefer incremental syncs.
+
+To avoid the per-file API cost entirely, set `clone: true` — a full
+sync then costs a single `git clone` fetch instead of N REST calls.
+Incremental syncs still use the REST `/compare` endpoint (a handful of
+calls), so clone mode is most valuable for the first/full sync of a
+large repo.
 
 ## GitHub Enterprise
 

@@ -77,6 +77,9 @@ class _GitHubMockHandle:
         self.owner = owner
         self.repo = repo
         self.branch = branch
+        # What GET /repos/{owner}/{repo} reports as `.default_branch`.
+        # Defaults to the wired branch so auto-detect resolves to it.
+        self.default_branch = branch
         self.head_sha = "HEAD_SHA_0"
         self.files: dict[str, bytes] = dict(_DEFAULT_FILES)
         # parent_sha → (new_head_sha, [changed_paths])
@@ -121,24 +124,47 @@ def _record_token(handle: _GitHubMockHandle, request: Request) -> None:
 
 def _wire_endpoints(handle: _GitHubMockHandle) -> None:
     server = handle.httpserver
-    owner, repo, branch = handle.owner, handle.repo, handle.branch
+    owner, repo = handle.owner, handle.repo
 
     # ---- branches: returns the current head SHA -----------------------
     def _branch_handler(request: Request) -> Response:
         _record_token(handle, request)
         import json
+        # The requested branch is the last path segment.
+        requested = request.path.rsplit("/", 1)[-1]
+        # Only the wired branch and the repo's default branch exist; any
+        # other branch 404s — exercises the #27 auto-detect fallback.
+        if requested not in {handle.branch, handle.default_branch}:
+            return Response("Not Found", status=404)
         return Response(
-            json.dumps({"name": branch, "commit": {"sha": handle.head_sha}}),
+            json.dumps({"name": requested, "commit": {"sha": handle.head_sha}}),
             status=200,
             content_type="application/json",
         )
 
     owner_q = re.escape(owner)
     repo_q = re.escape(repo)
-    branch_q = re.escape(branch)
+
+    # ---- repo metadata: reports the default branch (#27 auto-detect) --
+    def _repo_handler(request: Request) -> Response:
+        _record_token(handle, request)
+        import json
+        return Response(
+            json.dumps({
+                "name": repo,
+                "full_name": f"{owner}/{repo}",
+                "default_branch": handle.default_branch,
+            }),
+            status=200,
+            content_type="application/json",
+        )
 
     server.expect_request(
-        re.compile(rf"^/repos/{owner_q}/{repo_q}/branches/{branch_q}$"), method="GET"
+        re.compile(rf"^/repos/{owner_q}/{repo_q}$"), method="GET"
+    ).respond_with_handler(_repo_handler)
+
+    server.expect_request(
+        re.compile(rf"^/repos/{owner_q}/{repo_q}/branches/[^/]+$"), method="GET"
     ).respond_with_handler(_branch_handler)
 
     # ---- git/trees: tree of the entire repo at the current head -------

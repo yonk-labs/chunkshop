@@ -163,7 +163,7 @@ wheels = [
 
 [[package]]
 name = "chunkshop"
-version = "0.6.0"
+version = "0.6.1"
 source = { editable = "../" }
 dependencies = [
     { name = "click" },
@@ -244,14 +244,26 @@ dev = [
     { name = "rake-nltk" },
     { name = "sqlite-vec" },
 ]
+dropbox = [
+    { name = "httpx" },
+]
 gdrive = [
     { name = "httpx" },
 ]
 github = [
     { name = "httpx" },
 ]
+gitlab = [
+    { name = "httpx" },
+]
+notion = [
+    { name = "httpx" },
+]
 rss = [
     { name = "feedparser" },
+]
+slack = [
+    { name = "httpx" },
 ]
 
 [package.metadata]
@@ -262,8 +274,12 @@ requires-dist = [
     { name = "chunkshop-connectors", extras = ["gdrive", "github", "slack", "blob", "rss", "notion", "confluence", "jira", "dropbox", "box", "gitlab", "bitbucket", "gmail", "imap", "discord", "airtable", "asana", "zendesk", "sharepoint", "teams", "seafile", "webdav", "moodle", "dingtalk", "rest-api"], marker = "extra == 'all'" },
     { name = "feedparser", marker = "extra == 'rss'", specifier = ">=6.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.26" },
+    { name = "httpx", marker = "extra == 'dropbox'", specifier = ">=0.26" },
     { name = "httpx", marker = "extra == 'gdrive'", specifier = ">=0.26" },
     { name = "httpx", marker = "extra == 'github'", specifier = ">=0.26" },
+    { name = "httpx", marker = "extra == 'gitlab'", specifier = ">=0.26" },
+    { name = "httpx", marker = "extra == 'notion'", specifier = ">=0.26" },
+    { name = "httpx", marker = "extra == 'slack'", specifier = ">=0.26" },
     { name = "nltk", marker = "extra == 'dev'", specifier = ">=3.8" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21" },
