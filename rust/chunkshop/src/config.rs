@@ -358,6 +358,14 @@ pub struct PgTableSourceConfig {
     /// specific keys as typed columns in the target table.
     #[serde(default)]
     pub metadata_columns: Vec<String>,
+    /// RM-B Task 2 / Python ff01268: optional timestamp column enabling
+    /// cursor-based incremental sync. When set, the source implements
+    /// `IncrementalSource` with a tuple cursor of shape
+    /// `{"after_ts": "<iso ts>", "after_id": "<id>"}`. The tuple ordering
+    /// defends against silent row loss when multiple rows commit at the
+    /// boundary timestamp.
+    #[serde(default)]
+    pub updated_at_column: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -77,6 +77,7 @@ async fn pg_table_source_emits_three_rows() {
         title_column: Some("heading".to_string()),
         where_clause: None,
         metadata_columns: vec![],
+        updated_at_column: None,
     };
     let src = PgTableSource::new(cfg);
     let docs = src.iter_documents().await.expect("iter");
@@ -151,6 +152,7 @@ async fn pg_table_source_respects_where_clause() {
         title_column: None,
         where_clause: Some("kind = 'keep'".to_string()),
         metadata_columns: vec![],
+        updated_at_column: None,
     };
     let docs = PgTableSource::new(cfg)
         .iter_documents()
