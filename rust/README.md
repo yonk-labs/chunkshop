@@ -17,15 +17,25 @@ and the same bakeoff YAML produces equivalent leaderboards in both languages
 > | `ingest` (one YAML → one cell) | ✅ | ✅ |
 > | `Pipeline` (library / inline mode) | ✅ | ✅ |
 > | `bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ | ✅ |
+> | SP-1 sync primitives (SyncMode + Incremental/PrunableSource + StaleCursorError + Document.fingerprint) | ✅ | ✅ (RM-B) |
+> | `pg_table` tuple cursor `(after_ts, after_id)` (boundary-row safety) | ✅ | ✅ (RM-B) |
+> | `s3` ETag IncrementalSource (cursor = `{key: etag}`) | ✅ | ✅ (RM-B) |
+> | `http` depth-crawl + ETag/Last-Modified cursor + robots.txt + politeness | ✅ | ✅ (RM-B) |
+> | `RawStore` (filesystem + S3) | ✅ | ✅ (RM-B) |
 > | `orchestrate` (N cells in parallel subprocesses) | ✅ | ❌ |
+> | chunkshop-connectors plugin (gdrive/github/blob/rss/slack/notion/dropbox/gitlab + 20 stubs) | ✅ | Python-only by design (spec D6) |
+> | `code_aware` / `symbol_aware` chunkers + `code_relationships` / `code_summary` extractors | ✅ | Python-only by design (spec D6) |
 >
 > Cross-language bakeoff parity is **verified** per-run by
 > `scripts/parity_check_bakeoff.py`: same YAML, leaderboards within
-> ±2.5pp MRR with consistent ordering on distinct-MRR pairs. The
-> orchestrator port is the next major piece.
+> ±2.5pp MRR with consistent ordering on distinct-MRR pairs.
+> Cross-language SP-1 cursor wire-format parity is verified by
+> `tests/sp1_parity_python.rs`. The orchestrator port is the next major
+> piece.
 
-**Status:** v0.5.0 beta. Single-cell pipeline + bakeoff at parity with Python
-for the chunk-table path (modulo two NLP-heavy extractors that need spaCy).
+**Status:** v0.6.0 beta. Single-cell pipeline + bakeoff at parity with Python
+for the chunk-table path (modulo two NLP-heavy extractors that need spaCy)
+plus full SP-1 incremental-sync surface (RM-B).
 The same canonical
 YAML — `docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml` — runs from both
 languages and produces equivalent leaderboards. Wire-format proof of the
@@ -63,12 +73,13 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 
 | Stage     | Supported                                                      |
 |-----------|----------------------------------------------------------------|
-| source    | `files`, `json_corpus`, `pg_table`, `http`, `s3` (bucket + prefix + optional `endpoint_url` for minio / R2; via the `object_store` crate; standard AWS credential chain; `metadata` carries `{bucket, key, size, etag}`) — **5/5 sources ship in Rust** |
+| source    | `files`, `json_corpus`, `pg_table` (+ tuple cursor `(updated_at, id::text)` for boundary-row safety when `updated_at_column` is set — RM-B), `http` (+ `crawl_depth`, `allow_external`, `request_delay_seconds`, `respect_robots`, `max_pages`, `user_agent`; conditional GETs via `If-None-Match` / `If-Modified-Since`; cursor `{url: {etag, last_modified}}` — RM-B), `s3` (bucket + prefix + optional `endpoint_url` for minio / R2; via the `object_store` crate; standard AWS credential chain; ETag-keyed `IncrementalSource` cursor — RM-B) — **5/5 sources ship in Rust**. All cursor-capable sources implement the SP-1 `IncrementalSource` trait. |
 | framer    | `identity` (default 1-to-1 pass-through), `heading_boundary` (split markdown on a configurable heading regex with preamble + title-from-heading), `regex_boundary` (split on arbitrary regex; optional title-pattern capture), `jsonpath` (parse content as JSON, walk dotted path with `*` for list iteration; configurable body/title sub-paths) — all byte-identical to Python |
 | chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`, `summary_embed`, `hierarchical_summary` (all byte-identical to Python), `semantic` (algorithm-parity; chunks NOT byte-identical due to MB-1's ~1e-3 ORT drift) — **all 6 Python chunkers ship in Rust**. Summarizer dispatch supports `passthrough` + `external` natively; `callable` mode recognizes `chunkshop.summarizers.passthrough` always, and `chunkshop.summarizers.lede` behind the `lede` cargo feature (`cargo build --features lede` pulls `lede` from crates.io). |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
 | extractor | `none` (default), `composite`, `rake_keywords` (hand-rolled RAKE + 150-word EN stopword list — algorithm-only parity), `lang_detect` (via `whatlang` crate, ISO 639-3 → 639-1 conversion — algorithm-only parity), `keybert_phrases` + `spacy_entities` (Python-only stubs that error at config-load) |
 | target    | Postgres, MariaDB, SQLite, and ClickHouse chunk tables; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once where the backend supports upsert; `promote_metadata`; HNSW/index knobs where backend-native |
+| raw_store | `local` (filesystem; SHA-256-hashed `<root>/<hash>/{blob, meta.json}` layout — path-traversal-safe; byte-identical to Python's `LocalRawStore`) and `s3` (object_store-backed, S3-compatible endpoints; fingerprint in S3 object metadata; `S3RawStore::with_store` test seam for `InMemory` injection) — RM-B Task 5 |
 
 ## What does NOT work yet
 

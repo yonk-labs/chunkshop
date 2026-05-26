@@ -17,6 +17,33 @@ as a library or driven from the command line.
 languages: Python is the reference; Rust ships to crates.io. Vectors written
 by either are interchangeable.
 
+## v0.6.0 — incremental sync primitives + RawStore (SP-1) + Rust parity (RM-B)
+
+- **SP-1 sync primitives** — `SyncMode` enum (`full_resync` / `cursor` /
+  `fingerprint`), `IncrementalSource` and `PrunableSource` protocols/traits,
+  `StaleCursorError`, `Document.fingerprint`. Cursor wire format is
+  byte-identical Python ↔ Rust.
+- **`pg_table` tuple cursor** — `(updated_at, id::text) > (?, ?)` defends
+  against silent row loss at boundary timestamps. Activated by setting
+  `updated_at_column` in YAML. Python commit `ff01268`; Rust mirror in RM-B
+  Task 2.
+- **`s3` ETag IncrementalSource** — cursor is `{key: etag}` map; unchanged
+  ETags skip the GET. Cross-implementation cursor compatible.
+- **`http` depth-crawl + ETag/Last-Modified cursor + robots.txt** — BFS
+  link crawl with `crawl_depth`, conditional GETs (`If-None-Match` /
+  `If-Modified-Since`), polite delays, configurable `User-Agent`.
+- **`RawStore` primitive** — pluggable storage for the original bytes
+  (filesystem + S3). SHA-256-keyed paths defend against `doc_id`
+  traversal. LocalRawStore byte-identical to Python's; S3RawStore stores
+  fingerprint in S3 object metadata for cross-impl compatibility.
+- **Rust covers all the SP-1 surfaces** — see `rust/README.md` for the
+  at-a-glance parity table. The chunkshop-connectors plugin layer
+  (gdrive/github/blob/rss/notion/dropbox/gitlab + 20 stubs), the codeparse
+  foundation, the `code_aware` / `symbol_aware` chunkers, the
+  `code_relationships` / `code_summary` extractors, OAuth providers, and
+  the PDF/DOCX/PPTX/XLSX file parsers are explicitly Python-only by design
+  (spec D6).
+
 ## v0.5.0 — modular backends + document-table groundwork
 
 - **4 sink backends** (postgres, mariadb, sqlite, clickhouse) — all 4 in
