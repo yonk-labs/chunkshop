@@ -9,7 +9,13 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Callable
 
-from chunkshop.config import CallableConsolidator, PassthroughConsolidator
+from chunkshop.config import (
+    CallableConsolidator,
+    LedeConsolidator,
+    LedeSpacyConsolidator,
+    PassthroughConsolidator,
+)
+from chunkshop.chunkers._summarizer import build_summarizer
 
 ConsolidatorFn = Callable[[str, dict], dict]
 
@@ -50,5 +56,24 @@ def build_consolidator(cfg) -> ConsolidatorFn:
             return _normalize(fn(text, **kwargs) or {})
 
         return _callable
+
+    if isinstance(cfg, (LedeConsolidator, LedeSpacyConsolidator)):
+        if isinstance(cfg, LedeConsolidator):
+            from chunkshop.consolidators.lede_facts import extract_facts
+            extract_kwargs = {"max_facts": cfg.max_facts}
+        else:
+            from chunkshop.consolidators.lede_spacy_facts import extract_facts
+            extract_kwargs = {"max_facts": cfg.max_facts, "model": cfg.model}
+
+        summarizer_fn = build_summarizer(cfg.summarizer) if cfg.summarizer else None
+        floor = cfg.confidence_floor
+
+        def _bundled(text: str, meta: dict) -> dict:
+            facts = [f for f in extract_facts(text, **extract_kwargs)
+                     if (f.get("confidence") or 0.0) >= floor]
+            summary = summarizer_fn(text, meta) if summarizer_fn is not None else ""
+            return _normalize({"summary": summary, "facts": facts})
+
+        return _bundled
 
     raise ValueError(f"unknown consolidator config: {type(cfg).__name__}")
