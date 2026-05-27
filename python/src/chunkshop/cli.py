@@ -668,7 +668,18 @@ def _parse_by_symbol(value: str) -> tuple[list[str], list[str]]:
 )
 @click.option("--json", "as_json", is_flag=True,
               help="Emit results as JSON instead of human-readable text.")
-def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_symbol, as_json):
+@click.option(
+    "--include-facts", "include_facts", is_flag=True, default=False,
+    help="Include kind='fact' rows in results (excluded by default).",
+)
+@click.option(
+    "--compress", "compress", is_flag=True, default=False,
+    help=(
+        "Strip fluff words from the summary via the caveman reducer "
+        "(only affects --return summary/summary+chunks)."
+    ),
+)
+def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_symbol, as_json, include_facts, compress):
     """Hybrid-search a cell's target; optionally summarize the hits.
 
     Embeds the query with the cell's configured embedder, runs a hybrid
@@ -704,7 +715,18 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_sy
         if return_mode != "chunks":
             from chunkshop.summarizers.lede import summarize as summarize_fn  # type: ignore[assignment]
 
+        compress_fn = None
+        if compress and return_mode != "chunks":
+            from chunkshop.summarizers.caveman import summarize as compress_fn  # type: ignore[assignment]
+
         parsed_where = _parse_where(where_opts) or {}
+
+        # Facts (kind='fact', emitted by the consolidation chunker) live in the
+        # same table as chunks and would otherwise pollute normal results.
+        # Exclude them by default unless the caller opts in or already filters
+        # on metadata_not themselves.
+        if not include_facts and "metadata_not" not in parsed_where:
+            parsed_where["metadata_not"] = {"kind": "fact"}
 
         if by_symbol:
             exact, like = _parse_by_symbol(by_symbol)
@@ -744,6 +766,7 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_sy
             summarize_fn=summarize_fn,
             language=(tgt.fts.language if tgt.fts else "english"),
             vector_metric=vector_metric or tgt.vector_metric,
+            compress_fn=compress_fn,
         )
     except click.ClickException:
         raise
@@ -1177,6 +1200,168 @@ def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, projec
         click.echo(_json.dumps(out, indent=2, default=str))
     else:
         click.echo(_render_impact_text(fqn, callers, callees))
+
+
+# ---------------------------------------------------------------------------
+# fact-search subcommand (Phase C)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_chunk(
+    dsn: str,
+    *,
+    schema: str,
+    table: str,
+    doc_id: str,
+    seq_num: int,
+) -> dict | None:
+    """Fetch one chunk row by (doc_id, seq_num); return a breadcrumb dict or None.
+
+    Schema/table identifiers are quoted via ``psycopg.sql`` (psycopg cannot bind
+    identifiers); doc_id / seq_num are bound params. Mirrors the connection +
+    quoting pattern used by ``_enrich_with_chunk_metadata`` / ``_impact_query_*``.
+
+    Opens one short-lived connection per call (so fact-search at large --k is
+    N+1 connections). This is a deliberate, convention-matching choice for the
+    small-k interactive fact-lookup use case; batch into a single
+    ``(doc_id, seq_num) IN (...)`` query only if high-k usage emerges.
+    """
+    import psycopg
+    from psycopg import sql
+
+    schema_id = sql.Identifier(schema)
+    table_id = sql.Identifier(table)
+    fq = sql.SQL("{}.{}").format(schema_id, table_id)
+    query = sql.SQL(
+        "SELECT doc_id, seq_num, original_content, metadata "
+        "FROM {fq} WHERE doc_id = %s AND seq_num = %s"
+    ).format(fq=fq)
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(query, (doc_id, seq_num))
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {
+        "doc_id": row[0],
+        "seq_num": row[1],
+        "text": row[2],
+        "metadata": row[3] or {},
+    }
+
+
+@cli.command("fact-search")
+@click.option(
+    "--config", required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to the YAML/JSON cell config.",
+)
+@click.option("--query", required=True, help="Free-text query string.")
+@click.option("--k", default=10, type=int, show_default=True,
+              help="Max facts to return.")
+@click.option(
+    "--confidence-floor", "confidence_floor", default=0.0, type=float,
+    show_default=True,
+    help="Drop facts whose confidence is below this. Facts with no confidence "
+         "(null) are always kept.",
+)
+@click.option(
+    "--summary/--no-summary", "want_summary", default=False,
+    help="Attach a lede summary of each fact's source chunk.",
+)
+@click.option("--json", "as_json", is_flag=True,
+              help="Emit JSON instead of text.")
+def fact_search(config, query, k, confidence_floor, want_summary, as_json):
+    """Search a cell's facts and return each with its chunk/doc breadcrumb.
+
+    Embeds the query with the cell's configured embedder, runs a hybrid search
+    restricted to kind='fact' rows, and for each fact resolves its originating
+    chunk (metadata.source_chunk_seq) into a doc/chunk breadcrumb. Errors exit
+    non-zero with a plain message, no traceback.
+    """
+    import json as _json
+
+    import yaml as _yaml
+
+    from chunkshop.config import CellConfig
+    from chunkshop.embedders import load_embedder
+    from chunkshop.search_common import search as _search
+
+    try:
+        cfg = CellConfig.model_validate(_yaml.safe_load(Path(config).read_text()))
+        emb = load_embedder(cfg.embedder)
+        qv = emb.embed([query])[0]
+        tgt = cfg.target
+        dsn = tgt.resolve_dsn()
+        schema = tgt.database_name
+        table = tgt.table
+
+        res = _search(
+            dsn,
+            schema=schema,
+            table=table,
+            query=query,
+            query_vec=qv,
+            k=k,
+            where={"metadata": {"kind": "fact"}},
+            return_mode="chunks",
+            language=(tgt.fts.language if tgt.fts else "english"),
+            vector_metric=tgt.vector_metric,
+        )
+
+        summarize = None
+        if want_summary:
+            from chunkshop.summarizers.lede import summarize  # type: ignore[assignment]
+
+        out: list[dict] = []
+        for hit in res.chunks:
+            meta = hit.metadata or {}
+            conf = meta.get("confidence")
+            if conf is not None and conf < confidence_floor:
+                continue
+            parent_seq = meta.get("source_chunk_seq")
+            chunk = None
+            if parent_seq is not None:
+                chunk = _fetch_chunk(
+                    dsn, schema=schema, table=table,
+                    doc_id=hit.doc_id, seq_num=parent_seq,
+                )
+            entry: dict = {
+                "fact": {
+                    "subject": meta.get("subject"),
+                    "predicate": meta.get("predicate"),
+                    "object": meta.get("object"),
+                    "support_span": hit.text,
+                    "confidence": conf,
+                },
+                "doc_id": hit.doc_id,
+                "chunk": chunk,
+                "score": hit.score,
+            }
+            if want_summary and chunk:
+                entry["summary"] = summarize(chunk["text"], max_length=300)
+            out.append(entry)
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+
+    if as_json:
+        click.echo(_json.dumps(out, default=str))
+    else:
+        if not out:
+            click.echo("(no facts matched)")
+        for i, entry in enumerate(out, 1):
+            f = entry["fact"]
+            crumb = entry["chunk"]
+            crumb_str = (
+                f"{crumb['doc_id']}#{crumb['seq_num']}" if crumb else "(no source chunk)"
+            )
+            click.echo(
+                f"{i}. [{entry['score']:.4f}] {f['support_span'][:120]}  "
+                f"<- {crumb_str}"
+            )
+            if entry.get("summary"):
+                click.echo(f"   summary: {entry['summary']}")
 
 
 if __name__ == "__main__":
