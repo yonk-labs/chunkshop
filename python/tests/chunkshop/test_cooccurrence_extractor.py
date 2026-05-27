@@ -74,6 +74,28 @@ def test_edges_sorted_by_weight_then_name(monkeypatch):
     assert res.metadata["cooccur"][0] == {"a": "a", "b": "b", "weight": 2}
 
 
+def test_word_boundary_matching_avoids_substring_false_positives(monkeypatch):
+    # "data" must NOT match inside "database"; with "platform" absent there is
+    # no real co-occurrence, so no edge.
+    ext = _make(
+        monkeypatch,
+        phrases=["data", "platform"],
+        sentences=["the database is fast."],
+    )
+    assert ext.extract("x").metadata["cooccur"] == []
+
+
+def test_word_boundary_matching_keeps_real_multiword_cooccurrence(monkeypatch):
+    ext = _make(
+        monkeypatch,
+        phrases=["data platform", "ingest pipeline"],
+        sentences=["the data platform ships the ingest pipeline."],
+    )
+    assert ext.extract("x").metadata["cooccur"] == [
+        {"a": "data platform", "b": "ingest pipeline", "weight": 1}
+    ]
+
+
 def test_real_rake_lede_path_emits_pair_edges():
     """Integration: real rake + lede, no stubs. Gated on extras."""
     pytest.importorskip("rake_nltk")

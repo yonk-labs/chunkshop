@@ -54,12 +54,16 @@ class CooccurrenceExtractor:
         phrases = self._keyphrases(text)
         sentences = self._salient_sentences(text)
 
-        # Pre-lower phrases once; match by substring within each salient sentence.
-        phrase_lc = [(p, p.lower()) for p in phrases]
+        # Word-boundary matchers (compiled once per phrase), not raw substring:
+        # substring would false-positive (e.g. "data" inside "database"),
+        # inflating co-occurrence noise. \b keeps multi-word phrases working.
+        matchers = [
+            (p, re.compile(rf"\b{re.escape(p.lower())}\b")) for p in phrases
+        ]
         pair_counts: Counter = Counter()
         for sent in sentences:
             sl = sent.lower()
-            present = sorted({p for (p, plc) in phrase_lc if plc in sl})
+            present = sorted({p for (p, pat) in matchers if pat.search(sl)})
             for i in range(len(present)):
                 for j in range(i + 1, len(present)):
                     pair_counts[(present[i], present[j])] += 1
