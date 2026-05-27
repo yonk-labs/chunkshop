@@ -12,9 +12,15 @@ def test_empty_and_whitespace_return_empty():
 
 
 def test_idempotent():
-    once = summarize("the quick brown fox jumps over the lazy dog")
+    # Mixed case + retained trailing punctuation exercises the property that
+    # makes idempotence non-obvious: kept tokens keep their punctuation.
+    once = summarize("The cat, the dog, and the bird ran quickly.")
     twice = summarize(once)
     assert once == twice
+
+
+def test_drops_orphaned_punctuation_tokens():
+    assert summarize("hello , world . the cat") == "hello world cat"
 
 
 def test_preserves_token_order_and_case():
