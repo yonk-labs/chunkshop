@@ -4,7 +4,7 @@
 **Type**: CLI subcommand
 **Ship status**: verified
 **Optional extra**: `chunkshop[lede]` (only for `--return summary+chunks` / `--return summary`)
-**Since**: extended 2026-05-25 (added `--by-symbol` in commit `f5b5cac`)
+**Since**: extended 2026-05-25 (added `--by-symbol` in commit `f5b5cac`); extended 0.7.0 (added `--compress` + `--include-facts`)
 
 ## Purpose
 
@@ -32,6 +32,8 @@ chunkshop search --config CFG --query QUERY [OPTIONS]
 | `--vector-metric`   | choice  | `target.vector_metric` | `cosine` / `inner_product` / `l2`. |
 | `--where KEY=VAL`   | string  | (none)        | Repeatable. Supports `source=X`, `tags=a,b`, `metadata.k=v`. |
 | `--by-symbol NAMES` | string  | (none)        | Comma-separated; trailing `*` enables LIKE prefix-match. |
+| `--include-facts`   | flag    | off           | Include agent-memory `kind='fact'` rows (excluded by default). |
+| `--compress`        | flag    | off           | Run the `caveman` reducer over the produced summary (only affects `--return summary` / `summary+chunks`). |
 | `--json`            | flag    | off           | JSON output instead of text. |
 
 ## Behavior contract
@@ -62,6 +64,25 @@ chunkshop search --config CFG --query QUERY [OPTIONS]
 7. **`--return summary` / `summary+chunks`** lazily imports
    `chunkshop.summarizers.lede.summarize`. Missing `[lede]` extra
    raises ImportError at search time.
+8. **Facts are excluded by default (0.7.0 behavior change).** When the
+   target table holds agent-memory `kind='fact'` rows (emitted by the
+   `consolidation` chunker's `lede` / `lede_spacy` modes), normal
+   search omits them so they don't pollute chunk results. The CLI
+   injects `where["metadata_not"] = {"kind": "fact"}` unless you pass
+   `--include-facts` (or already supplied `metadata_not` via
+   `--where`). The predicate compiles to
+   `(metadata ->> 'kind') IS DISTINCT FROM 'fact'` in `search.py`.
+   `IS DISTINCT FROM` (not `<>`) keeps rows that *lack* the key, so
+   this is a **no-op for plain chunk tables that carry no `kind`
+   key** — only fact-bearing memory tables are affected. To search the
+   facts directly (with breadcrumbs), use
+   [`chunkshop fact-search`](cli-fact-search.md) instead.
+9. **`--compress`** runs the `caveman` reducer
+   (`chunkshop.summarizers.caveman.summarize`) over the summary text to
+   strip fluff tokens for fewer downstream LLM tokens. It is lazily
+   imported and only applied when a summary is actually produced
+   (`--return summary` / `summary+chunks`); it is a no-op for
+   `--return chunks`.
 
 ## Output formats
 
@@ -143,6 +164,18 @@ chunkshop search \
     --json
 ```
 
+## Example: compressed summary, facts included
+
+```bash
+chunkshop search \
+    --config memory_kb.yaml \
+    --query "what did the user decide about retries" \
+    --return summary+chunks \
+    --compress \
+    --include-facts \
+    --k 8
+```
+
 ## How it integrates with the pipeline
 
 `chunkshop search` is the consumer side of an ingested cell. It loads
@@ -173,6 +206,8 @@ target:
 
 ## See also
 
+- Reference: [`cli-fact-search`](cli-fact-search.md) — the fact-aware
+  read side; queries `kind='fact'` rows with breadcrumbs
 - Reference: [`cli-impact-of`](cli-impact-of.md)
 - Reference: [`chunker-symbol-aware`](chunker-symbol-aware.md) —
   upstream chunker that stamps `symbol_name`

@@ -11,13 +11,14 @@ extractor reads a chunk's text and returns an `ExtractResult` with two fields:
   `extractors/result.py` for the full rule). Structured metadata is what you
   promote to typed columns via `target.promote_metadata`.
 
-chunkshop ships **eight extractor configs**. All except `none` and `rake_keywords`
+chunkshop ships **nine extractor configs**. All except `none` and `rake_keywords`
 require an optional pip extra — base install adds zero NLP weight.
 
 | Extractor          | Ships as extra    | Tags           | Structured metadata          |
 |--------------------|-------------------|----------------|------------------------------|
 | `none`             | — (built-in)      | —              | —                            |
 | `rake_keywords`    | `[extractors]`    | Top-K phrases  | —                            |
+| `cooccurrence`     | `[extractors]` + `[lede]` | Keyphrase nodes | `cooccur: [{a, b, weight}]` (candidate edges) |
 | `keybert_phrases`  | `[keybert]`       | Top-K phrases  | —                            |
 | `lede_top_terms`   | `[lede]`          | Top terms      | —                            |
 | `lede_report`      | `[lede]`          | Attributes/facts/entities | `lede_report: {...}`         |
@@ -131,7 +132,93 @@ uv sync --extra extractors
 
 ---
 
-## 2. `keybert_phrases` — embedding-based keyphrases
+## 2. `cooccurrence` — spaCy-free prose co-occurrence edges
+
+> **Why use this.** You want a cheap, deterministic first pass at *graph
+> edges* over prose — which keyphrases tend to show up together — without
+> spaCy, an LLM, or a GPU. rake supplies the nodes, lede supplies the
+> windows, and any two keyphrases in the same salient sentence emit a weak
+> `co_occurs` candidate. Feed the output to a downstream graph consumer
+> (e.g. pg-raggraph) to materialize real edges. Pick this when you want
+> Tier-1 candidate edges to validate on-corpus before reaching for the
+> heavier directional/typed tiers.
+
+### What it does
+
+- **rake** extracts the top-`top_k` salient keyphrases — the **nodes**;
+  these also surface as `tags`.
+- **lede** selects salient sentences (budget `max_summary_chars`) — the
+  co-occurrence **windows**.
+- Any two keyphrases that both appear (word-boundary matched — `data` does
+  **not** match inside `database`) in the same salient sentence emit an
+  undirected, untyped `co_occurs` candidate. `weight` is the number of
+  salient sentences the pair shares.
+
+Edges land in `metadata.cooccur` as a list of `{a, b, weight}` (canonical
+`a < b`, sorted strongest-first). The `ExtractResult` contract has no edge
+surface, so edges live in metadata for a downstream graph consumer.
+Deterministic, CPU-only, no LLM, no spaCy.
+
+### YAML
+
+```yaml
+extractor:
+  type: cooccurrence
+  top_k: 15              # default — keyphrase nodes
+  min_chars: 3           # default — drop short phrases
+  max_summary_chars: 1000 # default — lede window budget
+  min_pair_count: 1      # default — drop pairs seen fewer than N times
+```
+
+### Config fields
+
+| Field               | Default | Notes                                                          |
+|---------------------|---------|----------------------------------------------------------------|
+| `top_k`             | `15`    | Number of rake keyphrases kept as nodes (`>= 1`).             |
+| `min_chars`         | `3`     | Drop keyphrases shorter than this (`>= 1`).                   |
+| `max_summary_chars` | `1000`  | lede summary budget — the salient-sentence window size (`>= 50`). |
+| `min_pair_count`    | `1`     | Drop pairs seen in fewer than N salient sentences (`>= 1`).  |
+
+### Sample output
+
+```yaml
+# Input chunk text:
+#   "Vector databases index embeddings for nearest neighbor search.
+#    pgvector adds HNSW indexes to Postgres for fast vector search."
+
+tags: ["vector databases index embeddings", "nearest neighbor search", "hnsw indexes"]
+metadata:
+  cooccur:
+    - {a: "nearest neighbor search", b: "vector databases index embeddings", weight: 1}
+    - {a: "fast vector search", b: "hnsw indexes", weight: 1}
+```
+
+### Candidate-edge caveat
+
+These edges are **candidates**, not facts. They're **undirected** (no A→B
+direction) and **untyped** (the only edge type is `co_occurs`). Co-occurrence
+in a sentence is a weak signal — validate on your own corpus before trusting
+them as real edges, and raise `min_pair_count` to cut one-off pairs. For
+richer edges, pair with `lede_spacy` SVO triples (directional) or an LLM
+relation extractor (typed). Full reference, including the tiering table:
+[`reference/extractor-cooccurrence.md`](reference/extractor-cooccurrence.md).
+
+### Install
+
+```bash
+uv sync --extra extractors --extra lede
+```
+
+### When NOT to pick it
+
+- You want flat keyword tags only — use `rake_keywords` (no `[lede]` needed).
+- You need directional or typed relations — co-occurrence gives neither;
+  use `lede_spacy` triples or an LLM.
+- Your text is source code — use `code_relationships` for code edges.
+
+---
+
+## 3. `keybert_phrases` — embedding-based keyphrases
 
 > **Why use this.** You want UI-friendly, semantically-coherent topic labels
 > per chunk — the kind you'd show in a search-result card or a facet filter.
@@ -206,7 +293,7 @@ uv sync --extra keybert
 
 ---
 
-## 3. `lede_report` — compact facts + readable report metadata
+## 4. `lede_report` — compact facts + readable report metadata
 
 > **Why use this.** You want retrieval-side facts that are cheap to inspect
 > and easy to feed into answer generation or LLM judging. This is the first
@@ -305,7 +392,7 @@ target:
 
 ---
 
-## 4. `spacy_entities` — Named Entity Recognition
+## 5. `spacy_entities` — Named Entity Recognition
 
 > **Why use this.** You want to filter retrievals by organization, person, or
 > place without reading every chunk. For example: "find me all chunks that
@@ -406,7 +493,7 @@ uv run python -m spacy download en_core_web_sm
 
 ---
 
-## 5. `lang_detect` — language code + confidence
+## 6. `lang_detect` — language code + confidence
 
 > **Why use this.** Your corpus mixes English with other languages and you
 > need to segment queries per language. For example: a support-ticket corpus
@@ -486,7 +573,7 @@ uv sync --extra lang
 
 ---
 
-## 6. `composite` — chain multiple extractors
+## 7. `composite` — chain multiple extractors
 
 > **Why use this.** One extractor isn't enough. You want entities *and*
 > language *and* keyphrases in one ingest pass, written to the same chunk's
@@ -584,6 +671,7 @@ uv sync --extra nlp
 | Nothing — skip extraction                        | `none` (default)                         |
 | Cheap keyword tags for UI                        | `rake_keywords`                          |
 | High-quality semantic topic labels               | `keybert_phrases`                        |
+| Candidate graph edges over prose (spaCy-free)    | `cooccurrence`                           |
 | Compact fact/report metadata for judged RAG      | `lede_report`                            |
 | Filter retrievals by org / person / place        | `spacy_entities` + promote `entities.ORG` |
 | Segment by language in a multilingual corpus     | `lang_detect` + promote `language`        |
@@ -596,6 +684,7 @@ flowchart TB
     Q{What do you need?}
     Q --> NONE[Nothing<br/>just embeddings]
     Q --> TAGS[Keyword tags]
+    Q --> EDGES[Co-occurrence edges]
     Q --> FACTS[Fact report]
     Q --> NAMED[Named entities]
     Q --> LANG[Language code]
@@ -604,6 +693,7 @@ flowchart TB
     TAGS --> T{Quality vs. cost}
     T --> RAKE[rake_keywords<br/>cheap, no model]
     T --> KB[keybert_phrases<br/>embedding-quality]
+    EDGES --> CO[cooccurrence<br/>candidate co_occurs edges]
     FACTS --> LR[lede_report<br/>summary + key facts]
     NAMED --> SP[spacy_entities<br/>+ promote entities.ORG]
     LANG --> LD[lang_detect<br/>+ promote language]

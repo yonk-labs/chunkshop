@@ -10,6 +10,7 @@ Postgres and SQL queries, see [`tutorial-metadata.md`](tutorial-metadata.md).
 | Your goal                                                      | Pick                                              |
 |-----------------------------------------------------------------|---------------------------------------------------|
 | Cheap keyword tags on every chunk                               | `rake_keywords`                                   |
+| Candidate co-occurrence edges over prose (spaCy-free)           | `cooccurrence`                                    |
 | High-quality topic labels for a search UI                       | `keybert_phrases`                                 |
 | Search-audit facts, dates, amounts, and compact doc reports      | `lede_report`                                     |
 | Filter retrievals by ORG / PERSON / GPE                         | `spacy_entities` + promote `entities.ORG`         |
@@ -53,6 +54,53 @@ target:
 ```bash
 uv sync --extra extractors
 chunkshop ingest --config rake.yaml
+```
+
+---
+
+### `cooccurrence` — candidate co-occurrence edges (spaCy-free)
+
+**Use when** you want a cheap, deterministic first pass at prose graph edges —
+which keyphrases tend to appear together — to feed a downstream graph consumer
+(e.g. pg-raggraph). rake supplies the nodes, lede supplies the salient-sentence
+windows.
+**What this produces** — `tags: [keyphrase nodes]` and
+`metadata.cooccur: [{a, b, weight}]` (undirected, untyped `co_occurs`
+candidates, canonical `a < b`, sorted strongest-first). These are *candidate*
+edges — validate on your corpus before trusting them.
+
+```yaml
+# cooccurrence.yaml
+cell_name: cooccur_demo
+source: { type: files, glob: "docs/samples/handbook-*.md", id_from: stem }
+chunker: { type: hierarchy }
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 4
+extractor:
+  type: cooccurrence
+  top_k: 15
+  min_chars: 3
+  max_summary_chars: 1000
+  min_pair_count: 1
+target:
+  dsn_env: CHUNKSHOP_DSN
+  schema: mydata
+  table: cooccur_chunks
+  mode: create_if_missing
+  source_tag: cooccur_demo
+```
+
+```bash
+uv sync --extra extractors --extra lede
+chunkshop ingest --config cooccurrence.yaml
+
+# Read candidate edges back out of the metadata jsonb column:
+psql "$CHUNKSHOP_DSN" -c \
+  "SELECT doc_id, metadata->'cooccur' FROM mydata.cooccur_chunks
+   WHERE metadata ? 'cooccur' LIMIT 5;"
 ```
 
 ---
