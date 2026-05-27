@@ -1,7 +1,41 @@
 """Unit tests for build_consolidator (mirrors _summarizer.build_summarizer)."""
 import pytest
-from chunkshop.config import CallableConsolidator, PassthroughConsolidator
+from chunkshop.config import (CallableConsolidator, PassthroughConsolidator,
+                              ConsolidationChunker, LedeConsolidator)
 from chunkshop.chunkers._consolidator import build_consolidator
+
+
+_BASE = {"type": "sentence_aware", "doc_type": "prose"}
+
+
+def test_lede_consolidator_parses():
+    cfg = ConsolidationChunker.model_validate({
+        "type": "consolidation",
+        "base": _BASE,
+        "consolidator": {"mode": "lede", "confidence_floor": 0.3, "max_facts": 8},
+    })
+    assert cfg.consolidator.mode == "lede"
+    assert cfg.consolidator.confidence_floor == 0.3
+
+
+def test_lede_spacy_consolidator_parses_with_summarizer_slot():
+    cfg = ConsolidationChunker.model_validate({
+        "type": "consolidation",
+        "base": _BASE,
+        "consolidator": {"mode": "lede_spacy",
+            "summarizer": {"mode": "callable", "module": "chunkshop.summarizers.caveman"}},
+    })
+    assert cfg.consolidator.mode == "lede_spacy"
+    assert cfg.consolidator.summarizer.module == "chunkshop.summarizers.caveman"
+
+
+def test_confidence_floor_bounds_rejected():
+    with pytest.raises(Exception):
+        ConsolidationChunker.model_validate({
+            "type": "consolidation",
+            "base": _BASE,
+            "consolidator": {"mode": "lede", "confidence_floor": 1.5},
+        })
 
 
 def test_passthrough_returns_summary_and_no_facts():
