@@ -69,6 +69,11 @@ def build_consolidator(cfg) -> ConsolidatorFn:
         floor = cfg.confidence_floor
 
         def _bundled(text: str, meta: dict) -> dict:
+            # Write-time floor: a null confidence coerces to 0.0 and is dropped
+            # by any floor > 0 (conservative — don't embed unscored facts). NOTE
+            # this diverges from fact-search's read-time --confidence-floor,
+            # which KEEPS null-confidence facts. Only matters for BYO callable
+            # consolidators; the bundled lede/spaCy extractors never emit null.
             facts = [f for f in extract_facts(text, **extract_kwargs)
                      if (f.get("confidence") or 0.0) >= floor]
             summary = summarizer_fn(text, meta) if summarizer_fn is not None else ""
