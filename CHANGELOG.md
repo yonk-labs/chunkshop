@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-05-27
+
+Agent-memory fact extraction goes batteries-included, plus a read-time
+reducer, a fact query command, and a security fix in the github
+connector. The `chunkshop` wheel and `chunkshop-rs` crate are bumped in
+lockstep; the Rust crate has no behavioural change this cycle (all code
+changes are Python-side).
+
+**Bundled fact extractors (mem0-style).** Previously the
+`ConsolidationChunker` could only produce facts via the `passthrough`
+default (none), a bring-your-own `CallableConsolidator`, or the bundled
+`extractive` consolidator (propositions with null subject/predicate/object).
+Two first-class, CPU-only extractors now ship:
+
+- **`consolidator: { mode: lede }`** — salient-sentence propositions with
+  a rank-decay confidence (needs the `[lede]` extra).
+- **`consolidator: { mode: lede_spacy }`** — dependency-parsed
+  subject/predicate/object triples (verb-lemma predicate; 1.0 full-SVO /
+  0.6 partial confidence; captures direct, prepositional, and copular
+  objects). Needs the `[lede-spacy]` extra + a spaCy model.
+
+Both are hybrid with the existing `CallableConsolidator` escape hatch and
+support a `confidence_floor` (drop low-confidence facts before embedding).
+An optional summarizer slot fills the episode summary independently of the
+fact extractor.
+
+**`caveman` reducer.** A new dependency-free fluff/stopword reducer on the
+summarizer contract (`chunkshop.summarizers.caveman`), swappable anywhere
+lede is. Exposed at read time via `chunkshop search --compress` (off by
+default), which strips low-information tokens from the produced summary.
+
+**`fact-search` command + fact-aware search.** `chunkshop fact-search`
+queries `kind='fact'` rows and returns each fact with its originating
+chunk → doc breadcrumb (and optional lede summary), with a
+`--confidence-floor`. Normal `chunkshop search` now **excludes facts by
+default** (`--include-facts` to opt back in), via a new `metadata_not`
+WHERE predicate (`IS DISTINCT FROM`, a no-op for non-memory tables).
+
+**`cooccurrence` extractor (Tier-1 graph edges).** A spaCy-free extractor
+that pairs rake keyphrases (nodes) co-occurring within lede-salient
+sentences into weak, undirected `co_occurs` candidates, emitted as
+`metadata['cooccur']` (`{a, b, weight}`, word-boundary matched) for a
+downstream graph consumer to materialize.
+
+**Security — github connector scrubs inlined PATs (#31).** The verified
+GitHub connector inlined the PAT into the HTTPS clone URL; on a `git`
+failure the token leaked through `CalledProcessError`'s argv/stderr into
+logs and exception trackers. Inlined credentials are now scrubbed from
+argv + captured stdout/stderr before the error is raised.
+
 ## 0.6.2 — 2026-05-26
 
 Connectors papercut. No core API changes; the `chunkshop` wheel and
