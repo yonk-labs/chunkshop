@@ -275,3 +275,48 @@ def test_github_pat_from_env(github_mock, monkeypatch):
     assert len(docs) >= 1
     # And the mock saw the env token in Authorization header
     assert "env-pat-xyz" in github_mock.seen_tokens
+
+
+def test_scrub_url_token_replaces_inlined_credentials():
+    """The scrubber redacts inlined https credentials, keeping the rest intact."""
+    from chunkshop_connectors.github.connector import _scrub_url_token
+    fake = "ghp_FAKE0000TESTTOKEN"
+    out = _scrub_url_token(
+        f"fatal: unable to access 'https://{fake}@github.com/o/r.git': 401"
+    )
+    assert fake not in out
+    assert "https://***@github.com/o/r.git" in out
+
+
+def test_git_failure_scrubs_pat_from_exception(github_mock, monkeypatch):
+    """A failing git call must not leak the inlined PAT via CalledProcessError.
+
+    Regression for #31 (PAT observed in container logs after a clone failure).
+    Hermetic: subprocess.run is stubbed to return a failing result whose argv
+    and stderr carry a fake token; the raised exception must be scrubbed.
+    """
+    from chunkshop_connectors.github import factory
+    import chunkshop_connectors.github.connector as conn_mod
+
+    src = factory(github_mock.valid_config)
+    fake = "ghp_FAKE0000TESTTOKEN"
+    url = f"https://{fake}@github.com/o/r.git"
+
+    def _fake_run(argv, *a, **kw):
+        return subprocess.CompletedProcess(
+            argv, returncode=128, stdout="",
+            stderr=f"fatal: unable to access '{url}': The requested URL returned error: 401",
+        )
+
+    monkeypatch.setattr(conn_mod.subprocess, "run", _fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError) as ei:
+        src._git("clone", url, "/tmp/does-not-matter")
+    exc = ei.value
+    # Token gone from every surface CalledProcessError / loggers expose.
+    assert fake not in str(exc)
+    assert fake not in " ".join(str(a) for a in exc.cmd)
+    assert fake not in (exc.stderr or "")
+    # …and the sanitized placeholder is present so the error stays diagnosable.
+    assert "***" in " ".join(str(a) for a in exc.cmd)
+    assert "***" in (exc.stderr or "")

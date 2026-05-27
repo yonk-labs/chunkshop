@@ -58,6 +58,7 @@ import base64
 import fnmatch
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -69,6 +70,26 @@ from chunkshop.sources.base import Document, StaleCursorError, SyncMode
 from chunkshop_connectors._tier import verified
 
 logger = logging.getLogger(__name__)
+
+
+# Matches inlined credentials in https URLs, e.g.:
+#   https://ghp_xxx@github.com/owner/repo.git
+#   https://user:token@host/path
+# Used to scrub PATs out of subprocess argv + captured streams before they
+# reach CalledProcessError / logs. Group 1 keeps the scheme; the credentials
+# between scheme and host get replaced with '***'.
+_URL_TOKEN_RE = re.compile(r"(https?://)[^@/\s]+@")
+
+
+def _scrub_url_token(text: str) -> str:
+    """Replace ``https://<creds>@host/...`` with ``https://***@host/...``.
+
+    Defensive: applied to argv + stdout + stderr before any
+    ``CalledProcessError`` is raised, so the token inlined into
+    ``_clone_url()`` never appears in ``str(exc)`` or default exception
+    loggers (which print ``cmd``).
+    """
+    return _URL_TOKEN_RE.sub(r"\1***@", text)
 
 
 @verified
@@ -331,8 +352,18 @@ class GitHubConnector:
             text=True,
         )
         if proc.returncode != 0:
+            # Scrub inlined PATs from argv + captured streams before raising.
+            # CalledProcessError.__str__ prints cmd; git also echoes the URL
+            # in fatal stderr ("fatal: unable to access 'https://...'"). Both
+            # would otherwise leak the token through worker/BFF logs.
+            safe_argv = [
+                _scrub_url_token(a) if isinstance(a, str) else a
+                for a in ["git", *args]
+            ]
+            safe_stdout = _scrub_url_token(proc.stdout) if proc.stdout else proc.stdout
+            safe_stderr = _scrub_url_token(proc.stderr) if proc.stderr else proc.stderr
             raise subprocess.CalledProcessError(
-                proc.returncode, ["git", *args], proc.stdout, proc.stderr
+                proc.returncode, safe_argv, safe_stdout, safe_stderr
             )
         return proc.stdout
 
