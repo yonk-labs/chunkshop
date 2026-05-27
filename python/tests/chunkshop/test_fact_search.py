@@ -84,6 +84,10 @@ def _ingest_one_fact_doc(cfg_path):
         "Beta is an unrelated thing."
     )
     pipe.ingest_text(doc_id, text, metadata={"topic": "alpha"})
+    # Add the FTS generated column + index so the default ("semantic","fts")
+    # legs both work (mirrors test_search_pg's corpus fixture).
+    from chunkshop import search as _search_mod
+    _search_mod.ensure_fts(DSN, schema=SCHEMA, table=TABLE)
     return doc_id
 
 
