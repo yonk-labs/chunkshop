@@ -175,6 +175,9 @@ def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
     # Uses `IS DISTINCT FROM` (not `<>`) so rows that LACK the key (jsonb ->> is
     # NULL) are KEPT — making this a no-op for plain chunk rows that carry no
     # such key. The metadata KEY is a bound `%s` param, never interpolated.
+    # NOTE: `->>` extracts jsonb as TEXT, so the value is compared as text —
+    # intended for string-valued keys (e.g. kind='fact'). A bool/number value
+    # would compare against its text form, which may not match as expected.
     meta_not = where.get("metadata_not")
     if meta_not is not None:
         if not isinstance(meta_not, dict):

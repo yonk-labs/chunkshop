@@ -1220,6 +1220,11 @@ def _fetch_chunk(
     Schema/table identifiers are quoted via ``psycopg.sql`` (psycopg cannot bind
     identifiers); doc_id / seq_num are bound params. Mirrors the connection +
     quoting pattern used by ``_enrich_with_chunk_metadata`` / ``_impact_query_*``.
+
+    Opens one short-lived connection per call (so fact-search at large --k is
+    N+1 connections). This is a deliberate, convention-matching choice for the
+    small-k interactive fact-lookup use case; batch into a single
+    ``(doc_id, seq_num) IN (...)`` query only if high-k usage emerges.
     """
     import psycopg
     from psycopg import sql
@@ -1255,7 +1260,9 @@ def _fetch_chunk(
               help="Max facts to return.")
 @click.option(
     "--confidence-floor", "confidence_floor", default=0.0, type=float,
-    show_default=True, help="Drop facts whose confidence is below this.",
+    show_default=True,
+    help="Drop facts whose confidence is below this. Facts with no confidence "
+         "(null) are always kept.",
 )
 @click.option(
     "--summary/--no-summary", "want_summary", default=False,
