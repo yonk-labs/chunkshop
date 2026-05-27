@@ -669,13 +669,17 @@ def _parse_by_symbol(value: str) -> tuple[list[str], list[str]]:
 @click.option("--json", "as_json", is_flag=True,
               help="Emit results as JSON instead of human-readable text.")
 @click.option(
+    "--include-facts", "include_facts", is_flag=True, default=False,
+    help="Include kind='fact' rows in results (excluded by default).",
+)
+@click.option(
     "--compress", "compress", is_flag=True, default=False,
     help=(
         "Strip fluff words from the summary via the caveman reducer "
         "(only affects --return summary/summary+chunks)."
     ),
 )
-def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_symbol, as_json, compress):
+def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_symbol, as_json, include_facts, compress):
     """Hybrid-search a cell's target; optionally summarize the hits.
 
     Embeds the query with the cell's configured embedder, runs a hybrid
@@ -716,6 +720,13 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_sy
             from chunkshop.summarizers.caveman import summarize as compress_fn  # type: ignore[assignment]
 
         parsed_where = _parse_where(where_opts) or {}
+
+        # Facts (kind='fact', emitted by the consolidation chunker) live in the
+        # same table as chunks and would otherwise pollute normal results.
+        # Exclude them by default unless the caller opts in or already filters
+        # on metadata_not themselves.
+        if not include_facts and "metadata_not" not in parsed_where:
+            parsed_where["metadata_not"] = {"kind": "fact"}
 
         if by_symbol:
             exact, like = _parse_by_symbol(by_symbol)
