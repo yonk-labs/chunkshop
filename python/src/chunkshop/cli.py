@@ -668,7 +668,14 @@ def _parse_by_symbol(value: str) -> tuple[list[str], list[str]]:
 )
 @click.option("--json", "as_json", is_flag=True,
               help="Emit results as JSON instead of human-readable text.")
-def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_symbol, as_json):
+@click.option(
+    "--compress", "compress", is_flag=True, default=False,
+    help=(
+        "Strip fluff words from the summary via the caveman reducer "
+        "(only affects --return summary/summary+chunks)."
+    ),
+)
+def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_symbol, as_json, compress):
     """Hybrid-search a cell's target; optionally summarize the hits.
 
     Embeds the query with the cell's configured embedder, runs a hybrid
@@ -703,6 +710,10 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_sy
         summarize_fn = None
         if return_mode != "chunks":
             from chunkshop.summarizers.lede import summarize as summarize_fn  # type: ignore[assignment]
+
+        compress_fn = None
+        if compress and return_mode != "chunks":
+            from chunkshop.summarizers.caveman import summarize as compress_fn  # type: ignore[assignment]
 
         parsed_where = _parse_where(where_opts) or {}
 
@@ -744,6 +755,7 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_sy
             summarize_fn=summarize_fn,
             language=(tgt.fts.language if tgt.fts else "english"),
             vector_metric=vector_metric or tgt.vector_metric,
+            compress_fn=compress_fn,
         )
     except click.ClickException:
         raise
