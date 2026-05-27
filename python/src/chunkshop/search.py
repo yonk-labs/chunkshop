@@ -142,7 +142,7 @@ def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
 
-    unknown = set(where) - {"tags", "source", "metadata", "column_in", "column_like"}
+    unknown = set(where) - {"tags", "source", "metadata", "metadata_not", "column_in", "column_like"}
     if unknown:
         raise ValueError(f"unsupported where keys: {sorted(unknown)}")
 
@@ -170,6 +170,21 @@ def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
             raise ValueError("where['metadata'] must be a dict")
         clauses.append("metadata @> %s::jsonb")
         params.append(json.dumps(meta))
+
+    # `metadata_not`: exclude rows whose metadata key EQUALS the given value.
+    # Uses `IS DISTINCT FROM` (not `<>`) so rows that LACK the key (jsonb ->> is
+    # NULL) are KEPT — making this a no-op for plain chunk rows that carry no
+    # such key. The metadata KEY is a bound `%s` param, never interpolated.
+    # NOTE: `->>` extracts jsonb as TEXT, so the value is compared as text —
+    # intended for string-valued keys (e.g. kind='fact'). A bool/number value
+    # would compare against its text form, which may not match as expected.
+    meta_not = where.get("metadata_not")
+    if meta_not is not None:
+        if not isinstance(meta_not, dict):
+            raise ValueError("where['metadata_not'] must be a dict")
+        for key, value in meta_not.items():
+            clauses.append("(metadata ->> %s) IS DISTINCT FROM %s")
+            params.extend([key, value])
 
     column_in = where.get("column_in")
     if column_in is not None:

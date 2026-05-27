@@ -442,8 +442,29 @@ class PassthroughConsolidator(_Base):
     mode: Literal["passthrough"]
 
 
+class LedeConsolidator(_Base):
+    """Bundled: lede salient-sentence fact extractor + optional summarizer slot.
+
+    summary is filled by the summarizer slot when set, else left empty (the
+    chunker falls back to episode text). Facts below confidence_floor are dropped
+    before embedding (storage lever)."""
+    mode: Literal["lede"]
+    summarizer: Optional[SummarizerConfig] = None
+    confidence_floor: float = Field(default=0.0, ge=0.0, le=1.0)
+    max_facts: int = Field(default=10, ge=1)
+
+
+class LedeSpacyConsolidator(_Base):
+    """Bundled: lede+spaCy dependency-parsed SVO triples + optional summarizer."""
+    mode: Literal["lede_spacy"]
+    summarizer: Optional[SummarizerConfig] = None
+    confidence_floor: float = Field(default=0.0, ge=0.0, le=1.0)
+    max_facts: int = Field(default=20, ge=1)
+    model: str = "en_core_web_sm"
+
+
 ConsolidatorConfig = Annotated[
-    Union[CallableConsolidator, PassthroughConsolidator],
+    Union[CallableConsolidator, PassthroughConsolidator, LedeConsolidator, LedeSpacyConsolidator],
     Field(discriminator="mode"),
 ]
 
