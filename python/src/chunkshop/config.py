@@ -767,6 +767,18 @@ class RakeKeywordsExtractor(_Base):
     min_chars: int = 3
 
 
+class CooccurrenceExtractor(_Base):
+    """Tier-1 spaCy-free co-occurrence edges. rake keyphrases = nodes; lede
+    salient sentences = co-occurrence windows. Two keyphrases in the same
+    salient sentence emit a weak undirected ``co_occurs`` candidate into
+    ``metadata['cooccur']`` for a consumer (e.g. pg-raggraph) to materialize."""
+    type: Literal["cooccurrence"]
+    top_k: int = Field(default=15, ge=1)
+    min_chars: int = Field(default=3, ge=1)
+    max_summary_chars: int = Field(default=1000, ge=50)
+    min_pair_count: int = Field(default=1, ge=1)
+
+
 class LangDetectExtractor(_Base):
     type: Literal["lang_detect"]
     backend: Literal["langdetect"] = "langdetect"
@@ -896,6 +908,7 @@ ExtractorConfig = Annotated[
     Union[
         NoneExtractor,
         RakeKeywordsExtractor,
+        CooccurrenceExtractor,
         LangDetectExtractor,
         KeyBertPhrasesExtractor,
         SpacyEntitiesExtractor,
