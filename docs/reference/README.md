@@ -36,6 +36,13 @@ For task-oriented walkthroughs, see [`docs/cookbook/`](../cookbook/).
 |---|---|
 | [`extractor-code-summary`](extractor-code-summary.md) | Per-chunk natural-language summary. Backends: `lede`, BYO `callable`, `first_n_sentences`. |
 | [`extractor-code-relationships`](extractor-code-relationships.md) | Per-chunk callees + corpus-level `CALLS`/`INHERITS`/`IMPLEMENTS` edges via `finalize()`. |
+| [`extractor-cooccurrence`](extractor-cooccurrence.md) | Tier-1 spaCy-free `co_occurs` edge candidates: rake keyphrases co-occurring in lede-salient sentences → `metadata["cooccur"]`. |
+
+## Consolidators (agent-memory fact extraction)
+
+| Surface | One-liner |
+|---|---|
+| [`consolidator-fact-extractors`](consolidator-fact-extractors.md) | Bundled `lede` (salient propositions) + `lede_spacy` (SVO triples) consolidator modes for the `consolidation` chunker; `confidence_floor` + summarizer slot. |
 
 ## File parsers
 
@@ -61,7 +68,8 @@ For task-oriented walkthroughs, see [`docs/cookbook/`](../cookbook/).
 
 | Surface | One-liner |
 |---|---|
-| [`cli-search`](cli-search.md) | `chunkshop search --query …` (hybrid retrieval) with `--by-symbol` filter. |
+| [`cli-search`](cli-search.md) | `chunkshop search --query …` (hybrid retrieval) with `--by-symbol`, `--compress`, `--include-facts`. |
+| [`cli-fact-search`](cli-fact-search.md) | `chunkshop fact-search --query …` returns `kind='fact'` rows with their chunk→doc breadcrumb. |
 | [`cli-impact-of`](cli-impact-of.md) | `chunkshop impact-of --fqn …` walks the `code_edges` table for callers/callees. |
 
 ## Related reading

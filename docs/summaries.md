@@ -159,6 +159,59 @@ summarizer:
   mode: passthrough
 ```
 
+## `caveman` — reduction, not extraction
+
+`lede` and `sumy` *select* sentences (extractive). `caveman`
+(`chunkshop.summarizers.caveman`) takes a different tack: it **reduces** the
+text in place by dropping low-information tokens — stopwords and
+punctuation-only tokens — while keeping every meaning-bearing word in its
+original order and case. It's a fluff stripper, not a summarizer that picks
+salient sentences.
+
+Properties:
+
+- **Dependency-free.** Pure Python, no NLP libraries, no model download.
+- **Deterministic and idempotent.** Same input → same output; running it on
+  its own output is a no-op.
+- **Order- and case-preserving.** It removes tokens, never reorders or
+  rephrases.
+
+It satisfies the same summarizer contract as everything else —
+`summarize(text: str, **kwargs) -> str` — so it's swappable anywhere a
+summarizer goes:
+
+```yaml
+summarizer:
+  mode: callable
+  module: chunkshop.summarizers.caveman
+  function: summarize
+```
+
+That makes it usable as the `summary_embed` / `hierarchical_summary`
+summarizer, and as the `summarizer:` slot on the `consolidation` chunker's
+bundled fact extractors (see
+[`reference/consolidator-fact-extractors.md`](reference/consolidator-fact-extractors.md)).
+
+### Read-time use: `search --compress`
+
+`caveman` is also wired in at **query time**. `chunkshop search --compress`
+(off by default) runs the produced summary through caveman before returning
+it — fewer tokens in the LLM context for the same content. It only affects
+the `summary` / `summary+chunks` return modes (there's no summary to compress
+in `chunks` mode).
+
+```bash
+chunkshop search --config cell.yaml --return summary --compress "your query"
+```
+
+### Caveat: short acronyms
+
+Stopword matching is **casefolded**, so short acronyms that collide with a
+stopword get stripped too — `IT`, `US`, and similar tokens disappear because
+they casefold to `it` / `us`. This is an accepted trade-off for a fluff
+reducer. If your corpus leans on two-letter acronyms as load-bearing terms,
+prefer an extractive summarizer (`lede` / `sumy`) over caveman.
+
 ## Grouping strategies (hierarchical_summary only)
 
 ### `fixed_n` — every N base chunks form one group (default, N=5)
