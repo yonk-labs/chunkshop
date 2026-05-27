@@ -2,6 +2,7 @@ from chunkshop.config import (
     CodeRelationshipsExtractor as CodeRelCfg,
     CodeSummaryExtractor as CodeSummaryCfg,
     CompositeExtractor as CompositeCfg,
+    CooccurrenceExtractor as CooccurCfg,
     ExtractorConfig,
     KeyBertPhrasesExtractor as KeyBertCfg,
     LangDetectExtractor as LangDetectCfg,
@@ -15,6 +16,7 @@ from chunkshop.extractors.base import Extractor
 from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
 from chunkshop.extractors.code_summary import CodeSummaryExtractor
 from chunkshop.extractors.composite import CompositeExtractor
+from chunkshop.extractors.cooccurrence import CooccurrenceExtractor
 from chunkshop.extractors.keybert_phrases import KeyBertPhrasesExtractor
 from chunkshop.extractors.lang_detect import LangDetectExtractor
 from chunkshop.extractors.lede_report import LedeReportExtractor
@@ -30,6 +32,8 @@ def load_extractor(cfg: ExtractorConfig) -> Extractor:
         return NoneExtractor(cfg)
     if isinstance(cfg, RakeCfg):
         return RakeKeywordsExtractor(cfg)
+    if isinstance(cfg, CooccurCfg):
+        return CooccurrenceExtractor(cfg)
     if isinstance(cfg, LangDetectCfg):
         return LangDetectExtractor(cfg)
     if isinstance(cfg, KeyBertCfg):
