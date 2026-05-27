@@ -172,6 +172,7 @@ def summarize_hits(
     hint_mode: str = "soft",
     prepend_headings: bool = True,
     use_embedded: bool = True,
+    compress_fn: Optional[Callable[[str], str]] = None,
 ) -> str:
     """Fast-mode RAG summary: concatenate retrieved chunks, summarize biased
     toward query hints, and (default) prepend the deduped chunk headings to the
@@ -221,6 +222,8 @@ def summarize_hits(
         call_kwargs["hint_mode"] = hint_mode
 
     summary = summarize_fn(body, **call_kwargs)
+    if compress_fn is not None:
+        summary = compress_fn(summary)
 
     if not prepend_headings:
         return summary
@@ -283,6 +286,7 @@ def _summarize_for_query(
     summary_hints: Optional[list[str]],
     summary_expand,
     max_length: int,
+    compress_fn: Optional[Callable[[str], str]] = None,
 ) -> str:
     """Run extractive summarization biased toward the query.
 
@@ -311,7 +315,9 @@ def _summarize_for_query(
             top_k=summary_expand.top_k,
             expand_weight=summary_expand.expand_weight,
         )
-    return summarize_hits(hits, summarize_fn, max_length=max_length, hints=hints)
+    return summarize_hits(
+        hits, summarize_fn, max_length=max_length, hints=hints, compress_fn=compress_fn
+    )
 
 
 def search(
@@ -332,6 +338,7 @@ def search(
     summary_max_length: int = 1200,
     language: str = "english",
     vector_metric: str = "cosine",
+    compress_fn=None,
 ) -> SearchResult:
     """Hybrid search with optional summarization — the chunkshop read entry point.
 
@@ -391,6 +398,7 @@ def search(
         summary_hints=summary_hints,
         summary_expand=summary_expand,
         max_length=summary_max_length,
+        compress_fn=compress_fn,
     )
     chunks = [] if return_mode == "summary" else hits
     return SearchResult(chunks=chunks, summary=summary, query=query or "")
