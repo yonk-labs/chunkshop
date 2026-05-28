@@ -629,20 +629,25 @@ def write_edges(
             e["dst_node_id"],
             e["confidence"],
             Json(e.get("evidence") or {}),
+            # CS-2: every finalize() edge now carries edge_kind (Task 3).
+            e["edge_kind"],
         )
         for e in edges
     ]
 
     insert = sql.SQL(
         "INSERT INTO {fq} (project_id, edge_type, src_fqn, dst_fqn,"
-        " src_node_id, dst_node_id, confidence, evidence) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+        " src_node_id, dst_node_id, confidence, evidence, edge_kind) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
         "ON CONFLICT (project_id, edge_type, src_node_id, dst_node_id) "
         "DO UPDATE SET"
         "  src_fqn = EXCLUDED.src_fqn,"
         "  dst_fqn = EXCLUDED.dst_fqn,"
         "  confidence = EXCLUDED.confidence,"
-        "  evidence = EXCLUDED.evidence"
+        "  evidence = EXCLUDED.evidence,"
+        # CS-2: preserve edge_kind on update so a re-run with a changed
+        # mapping (future ontology migration) doesn't leave stale values.
+        "  edge_kind = EXCLUDED.edge_kind"
     ).format(fq=fq)
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:

@@ -129,3 +129,68 @@ def test_edge_kind_check_accepts_all_12_codegraph_values(schema: str) -> None:
             sql.SQL("SELECT COUNT(*) FROM {fq}").format(fq=fq)
         )
         assert cur.fetchone()[0] == 12
+
+
+def test_write_edges_round_trip_persists_edge_kind(schema: str) -> None:
+    """write_edges persists edge_kind; SELECT round-trips identical values."""
+    import psycopg
+
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import (
+        CodeRelationshipsExtractor,
+        write_edges,
+        write_edges_schema,
+    )
+
+    write_edges_schema(DSN, schema=schema)
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract("def foo():\n    pass\n", language="python", source_path="a.py")
+    ext.extract("def bar():\n    foo()\n", language="python", source_path="b.py")
+
+    n = write_edges(ext, dsn=DSN, schema=schema, project_id="rt")
+    assert n >= 1
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        from psycopg import sql
+        fq = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier("code_edges"))
+        cur.execute(
+            sql.SQL("SELECT edge_type, edge_kind FROM {fq} ORDER BY src_fqn, dst_fqn").format(fq=fq)
+        )
+        rows = cur.fetchall()
+        assert len(rows) >= 1
+        for edge_type, edge_kind in rows:
+            assert edge_type == "CALLS"
+            assert edge_kind == "calls"
+
+
+def test_write_edges_on_conflict_preserves_edge_kind(schema: str) -> None:
+    """Re-running write_edges updates edge_kind on conflict (not reverts to default)."""
+    import psycopg
+
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import (
+        CodeRelationshipsExtractor,
+        write_edges,
+        write_edges_schema,
+    )
+
+    write_edges_schema(DSN, schema=schema)
+
+    def _run() -> int:
+        ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+        ext.extract("def foo():\n    pass\n", language="python", source_path="a.py")
+        ext.extract("def bar():\n    foo()\n", language="python", source_path="b.py")
+        return write_edges(ext, dsn=DSN, schema=schema, project_id="rt")
+
+    _run()
+    _run()  # second run hits ON CONFLICT DO UPDATE
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        from psycopg import sql
+        fq = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier("code_edges"))
+        cur.execute(
+            sql.SQL("SELECT edge_kind FROM {fq}").format(fq=fq)
+        )
+        kinds = {r[0] for r in cur.fetchall()}
+        assert kinds == {"calls"}  # no row reverted to default 'references'
