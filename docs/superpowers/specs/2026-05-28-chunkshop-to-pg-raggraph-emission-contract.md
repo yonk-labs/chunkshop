@@ -181,7 +181,79 @@ LIMIT 5;
 (Real example values from a scotus ingest will be substituted in Task 9.)
 
 ## 3. Verdict Criteria — "Did Graph Beat Naive?"
-*(filled in Task 6)*
+
+This section defines the quantitative criteria the A/B experiment is judged against. **Every threshold is a number with a unit.** "Graph wins" is a deterministic function of three metrics, not a vibe.
+
+### 3.1 The three metrics
+
+| # | Metric | Definition | Range |
+|---|---|---|---|
+| 1 | **Recall@10 lift** | `recall_graph - recall_naive` (in percentage points), where `recall = (# gold-Q with gold_doc_id in top 10 hits) / (total gold-Q)` | -100pp .. +100pp |
+| 2 | **MRR delta** | `MRR_graph - MRR_naive`, where `MRR = mean(1 / rank_of_gold_doc_id)` (0 if gold not in top-K cutoff) | -1.0 .. +1.0 |
+| 3 | **LLM-judge win-rate delta** | Fraction of gold-Q for which the LLM judge rates the graph-leg answer "acceptable" minus the same for naive. Use chunkshop's existing judge configuration at `python/src/chunkshop/eval/config.py` (`JudgingConfig` / `JudgeProvider`, wired through `python/src/chunkshop/eval/planner.py::_llm_judge_config`) to keep results comparable to the factorial bakeoff. | -1.0 .. +1.0 |
+
+### 3.2 Per-metric thresholds (graph wins this metric if …)
+
+| Metric | Graph wins if … | Tie if … | Naive wins if … |
+|---|---|---|---|
+| Recall@10 lift | `≥ +5pp` overall | `-5pp < lift < +5pp` | `≤ -5pp` overall |
+| MRR delta | `≥ +0.05` overall | `-0.05 < delta < +0.05` | `≤ -0.05` overall |
+| LLM-judge win-rate delta | `≥ +0.10` (i.e. graph wins on 10pp more gold-Q than naive) | `-0.10 < delta < +0.10` | `≤ -0.10` overall |
+
+### 3.3 Overall verdict (combining the three)
+
+- **GRAPH WINS** if graph wins ≥ 2 of 3 metrics AND naive wins 0.
+- **NAIVE WINS** if naive wins ≥ 2 of 3 metrics AND graph wins 0.
+- **INCONCLUSIVE** in all other cases (1-1 with a tie, 1-2, any 0-0-3 all-ties).
+
+Ties on a metric count as 0 votes for both sides. An exact tie on all three → INCONCLUSIVE.
+
+### 3.4 Per-corpus breakdown rule
+
+Compute all three metrics per corpus (`bakeoff-scotus`, `bakeoff-ntsb`) AND combined (questions concatenated, simple union for recall/MRR; concatenated judge tally for the LLM metric). Report all three rollups.
+
+**Asymmetry rule:** to declare GRAPH WINS overall, graph must win the combined rollup AND must NOT lose all three metrics on either single corpus. (If graph wins the combined rollup but loses all three metrics on `bakeoff-ntsb`, that's INCONCLUSIVE — the win is corpus-specific, not general.)
+
+### 3.5 Tie-breaker priority
+
+If the 2-of-3 rule produces a tie (e.g., graph wins recall+LLM, naive wins MRR, but you want a single label), apply this priority:
+
+1. Recall@10 lift (most directly measures retrieval quality)
+2. MRR delta (rewards ranking, not just inclusion)
+3. LLM-judge win-rate (most subjective, lowest weight)
+
+This priority is for tie-breaks only — the 2-of-3 rule in §3.3 is the primary decision.
+
+### 3.6 Latency is acknowledged, not gating
+
+The graph leg is slower per query (entity-resolve cost). For v1 of this gate, the verdict is **quality-only**. If graph wins quality but is >10× slower, that's a follow-up decision (caching, pre-resolution, indexing strategies) — it does NOT change the v1 verdict. Latency numbers should still be reported alongside the verdict for context.
+
+### 3.7 Worked example
+
+Given hypothetical results:
+
+| Metric | scotus graph | scotus naive | ntsb graph | ntsb naive | combined graph | combined naive | delta |
+|---|---|---|---|---|---|---|---|
+| Recall@10 | 0.68 | 0.58 | 0.55 | 0.60 | 0.62 | 0.59 | **+3pp** |
+| MRR | 0.45 | 0.39 | 0.36 | 0.40 | 0.41 | 0.39 | **+0.02** |
+| LLM-judge wins (of 30 combined Q) | 18 | 12 | — | — | 0.60 | 0.40 | **+0.20** |
+
+Apply §3.2:
+- Recall@10 lift `+3pp` → between `-5pp` and `+5pp` → **TIE**.
+- MRR delta `+0.02` → between `-0.05` and `+0.05` → **TIE**.
+- LLM-judge delta `+0.20` → `≥ +0.10` → **GRAPH WINS**.
+
+Apply §3.3: graph wins 1 metric, naive wins 0, two ties. Graph does NOT meet the "≥2 of 3" threshold → **INCONCLUSIVE**.
+
+Apply §3.4 asymmetry check: irrelevant since the combined rollup is already inconclusive.
+
+**Verdict: INCONCLUSIVE.** The LLM judge favors graph, but recall and MRR are too close to call. Recommendation in this case: re-run with a larger gold-Q set or investigate why scotus and ntsb point in opposite directions on recall.
+
+### 3.8 What "INCONCLUSIVE" means for chunkshop's roadmap
+
+- GRAPH WINS → build Tier-2 LLM-validate; greenlight Rust RM-C code-aware port.
+- NAIVE WINS → freeze edge-tier work; deprioritize Rust RM-C consumers; reconsider whether the existing facts/cooccur are worth maintaining.
+- INCONCLUSIVE → fix the corpus / question coverage and re-run. Do NOT ship more edge tiers on inconclusive evidence.
 
 ## 4. Required pg-raggraph-Side Artifacts
 
