@@ -666,14 +666,18 @@ def write_edges(
             Json(e.get("evidence") or {}),
             # CS-2: every finalize() edge now carries edge_kind (Task 3).
             e["edge_kind"],
+            # CS-5: every finalize() edge now carries provenance + metadata.
+            e["provenance"],
+            Json(e.get("provenance_metadata") or {}),
         )
         for e in edges
     ]
 
     insert = sql.SQL(
         "INSERT INTO {fq} (project_id, edge_type, src_fqn, dst_fqn,"
-        " src_node_id, dst_node_id, confidence, evidence, edge_kind) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        " src_node_id, dst_node_id, confidence, evidence, edge_kind,"
+        " provenance, provenance_metadata) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
         "ON CONFLICT (project_id, edge_type, src_node_id, dst_node_id) "
         "DO UPDATE SET"
         "  src_fqn = EXCLUDED.src_fqn,"
@@ -682,7 +686,13 @@ def write_edges(
         "  evidence = EXCLUDED.evidence,"
         # CS-2: preserve edge_kind on update so a re-run with a changed
         # mapping (future ontology migration) doesn't leave stale values.
-        "  edge_kind = EXCLUDED.edge_kind"
+        "  edge_kind = EXCLUDED.edge_kind,"
+        # CS-5: preserve provenance + provenance_metadata on update so a
+        # CS-3-era reclassification (e.g., an edge previously synthesized
+        # heuristically gets re-derived from AST in a later run) cleanly
+        # overwrites instead of leaving stale provenance.
+        "  provenance = EXCLUDED.provenance,"
+        "  provenance_metadata = EXCLUDED.provenance_metadata"
     ).format(fq=fq)
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
