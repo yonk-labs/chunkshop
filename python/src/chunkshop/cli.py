@@ -1103,6 +1103,11 @@ def _render_impact_text(target: str, callers: list[dict], callees: list[dict]) -
     "--edge-type", default="CALLS", show_default=True,
     help="Edge type to follow. Currently CALLS, INHERITS, IMPLEMENTS.",
 )
+# 12-value list inlined here (not imported from
+# chunkshop.extractors.code_relationships.EDGE_KINDS) to keep
+# `chunkshop --help` startup fast — importing the extractor module
+# at decorator-eval time pulls in tree-sitter + regex tables.
+# If you add a value to EDGE_KINDS, mirror it here.
 @click.option(
     "--edge-kind",
     type=click.Choice([
@@ -1115,7 +1120,8 @@ def _render_impact_text(target: str, callers: list[dict], callees: list[dict]) -
     help=(
         "Optional typed EdgeKind filter (codegraph ontology). ANDs with "
         "--edge-type when both are supplied. Today the extractor populates "
-        "only 'calls', 'extends', 'implements'; CS-1 will fill the rest."
+        "only 'calls', 'extends', 'implements'; the other 9 kinds are "
+        "reserved for future per-language extractors."
     ),
 )
 @click.option(
