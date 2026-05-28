@@ -422,3 +422,70 @@ def test_finalize_idempotent() -> None:
     first = extractor.finalize()
     second = extractor.finalize()
     assert first == second
+
+
+# ---------------------------------------------------------------------------
+# CS-2: edge_kind alongside edge_type
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_emits_edge_kind_alongside_edge_type() -> None:
+    """Every edge from finalize() carries edge_kind mapped from edge_type."""
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import (
+        CodeRelationshipsExtractor,
+        edge_type_to_kind,
+    )
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    # Minimal cross-file Python: a.py defines foo; b.py calls foo.
+    ext.extract(
+        "def foo():\n    pass\n",
+        language="python",
+        source_path="a.py",
+    )
+    ext.extract(
+        "def bar():\n    foo()\n",
+        language="python",
+        source_path="b.py",
+    )
+    edges = ext.finalize(project_id="test")
+
+    assert len(edges) >= 1
+    for e in edges:
+        # SC-003 regression: edge_type still present and uppercase.
+        assert e["edge_type"] in ("CALLS", "INHERITS", "IMPLEMENTS")
+        # SC-001/SC-002: edge_kind present and mapped.
+        assert "edge_kind" in e
+        assert e["edge_kind"] == edge_type_to_kind(e["edge_type"])
+
+
+def test_finalize_emits_correct_edge_kind_for_inherits_and_implements() -> None:
+    """INHERITS → extends, IMPLEMENTS → implements (Java path covers both)."""
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    # Java: class Child extends Parent implements Iface
+    ext.extract(
+        "public class Parent {}\n",
+        language="java",
+        source_path="Parent.java",
+    )
+    ext.extract(
+        "public interface Iface {}\n",
+        language="java",
+        source_path="Iface.java",
+    )
+    ext.extract(
+        "public class Child extends Parent implements Iface {}\n",
+        language="java",
+        source_path="Child.java",
+    )
+    edges = ext.finalize(project_id="test")
+
+    by_kind = {e["edge_kind"]: e for e in edges}
+    assert "extends" in by_kind
+    assert by_kind["extends"]["edge_type"] == "INHERITS"
+    assert "implements" in by_kind
+    assert by_kind["implements"]["edge_type"] == "IMPLEMENTS"

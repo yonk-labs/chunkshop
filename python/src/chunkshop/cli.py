@@ -844,6 +844,7 @@ def _impact_query_one_direction(
     project_id: str,
     confidence_floor: float,
     edge_type: str,
+    edge_kind: str | None = None,  # CS-2: optional typed-kind filter, ANDs in
 ) -> list[dict]:
     """Walk the code_edges table N hops from ``fqn`` and return rows.
 
@@ -885,6 +886,18 @@ def _impact_query_one_direction(
         next_col = "dst_fqn"
         next_id_col = "dst_node_id"
 
+    # CS-2: optional edge_kind AND-filter. None ⇒ no extra predicate
+    # (byte-identical with pre-CS-2 behavior); a value ⇒ the recursive CTE's
+    # anchor and recursive arms both require edge_kind = %s.
+    if edge_kind is not None:
+        kind_pred = sql.SQL(" AND edge_kind = %s")
+        anchor_kind_params = (edge_kind,)
+        recurse_kind_params = (edge_kind,)
+    else:
+        kind_pred = sql.SQL("")
+        anchor_kind_params = ()
+        recurse_kind_params = ()
+
     # Recursive CTE: anchor row at hop=1, then expand via the next direction.
     # Stop when hop reaches depth (bound by Python before splicing, so it's
     # always a safe literal — but we cast to int defensively).
@@ -894,14 +907,14 @@ def _impact_query_one_direction(
         "        evidence, src_fqn, dst_fqn, 1::int AS hop"
         " FROM {fq}"
         " WHERE project_id = %s AND edge_type = %s AND {anchor_col} = %s"
-        "       AND confidence >= %s"
+        "       AND confidence >= %s{kind_pred}"
         " UNION ALL"
         " SELECT e.{next_col} AS fqn, e.{next_id_col} AS node_id, e.edge_type,"
         "        e.confidence, e.evidence, e.src_fqn, e.dst_fqn, w.hop + 1"
         " FROM {fq} e"
         " JOIN walk w ON w.fqn = e.{anchor_col}"
         " WHERE e.project_id = %s AND e.edge_type = %s AND e.confidence >= %s"
-        "       AND w.hop < {depth}"
+        "       AND w.hop < {depth}{kind_pred}"
         ")"
         " SELECT fqn, MIN(hop) AS hop, MAX(confidence) AS confidence,"
         " (ARRAY_AGG(evidence ORDER BY confidence DESC))[1] AS evidence,"
@@ -914,11 +927,12 @@ def _impact_query_one_direction(
         next_id_col=sql.Identifier(next_id_col),
         anchor_col=sql.Identifier(anchor_col),
         depth=sql.Literal(int(depth)),
+        kind_pred=kind_pred,
     )
 
     params = (
-        project_id, edge_type, fqn, confidence_floor,
-        project_id, edge_type, confidence_floor,
+        project_id, edge_type, fqn, confidence_floor, *anchor_kind_params,
+        project_id, edge_type, confidence_floor, *recurse_kind_params,
     )
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
@@ -1089,6 +1103,27 @@ def _render_impact_text(target: str, callers: list[dict], callees: list[dict]) -
     "--edge-type", default="CALLS", show_default=True,
     help="Edge type to follow. Currently CALLS, INHERITS, IMPLEMENTS.",
 )
+# 12-value list inlined here (not imported from
+# chunkshop.extractors.code_relationships.EDGE_KINDS) to keep
+# `chunkshop --help` startup fast — importing the extractor module
+# at decorator-eval time pulls in tree-sitter + regex tables.
+# If you add a value to EDGE_KINDS, mirror it here.
+@click.option(
+    "--edge-kind",
+    type=click.Choice([
+        "contains", "calls", "imports", "exports",
+        "extends", "implements", "references",
+        "type_of", "returns", "instantiates",
+        "overrides", "decorates",
+    ]),
+    default=None,
+    help=(
+        "Optional typed EdgeKind filter (codegraph ontology). ANDs with "
+        "--edge-type when both are supplied. Today the extractor populates "
+        "only 'calls', 'extends', 'implements'; the other 9 kinds are "
+        "reserved for future per-language extractors."
+    ),
+)
 @click.option(
     "--confidence", "confidence_floor",
     type=float, default=0.7, show_default=True,
@@ -1106,7 +1141,7 @@ def _render_impact_text(target: str, callers: list[dict], callees: list[dict]) -
     "--json", "as_json", is_flag=True,
     help="Emit JSON instead of human-readable tree text.",
 )
-def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, project_id, as_json):
+def impact_of(config, fqn, depth, direction, edge_type, edge_kind, confidence_floor, project_id, as_json):
     """Walk the code_edges table for callers/callees of a fully-qualified name.
 
     The cell YAML supplies the Postgres DSN and the schema; the impact query
@@ -1161,6 +1196,7 @@ def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, projec
                 project_id=pid,
                 confidence_floor=confidence_floor,
                 edge_type=edge_type,
+                edge_kind=edge_kind,
             )
             callers = _enrich_with_chunk_metadata(
                 dsn, schema=schema, table=table, rows=callers
@@ -1175,6 +1211,7 @@ def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, projec
                 project_id=pid,
                 confidence_floor=confidence_floor,
                 edge_type=edge_type,
+                edge_kind=edge_kind,
             )
             callees = _enrich_with_chunk_metadata(
                 dsn, schema=schema, table=table, rows=callees
@@ -1191,6 +1228,7 @@ def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, projec
             "depth": depth,
             "direction": direction,
             "edge_type": edge_type,
+            "edge_kind": edge_kind,
             "confidence_floor": confidence_floor,
         }
         if direction in ("callers", "both"):

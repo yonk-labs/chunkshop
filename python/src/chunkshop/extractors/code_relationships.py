@@ -53,6 +53,58 @@ from chunkshop.codeparse.tree_sitter_wrapper import parse_text
 from chunkshop.config import CodeRelationshipsExtractor as Cfg
 from chunkshop.extractors.result import ExtractResult
 
+# ---------------------------------------------------------------------------
+# CS-2: typed EdgeKind ontology
+# ---------------------------------------------------------------------------
+#
+# The 12-value vocabulary is ported verbatim from codegraph's `EdgeKind`
+# TypeScript union. This is additive — the legacy uppercase `edge_type`
+# column stays untouched; `edge_kind` is the new typed source-of-truth
+# column that future readers (CS-1, CS-3) populate from per-language AST.
+
+from typing import Literal
+
+EdgeKind = Literal[
+    "contains", "calls", "imports", "exports",
+    "extends", "implements", "references",
+    "type_of", "returns", "instantiates",
+    "overrides", "decorates",
+]
+
+EDGE_KINDS: tuple[EdgeKind, ...] = (
+    "contains", "calls", "imports", "exports",
+    "extends", "implements", "references",
+    "type_of", "returns", "instantiates",
+    "overrides", "decorates",
+)
+
+# Mapping from the 3 legacy uppercase edge_type values this extractor
+# emits today to their codegraph EdgeKind equivalents. CS-1 will populate
+# the other 9 kinds when it ports the 20-language extractor stack; until
+# then they're valid against the CHECK constraint but no code path writes
+# them.
+_EDGE_TYPE_TO_KIND: dict[str, EdgeKind] = {
+    "CALLS": "calls",
+    "INHERITS": "extends",
+    "IMPLEMENTS": "implements",
+}
+
+
+def edge_type_to_kind(edge_type: str) -> EdgeKind:
+    """Translate a legacy uppercase ``edge_type`` value into its EdgeKind.
+
+    Raises ``ValueError`` on unknown values so a typo in a new emission
+    site fails loudly instead of silently writing NULL.
+    """
+    try:
+        return _EDGE_TYPE_TO_KIND[edge_type]
+    except KeyError:
+        raise ValueError(
+            f"unknown edge_type {edge_type!r} — must be one of "
+            f"{sorted(_EDGE_TYPE_TO_KIND)}"
+        ) from None
+
+
 # Inheritance / implementation regexes. We carry these in the extractor
 # rather than punching them into SP-A's ParseResult because SP-A's surface
 # is frozen for v1 and these are SP-C-only signals. The patterns are
@@ -278,6 +330,11 @@ class CodeRelationshipsExtractor:
             edges.append(
                 {
                     "edge_type": edge_type,
+                    # CS-2: typed codegraph EdgeKind, derived from edge_type
+                    # via the canonical mapping. Single chokepoint — every
+                    # emission path goes through _emit so this is the only
+                    # site that needs to know about EdgeKind.
+                    "edge_kind": edge_type_to_kind(edge_type),
                     "src_fqn": src_fqn,
                     "dst_fqn": dst_fqn,
                     "src_node_id": src_id,
@@ -497,6 +554,15 @@ def write_edges_schema(dsn: str, *, schema: str) -> None:
                 " dst_node_id text NOT NULL,"
                 " confidence double precision NOT NULL,"
                 " evidence jsonb,"
+                # CS-2: typed codegraph EdgeKind ontology (12 values). Default
+                # is 'references' so a pre-CS-2 row inserted by an older client
+                # still satisfies NOT NULL; the extractor's write_edges path
+                # always supplies an explicit value via edge_type_to_kind.
+                " edge_kind text NOT NULL DEFAULT 'references'"
+                "   CHECK (edge_kind IN ('contains','calls','imports','exports',"
+                "                        'extends','implements','references',"
+                "                        'type_of','returns','instantiates',"
+                "                        'overrides','decorates')),"
                 " PRIMARY KEY (project_id, edge_type, src_node_id, dst_node_id))"
             ).format(fq=fq)
         )
@@ -517,6 +583,12 @@ def write_edges_schema(dsn: str, *, schema: str) -> None:
                 "CREATE INDEX IF NOT EXISTS {ix} ON {fq} "
                 "(project_id, confidence) WHERE confidence >= 0.7"
             ).format(ix=sql.Identifier("code_edges_confident_idx"), fq=fq)
+        )
+        cur.execute(
+            sql.SQL(
+                "CREATE INDEX IF NOT EXISTS {ix} ON {fq} "
+                "(project_id, edge_kind)"
+            ).format(ix=sql.Identifier("code_edges_kind_idx"), fq=fq)
         )
         conn.commit()
 
@@ -557,20 +629,25 @@ def write_edges(
             e["dst_node_id"],
             e["confidence"],
             Json(e.get("evidence") or {}),
+            # CS-2: every finalize() edge now carries edge_kind (Task 3).
+            e["edge_kind"],
         )
         for e in edges
     ]
 
     insert = sql.SQL(
         "INSERT INTO {fq} (project_id, edge_type, src_fqn, dst_fqn,"
-        " src_node_id, dst_node_id, confidence, evidence) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+        " src_node_id, dst_node_id, confidence, evidence, edge_kind) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
         "ON CONFLICT (project_id, edge_type, src_node_id, dst_node_id) "
         "DO UPDATE SET"
         "  src_fqn = EXCLUDED.src_fqn,"
         "  dst_fqn = EXCLUDED.dst_fqn,"
         "  confidence = EXCLUDED.confidence,"
-        "  evidence = EXCLUDED.evidence"
+        "  evidence = EXCLUDED.evidence,"
+        # CS-2: preserve edge_kind on update so a re-run with a changed
+        # mapping (future ontology migration) doesn't leave stale values.
+        "  edge_kind = EXCLUDED.edge_kind"
     ).format(fq=fq)
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:

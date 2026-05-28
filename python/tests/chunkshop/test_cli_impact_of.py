@@ -83,15 +83,21 @@ def impact_cell(tmp_path: Path):
     write_edges_schema(DSN, schema=schema)
 
     project_id = "impact-test"
+    # CS-2: seed edge_kind explicitly so the fixture's rows look like real
+    # production data (post-Task 2 the column defaults to 'references' if not
+    # supplied — but real writes from finalize() always send the typed kind).
+    # CALLS edges map to edge_kind='calls'; this lets CS-2 tests filter by it.
+    _ET_TO_KIND = {"CALLS": "calls"}
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
         for et, src, dst, conf in _EDGES:
             src_id = f"node_{src}"
             dst_id = f"node_{dst}"
+            kind = _ET_TO_KIND.get(et, "references")
             cur.execute(
                 f'INSERT INTO "{schema}".code_edges '
-                "(project_id, edge_type, src_fqn, dst_fqn, src_node_id, dst_node_id, confidence, evidence) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (project_id, et, src, dst, src_id, dst_id, conf, "{}"),
+                "(project_id, edge_type, edge_kind, src_fqn, dst_fqn, src_node_id, dst_node_id, confidence, evidence) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (project_id, et, kind, src, dst, src_id, dst_id, conf, "{}"),
             )
         conn.commit()
 
@@ -299,3 +305,197 @@ def test_impact_unknown_fqn_empty_ok(impact_cell):
     data = json.loads(r.output)
     assert data["callers"] == []
     assert data["callees"] == []
+
+
+# ---------------------------------------------------------------------------
+# CS-2 SC-004: --edge-kind ANDs into the recursive CTE's WHERE clauses.
+# These tests exercise the helper directly (Task 5); the CLI flag wiring is
+# Task 6.
+# ---------------------------------------------------------------------------
+
+
+def test_impact_query_filters_by_edge_kind_when_supplied(impact_cell):
+    """edge_kind='calls' returns matching rows; edge_kind='extends' returns none."""
+    from chunkshop.cli import _impact_query_one_direction
+
+    _cell_path, schema, project_id = impact_cell
+
+    rows_with_calls = _impact_query_one_direction(
+        DSN,
+        schema=schema,
+        fqn="b.middle",
+        direction="callers",
+        depth=1,
+        project_id=project_id,
+        confidence_floor=0.7,
+        edge_type="CALLS",
+        edge_kind="calls",
+    )
+    assert {r["fqn"] for r in rows_with_calls} == {"a.entry", "x.alt"}
+
+    rows_with_wrong_kind = _impact_query_one_direction(
+        DSN,
+        schema=schema,
+        fqn="b.middle",
+        direction="callers",
+        depth=1,
+        project_id=project_id,
+        confidence_floor=0.7,
+        edge_type="CALLS",
+        edge_kind="extends",  # no seeded rows have this kind
+    )
+    assert rows_with_wrong_kind == []
+
+
+def test_impact_query_edge_kind_filters_recursive_arm(impact_cell):
+    """Filter applies to the depth>1 recursive arm too, not just the anchor."""
+    from chunkshop.cli import _impact_query_one_direction
+
+    _cell_path, schema, project_id = impact_cell
+
+    # Depth=2 callers of c.leaf: b.middle (hop=1), then a.entry + x.alt (hop=2)
+    # — all three reach via 'calls' edges, so the filter should keep all three.
+    rows = _impact_query_one_direction(
+        DSN,
+        schema=schema,
+        fqn="c.leaf",
+        direction="callers",
+        depth=2,
+        project_id=project_id,
+        confidence_floor=0.7,
+        edge_type="CALLS",
+        edge_kind="calls",
+    )
+    assert {r["fqn"] for r in rows} == {"b.middle", "a.entry", "x.alt"}
+
+    # Same walk with a mismatched kind — every hop is excluded by the filter.
+    rows_mismatch = _impact_query_one_direction(
+        DSN,
+        schema=schema,
+        fqn="c.leaf",
+        direction="callers",
+        depth=2,
+        project_id=project_id,
+        confidence_floor=0.7,
+        edge_type="CALLS",
+        edge_kind="extends",
+    )
+    assert rows_mismatch == []
+
+
+def test_impact_query_unchanged_when_edge_kind_none(impact_cell):
+    """edge_kind=None preserves byte-identical pre-CS-2 behavior."""
+    from chunkshop.cli import _impact_query_one_direction
+
+    _cell_path, schema, project_id = impact_cell
+
+    rows = _impact_query_one_direction(
+        DSN,
+        schema=schema,
+        fqn="b.middle",
+        direction="callers",
+        depth=1,
+        project_id=project_id,
+        confidence_floor=0.7,
+        edge_type="CALLS",
+        # edge_kind not passed (defaults to None)
+    )
+    assert {r["fqn"] for r in rows} == {"a.entry", "x.alt"}
+
+    # And the same call with edge_kind=None explicitly — same result.
+    rows_explicit_none = _impact_query_one_direction(
+        DSN,
+        schema=schema,
+        fqn="b.middle",
+        direction="callers",
+        depth=1,
+        project_id=project_id,
+        confidence_floor=0.7,
+        edge_type="CALLS",
+        edge_kind=None,
+    )
+    assert {r["fqn"] for r in rows_explicit_none} == {"a.entry", "x.alt"}
+
+
+def test_impact_of_cli_rejects_invalid_edge_kind() -> None:
+    """--edge-kind validates against EDGE_KINDS at click parse time."""
+    from click.testing import CliRunner
+
+    from chunkshop.cli import cli
+
+    runner = CliRunner()
+    # No --config / --fqn validation needed — click validation runs first.
+    result = runner.invoke(
+        cli,
+        ["impact-of", "--config", "/dev/null", "--fqn", "x", "--edge-kind", "bogus_kind"],
+    )
+    assert result.exit_code != 0
+    # Click's Choice error mentions the option name.
+    assert "edge-kind" in result.output.lower() or "edge_kind" in result.output.lower()
+
+
+def test_impact_of_cli_accepts_each_codegraph_edge_kind() -> None:
+    """Every value in EDGE_KINDS passes click validation (may fail later on --config)."""
+    from click.testing import CliRunner
+
+    from chunkshop.cli import cli
+    from chunkshop.extractors.code_relationships import EDGE_KINDS
+
+    runner = CliRunner()
+    for kind in EDGE_KINDS:
+        result = runner.invoke(
+            cli,
+            ["impact-of", "--config", "/dev/null", "--fqn", "x", "--edge-kind", kind],
+        )
+        # Will fail downstream (--config /dev/null isn't valid YAML), but the
+        # failure must NOT be on --edge-kind validation.
+        # Look for click's "Invalid value" or "is not one of" patterns specifically
+        # tied to --edge-kind.
+        out = result.output.lower()
+        assert not ("invalid value" in out and "edge-kind" in out), (
+            f"--edge-kind {kind} unexpectedly rejected: {result.output}"
+        )
+
+
+def test_impact_of_cli_json_includes_edge_kind(impact_cell) -> None:
+    """JSON output carries edge_kind (None when not supplied)."""
+    import json
+    from click.testing import CliRunner
+
+    from chunkshop.cli import cli
+
+    cell_path, _schema, project_id = impact_cell
+    # Without --edge-kind: JSON should have "edge_kind": null.
+    r = CliRunner().invoke(
+        cli,
+        [
+            "impact-of",
+            "--config", str(cell_path),
+            "--fqn", "b.middle",
+            "--project-id", project_id,
+            "--json",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert "edge_kind" in data
+    assert data["edge_kind"] is None
+
+    # With --edge-kind calls: JSON should echo the supplied value.
+    r2 = CliRunner().invoke(
+        cli,
+        [
+            "impact-of",
+            "--config", str(cell_path),
+            "--fqn", "b.middle",
+            "--project-id", project_id,
+            "--edge-kind", "calls",
+            "--json",
+        ],
+    )
+    assert r2.exit_code == 0, r2.output
+    data2 = json.loads(r2.output)
+    assert data2["edge_kind"] == "calls"
+    # And the row set matches what we get with --edge-type CALLS (fixture seeded edge_kind='calls').
+    callers = {c["fqn"] for c in data2.get("callers", [])}
+    assert callers == {"a.entry", "x.alt"}
