@@ -121,6 +121,10 @@ tempfile = "3"
 # regardless of whether the `source` feature (which also pulls `futures`) is
 # enabled.
 futures = "0.3"
+# RM-C Task 7: property-based invariants for build_fqn + code_symbol_node_id
+# in tests/cross_port_proptest.rs (determinism, separator normalization,
+# output shape, project-id divergence).
+proptest = "1"
 
 [features]
 # Default = full feature set for backward compatibility. Existing consumers
