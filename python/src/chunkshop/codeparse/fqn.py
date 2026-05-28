@@ -11,7 +11,6 @@ yonk-full-stack-mig-srv ``indexer/parser.py`` verbatim.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Optional
 
 
@@ -31,8 +30,19 @@ def build_fqn(file_path: str, symbol_name: str, parent_name: Optional[str]) -> s
     to its last 3 parts — that's intentional. Downstream consumers that need
     a project-relative path should pass the relative path in to this
     function, not the absolute path.
+
+    Path separators are normalized cross-platform: both ``/`` and ``\\`` are
+    treated as separators regardless of the runtime OS, so the same logical
+    path produces the same FQN on Linux, macOS, and Windows. (The previous
+    ``Path(...).parts`` implementation was OS-dependent — a Windows-style
+    path on a POSIX runner collapsed to a single segment, producing a
+    different node_id than the same logical path on Windows.)
     """
-    parts = Path(file_path).parts
+    # Normalize separators so split is OS-independent. Filter empties to
+    # absorb leading slashes ("/a/b/c.py") and consecutive separators
+    # ("a//b/c.py"); both behaviors match the prior pathlib semantics.
+    normalized = file_path.replace("\\", "/")
+    parts = [p for p in normalized.split("/") if p]
     path_prefix = ".".join(parts[-3:]) if len(parts) >= 3 else ".".join(parts)
     # Strip the file extension from the last segment only.
     path_prefix = re.sub(r"\.[^.]+$", "", path_prefix)
