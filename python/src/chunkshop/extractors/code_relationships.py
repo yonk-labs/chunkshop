@@ -58,9 +58,9 @@ from chunkshop.extractors.result import ExtractResult
 # ---------------------------------------------------------------------------
 #
 # The 12-value vocabulary is ported verbatim from codegraph's `EdgeKind`
-# TypeScript union (see ../skill-output/codegraph-patterns/CODEGRAPH-SOURCE.md
-# §1). This is additive — the legacy uppercase `edge_type` column stays
-# untouched; `edge_kind` is the new typed source-of-truth column.
+# TypeScript union. This is additive — the legacy uppercase `edge_type`
+# column stays untouched; `edge_kind` is the new typed source-of-truth
+# column that future readers (CS-1, CS-3) populate from per-language AST.
 
 from typing import Literal
 
