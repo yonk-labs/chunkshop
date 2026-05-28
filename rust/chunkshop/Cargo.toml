@@ -30,6 +30,14 @@ path = "src/main.rs"
 # builds when the consumer opted into the heavy dep stack.
 required-features = ["full"]
 
+[[bin]]
+# Thin CLI exposing build_fqn + code_symbol_node_id for the Python
+# cross-port parity harness (RM-C SC-003). Depends only on the always-on
+# `codeparse` module, so no `required-features` — builds against the slim
+# library too.
+name = "fqn-cli"
+path = "src/bin/fqn-cli.rs"
+
 [dependencies]
 # --- Always-on core (small, used by the chunker module) ---
 anyhow = "1"
