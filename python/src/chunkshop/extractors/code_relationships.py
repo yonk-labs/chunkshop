@@ -53,6 +53,58 @@ from chunkshop.codeparse.tree_sitter_wrapper import parse_text
 from chunkshop.config import CodeRelationshipsExtractor as Cfg
 from chunkshop.extractors.result import ExtractResult
 
+# ---------------------------------------------------------------------------
+# CS-2: typed EdgeKind ontology
+# ---------------------------------------------------------------------------
+#
+# The 12-value vocabulary is ported verbatim from codegraph's `EdgeKind`
+# TypeScript union (see ../skill-output/codegraph-patterns/CODEGRAPH-SOURCE.md
+# §1). This is additive — the legacy uppercase `edge_type` column stays
+# untouched; `edge_kind` is the new typed source-of-truth column.
+
+from typing import Literal
+
+EdgeKind = Literal[
+    "contains", "calls", "imports", "exports",
+    "extends", "implements", "references",
+    "type_of", "returns", "instantiates",
+    "overrides", "decorates",
+]
+
+EDGE_KINDS: tuple[EdgeKind, ...] = (
+    "contains", "calls", "imports", "exports",
+    "extends", "implements", "references",
+    "type_of", "returns", "instantiates",
+    "overrides", "decorates",
+)
+
+# Mapping from the 3 legacy uppercase edge_type values this extractor
+# emits today to their codegraph EdgeKind equivalents. CS-1 will populate
+# the other 9 kinds when it ports the 20-language extractor stack; until
+# then they're valid against the CHECK constraint but no code path writes
+# them.
+_EDGE_TYPE_TO_KIND: dict[str, EdgeKind] = {
+    "CALLS": "calls",
+    "INHERITS": "extends",
+    "IMPLEMENTS": "implements",
+}
+
+
+def edge_type_to_kind(edge_type: str) -> EdgeKind:
+    """Translate a legacy uppercase ``edge_type`` value into its EdgeKind.
+
+    Raises ``ValueError`` on unknown values so a typo in a new emission
+    site fails loudly instead of silently writing NULL.
+    """
+    try:
+        return _EDGE_TYPE_TO_KIND[edge_type]
+    except KeyError:
+        raise ValueError(
+            f"unknown edge_type {edge_type!r} — must be one of "
+            f"{sorted(_EDGE_TYPE_TO_KIND)}"
+        ) from None
+
+
 # Inheritance / implementation regexes. We carry these in the extractor
 # rather than punching them into SP-A's ParseResult because SP-A's surface
 # is frozen for v1 and these are SP-C-only signals. The patterns are
