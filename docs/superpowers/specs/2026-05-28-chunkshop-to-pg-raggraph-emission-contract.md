@@ -184,7 +184,66 @@ LIMIT 5;
 *(filled in Task 6)*
 
 ## 4. Required pg-raggraph-Side Artifacts
-*(filled in Task 5)*
+
+This section lists every pg-raggraph deliverable required for the A/B experiment to run. It exists so chunkshop maintainers can track cross-repo dependency status from this doc, and so pg-raggraph maintainers have a single concrete checklist instead of having to derive what's needed from chunkshop's source.
+
+**Status legend:** `[ ]` not yet started · `[~]` in progress · `[x]` complete.
+
+### 4.1 `resolve_entity()` — the entity-resolution primitive
+
+- **Status:** `[ ]` (as of 2026-05-28)
+- **Purpose:** Collapse a fact endpoint (`subject` / `object`) or a cooccur node (`a` / `b`) onto a canonical node ID so multiple surface strings ("Apple", "Apple Inc.", "apple inc") resolve to the same graph node.
+- **Expected signature** (illustrative — pg-raggraph picks the exact shape):
+  ```python
+  def resolve_entity(
+      surface: str,
+      *,
+      corpus_id: str,
+      kind: Literal["fact_endpoint", "cooccur_node"] | None = None,
+      ctx: dict | None = None,
+  ) -> ResolvedEntity | None
+  ```
+- **Input contract (from chunkshop's side):** `surface` strings come from `metadata->>'subject'` / `metadata->>'object'` on fact rows, OR from `metadata->'cooccur'->idx->>'a'` / `>>'b'` on prose chunks. They are NOT guaranteed normalized — see §1.2 and §2.5 for casing caveats.
+- **Output contract:** a canonical node identifier (string / UUID / row id — pg-raggraph's choice) or `None` for unresolved.
+- **Notes:** This is the bottleneck pg-raggraph flagged (`pg_trgm` + vector similarity + embedding lookup per call). The contract does NOT prescribe an implementation strategy — only the signature. Caching / pre-resolution is encouraged.
+
+### 4.2 Retrieval-mode harness
+
+- **Status:** `[ ]`
+- **Purpose:** Run the same gold question through multiple retrieval modes against the same corpus, emit comparable result sets so the A/B verdict (§3) can be computed.
+- **Required modes:**
+  - `naive_vector` — ANN over `embedding` column, excluding fact rows (`metadata->>'kind' IS DISTINCT FROM 'fact'`). The naive baseline.
+  - `graph_leg` — entity-resolve the question, walk fact triples + cooccur edges, return chunk hits weighted by graph proximity.
+  - `hybrid` (optional but recommended) — combine the two.
+- **Expected I/O:**
+  - Input: a gold-Q file (chunkshop's `gold-scotus.yaml` / `gold-ntsb.yaml` format) + a corpus table name.
+  - Output: per-question top-K result lists, structured so per-mode metrics can be computed independently and combined.
+- **Constraint:** the harness MUST query the same row set chunkshop produced — no re-indexing, no shape transformation. If pg-raggraph wants a different shape, that's a contract amendment (see §5).
+
+### 4.3 A/B runner
+
+- **Status:** `[ ]`
+- **Purpose:** Orchestrate `{harness × corpus × mode}` matrix runs, write structured results to disk for the results writer to consume.
+- **Required corpora (chunkshop-provided):**
+  - `bakeoff-scotus` — legal prose, 12 gold questions (`docs/samples/bakeoff-scotus/gold-scotus.yaml`). Ingest config: `docs/samples/bakeoff-scotus/bakeoff-scotus-ab.yaml` (added in this PR).
+  - `bakeoff-ntsb` — NTSB accident reports, gold questions in `docs/samples/bakeoff-ntsb/gold-ntsb.yaml`. Ingest config: `docs/samples/bakeoff-ntsb/bakeoff-ntsb-ab.yaml` (added in this PR).
+- **Expected output:** raw per-question per-mode hit lists with scores and timings.
+
+### 4.4 Results writer
+
+- **Status:** `[ ]`
+- **Purpose:** Apply the verdict criteria (§3) to the A/B runner's raw output and emit a structured results doc (JSON + Markdown summary) that resolves the gate to a single PASS / FAIL.
+- **Expected output:** per-metric per-corpus tables, the combined verdict, and the §3.7 worked-example-style step-by-step calculation showing how the verdict was reached.
+
+### 4.5 Dependency tracking
+
+Update the `[ ]` / `[~]` / `[x]` markers as pg-raggraph ships each piece. Chunkshop maintainers can grep this section to see what's still blocking the gate from the chunkshop side:
+
+```bash
+grep -A1 "^### 4\." docs/superpowers/specs/2026-05-28-chunkshop-to-pg-raggraph-emission-contract.md | grep "Status:"
+```
+
+When all four artifacts land `[x]`, the A/B experiment is ready to run. The verdict it produces is what determines whether more edge tiers (Tier-2 LLM-validate, future RM-C Rust port consumers) are worth building.
 
 ## 5. Change-Management
 Shape changes require:
