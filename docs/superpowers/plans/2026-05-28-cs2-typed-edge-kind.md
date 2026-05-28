@@ -434,12 +434,12 @@ def test_finalize_emits_edge_kind_alongside_edge_type() -> None:
     ext.extract(
         "def foo():\n    pass\n",
         language="python",
-        file_path="a.py",
+        source_path="a.py",
     )
     ext.extract(
         "def bar():\n    foo()\n",
         language="python",
-        file_path="b.py",
+        source_path="b.py",
     )
     edges = ext.finalize(project_id="test")
 
@@ -462,17 +462,17 @@ def test_finalize_emits_correct_edge_kind_for_inherits_and_implements() -> None:
     ext.extract(
         "public class Parent {}\n",
         language="java",
-        file_path="Parent.java",
+        source_path="Parent.java",
     )
     ext.extract(
         "public interface Iface {}\n",
         language="java",
-        file_path="Iface.java",
+        source_path="Iface.java",
     )
     ext.extract(
         "public class Child extends Parent implements Iface {}\n",
         language="java",
-        file_path="Child.java",
+        source_path="Child.java",
     )
     edges = ext.finalize(project_id="test")
 
@@ -562,8 +562,8 @@ def test_write_edges_round_trip_persists_edge_kind(schema: str) -> None:
     write_edges_schema(DSN, schema=schema)
 
     ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
-    ext.extract("def foo():\n    pass\n", language="python", file_path="a.py")
-    ext.extract("def bar():\n    foo()\n", language="python", file_path="b.py")
+    ext.extract("def foo():\n    pass\n", language="python", source_path="a.py")
+    ext.extract("def bar():\n    foo()\n", language="python", source_path="b.py")
 
     n = write_edges(ext, dsn=DSN, schema=schema, project_id="rt")
     assert n >= 1
@@ -596,8 +596,8 @@ def test_write_edges_on_conflict_preserves_edge_kind(schema: str) -> None:
 
     def _run() -> int:
         ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
-        ext.extract("def foo():\n    pass\n", language="python", file_path="a.py")
-        ext.extract("def bar():\n    foo()\n", language="python", file_path="b.py")
+        ext.extract("def foo():\n    pass\n", language="python", source_path="a.py")
+        ext.extract("def bar():\n    foo()\n", language="python", source_path="b.py")
         return write_edges(ext, dsn=DSN, schema=schema, project_id="rt")
 
     _run()
