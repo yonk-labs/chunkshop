@@ -549,6 +549,15 @@ def write_edges_schema(dsn: str, *, schema: str) -> None:
                 " dst_node_id text NOT NULL,"
                 " confidence double precision NOT NULL,"
                 " evidence jsonb,"
+                # CS-2: typed codegraph EdgeKind ontology (12 values). Default
+                # is 'references' so a pre-CS-2 row inserted by an older client
+                # still satisfies NOT NULL; the extractor's write_edges path
+                # always supplies an explicit value via edge_type_to_kind.
+                " edge_kind text NOT NULL DEFAULT 'references'"
+                "   CHECK (edge_kind IN ('contains','calls','imports','exports',"
+                "                        'extends','implements','references',"
+                "                        'type_of','returns','instantiates',"
+                "                        'overrides','decorates')),"
                 " PRIMARY KEY (project_id, edge_type, src_node_id, dst_node_id))"
             ).format(fq=fq)
         )
@@ -569,6 +578,12 @@ def write_edges_schema(dsn: str, *, schema: str) -> None:
                 "CREATE INDEX IF NOT EXISTS {ix} ON {fq} "
                 "(project_id, confidence) WHERE confidence >= 0.7"
             ).format(ix=sql.Identifier("code_edges_confident_idx"), fq=fq)
+        )
+        cur.execute(
+            sql.SQL(
+                "CREATE INDEX IF NOT EXISTS {ix} ON {fq} "
+                "(project_id, edge_kind)"
+            ).format(ix=sql.Identifier("code_edges_kind_idx"), fq=fq)
         )
         conn.commit()
 
