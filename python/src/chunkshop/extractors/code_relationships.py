@@ -105,6 +105,22 @@ def edge_type_to_kind(edge_type: str) -> EdgeKind:
         ) from None
 
 
+# ---------------------------------------------------------------------------
+# CS-5: provenance ontology
+# ---------------------------------------------------------------------------
+#
+# The 3-value vocabulary is ported from codegraph's `Edge.provenance` field
+# (renaming codegraph's `'tree-sitter'` → `'ast'` to leave room for future
+# non-tree-sitter AST sources). Additive — every existing emission path is
+# AST-derived, so the chokepoint hardcodes `'ast'`. CS-3 synthesizers will
+# emit `'heuristic'` through their own code path (not through finalize._emit)
+# with a `{synthesizedBy: <channel>}` provenance_metadata payload.
+
+Provenance = Literal["ast", "scip", "heuristic"]
+
+PROVENANCES: tuple[Provenance, ...] = ("ast", "scip", "heuristic")
+
+
 # Inheritance / implementation regexes. We carry these in the extractor
 # rather than punching them into SP-A's ParseResult because SP-A's surface
 # is frozen for v1 and these are SP-C-only signals. The patterns are
