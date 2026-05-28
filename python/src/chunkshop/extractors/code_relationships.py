@@ -330,6 +330,11 @@ class CodeRelationshipsExtractor:
             edges.append(
                 {
                     "edge_type": edge_type,
+                    # CS-2: typed codegraph EdgeKind, derived from edge_type
+                    # via the canonical mapping. Single chokepoint — every
+                    # emission path goes through _emit so this is the only
+                    # site that needs to know about EdgeKind.
+                    "edge_kind": edge_type_to_kind(edge_type),
                     "src_fqn": src_fqn,
                     "dst_fqn": dst_fqn,
                     "src_node_id": src_id,
