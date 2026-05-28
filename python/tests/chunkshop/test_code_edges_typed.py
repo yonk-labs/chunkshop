@@ -164,8 +164,16 @@ def test_write_edges_round_trip_persists_edge_kind(schema: str) -> None:
             assert edge_kind == "calls"
 
 
-def test_write_edges_on_conflict_preserves_edge_kind(schema: str) -> None:
-    """Re-running write_edges updates edge_kind on conflict (not reverts to default)."""
+def test_write_edges_on_conflict_updates_edge_kind(schema: str) -> None:
+    """ON CONFLICT DO UPDATE flips edge_kind to EXCLUDED.edge_kind.
+
+    Hand-inserts a row with edge_kind='references' (the DEFAULT, but a
+    deliberately-wrong value for a CALLS edge). Then calls write_edges,
+    which generates an edge with the SAME primary key but edge_kind='calls'.
+    Asserts the existing row's edge_kind was overwritten to 'calls' — proving
+    the `SET edge_kind = EXCLUDED.edge_kind` line in the ON CONFLICT clause
+    is actually wired.
+    """
     import psycopg
 
     from chunkshop.config import CodeRelationshipsExtractor as Cfg
@@ -177,20 +185,72 @@ def test_write_edges_on_conflict_preserves_edge_kind(schema: str) -> None:
 
     write_edges_schema(DSN, schema=schema)
 
-    def _run() -> int:
-        ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
-        ext.extract("def foo():\n    pass\n", language="python", source_path="a.py")
-        ext.extract("def bar():\n    foo()\n", language="python", source_path="b.py")
-        return write_edges(ext, dsn=DSN, schema=schema, project_id="rt")
+    # Run the extractor once to discover the exact PK tuple write_edges will
+    # produce, so we can pre-seed a conflicting row with the wrong edge_kind.
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract("def foo():\n    pass\n", language="python", source_path="a.py")
+    ext.extract("def bar():\n    foo()\n", language="python", source_path="b.py")
+    edges = ext.finalize(project_id="rt")
+    assert len(edges) >= 1, "Need at least one edge to test conflict"
+    target = edges[0]
+    assert target["edge_kind"] == "calls"
 
-    _run()
-    _run()  # second run hits ON CONFLICT DO UPDATE
-
+    # Pre-seed the conflicting row with edge_kind='references' (wrong value
+    # for a CALLS edge — but valid against the CHECK).
+    from psycopg import sql
+    fq = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier("code_edges"))
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
-        from psycopg import sql
-        fq = sql.SQL("{}.{}").format(sql.Identifier(schema), sql.Identifier("code_edges"))
         cur.execute(
-            sql.SQL("SELECT edge_kind FROM {fq}").format(fq=fq)
+            sql.SQL(
+                "INSERT INTO {fq} "
+                "(project_id, edge_type, src_fqn, dst_fqn, src_node_id, "
+                " dst_node_id, confidence, evidence, edge_kind) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)"
+            ).format(fq=fq),
+            (
+                "rt",
+                target["edge_type"],
+                target["src_fqn"],
+                target["dst_fqn"],
+                target["src_node_id"],
+                target["dst_node_id"],
+                0.1,
+                "{}",
+                "references",  # deliberately wrong
+            ),
         )
-        kinds = {r[0] for r in cur.fetchall()}
-        assert kinds == {"calls"}  # no row reverted to default 'references'
+        conn.commit()
+
+    # Sanity: the pre-seed worked.
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                "SELECT edge_kind FROM {fq} "
+                "WHERE project_id = %s AND edge_type = %s "
+                "  AND src_node_id = %s AND dst_node_id = %s"
+            ).format(fq=fq),
+            ("rt", target["edge_type"], target["src_node_id"], target["dst_node_id"]),
+        )
+        assert cur.fetchone()[0] == "references"
+
+    # Now call write_edges with a fresh extractor producing the same edges.
+    # The PK collides → ON CONFLICT DO UPDATE → edge_kind should flip to 'calls'.
+    ext2 = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext2.extract("def foo():\n    pass\n", language="python", source_path="a.py")
+    ext2.extract("def bar():\n    foo()\n", language="python", source_path="b.py")
+    write_edges(ext2, dsn=DSN, schema=schema, project_id="rt")
+
+    # The pre-seeded row's edge_kind must have been overwritten.
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                "SELECT edge_kind FROM {fq} "
+                "WHERE project_id = %s AND edge_type = %s "
+                "  AND src_node_id = %s AND dst_node_id = %s"
+            ).format(fq=fq),
+            ("rt", target["edge_type"], target["src_node_id"], target["dst_node_id"]),
+        )
+        assert cur.fetchone()[0] == "calls", (
+            "ON CONFLICT DO UPDATE did not flip edge_kind — "
+            "SET edge_kind = EXCLUDED.edge_kind may be missing"
+        )
