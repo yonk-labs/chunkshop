@@ -844,6 +844,7 @@ def _impact_query_one_direction(
     project_id: str,
     confidence_floor: float,
     edge_type: str,
+    edge_kind: str | None = None,  # CS-2: optional typed-kind filter, ANDs in
 ) -> list[dict]:
     """Walk the code_edges table N hops from ``fqn`` and return rows.
 
@@ -885,6 +886,18 @@ def _impact_query_one_direction(
         next_col = "dst_fqn"
         next_id_col = "dst_node_id"
 
+    # CS-2: optional edge_kind AND-filter. None ⇒ no extra predicate
+    # (byte-identical with pre-CS-2 behavior); a value ⇒ the recursive CTE's
+    # anchor and recursive arms both require edge_kind = %s.
+    if edge_kind is not None:
+        kind_pred = sql.SQL(" AND edge_kind = %s")
+        anchor_kind_params = (edge_kind,)
+        recurse_kind_params = (edge_kind,)
+    else:
+        kind_pred = sql.SQL("")
+        anchor_kind_params = ()
+        recurse_kind_params = ()
+
     # Recursive CTE: anchor row at hop=1, then expand via the next direction.
     # Stop when hop reaches depth (bound by Python before splicing, so it's
     # always a safe literal — but we cast to int defensively).
@@ -894,14 +907,14 @@ def _impact_query_one_direction(
         "        evidence, src_fqn, dst_fqn, 1::int AS hop"
         " FROM {fq}"
         " WHERE project_id = %s AND edge_type = %s AND {anchor_col} = %s"
-        "       AND confidence >= %s"
+        "       AND confidence >= %s{kind_pred}"
         " UNION ALL"
         " SELECT e.{next_col} AS fqn, e.{next_id_col} AS node_id, e.edge_type,"
         "        e.confidence, e.evidence, e.src_fqn, e.dst_fqn, w.hop + 1"
         " FROM {fq} e"
         " JOIN walk w ON w.fqn = e.{anchor_col}"
         " WHERE e.project_id = %s AND e.edge_type = %s AND e.confidence >= %s"
-        "       AND w.hop < {depth}"
+        "       AND w.hop < {depth}{kind_pred}"
         ")"
         " SELECT fqn, MIN(hop) AS hop, MAX(confidence) AS confidence,"
         " (ARRAY_AGG(evidence ORDER BY confidence DESC))[1] AS evidence,"
@@ -914,11 +927,12 @@ def _impact_query_one_direction(
         next_id_col=sql.Identifier(next_id_col),
         anchor_col=sql.Identifier(anchor_col),
         depth=sql.Literal(int(depth)),
+        kind_pred=kind_pred,
     )
 
     params = (
-        project_id, edge_type, fqn, confidence_floor,
-        project_id, edge_type, confidence_floor,
+        project_id, edge_type, fqn, confidence_floor, *anchor_kind_params,
+        project_id, edge_type, confidence_floor, *recurse_kind_params,
     )
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
