@@ -73,7 +73,7 @@ futures = { version = "0.3", optional = true }
 glob = { version = "0.3", optional = true }
 object_store = { version = "0.11", default-features = false, features = ["aws"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
-sha1 = { version = "0.10", optional = true }
+sha1 = "0.10"
 
 # --- `sink` feature: the full modular sink/backend layer ---
 # The v4 modular-backends line moved every backend (PG/MariaDB/SQLite/
@@ -162,7 +162,7 @@ extractor = ["dep:whatlang"]
 # Source loaders: files (glob), HTTP, S3. DB-table sources (PG/MariaDB/
 # SQLite/ClickHouse) additionally require `sink` since they reuse the
 # backend connection layer — they are gated on `all(source, sink)` in code.
-source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:sha1", "dep:tokio"]
+source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:tokio"]
 
 # The full modular sink/backend layer: PG (pgvector), MariaDB (sqlx mysql),
 # SQLite (rusqlite + sqlite-vec), ClickHouse (clickhouse + url/urlencoding).
