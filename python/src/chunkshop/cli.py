@@ -1104,6 +1104,21 @@ def _render_impact_text(target: str, callers: list[dict], callees: list[dict]) -
     help="Edge type to follow. Currently CALLS, INHERITS, IMPLEMENTS.",
 )
 @click.option(
+    "--edge-kind",
+    type=click.Choice([
+        "contains", "calls", "imports", "exports",
+        "extends", "implements", "references",
+        "type_of", "returns", "instantiates",
+        "overrides", "decorates",
+    ]),
+    default=None,
+    help=(
+        "Optional typed EdgeKind filter (codegraph ontology). ANDs with "
+        "--edge-type when both are supplied. Today the extractor populates "
+        "only 'calls', 'extends', 'implements'; CS-1 will fill the rest."
+    ),
+)
+@click.option(
     "--confidence", "confidence_floor",
     type=float, default=0.7, show_default=True,
     help="Minimum edge confidence (0.0-1.0). Ambiguous-name edges are 0.5.",
@@ -1120,7 +1135,7 @@ def _render_impact_text(target: str, callers: list[dict], callees: list[dict]) -
     "--json", "as_json", is_flag=True,
     help="Emit JSON instead of human-readable tree text.",
 )
-def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, project_id, as_json):
+def impact_of(config, fqn, depth, direction, edge_type, edge_kind, confidence_floor, project_id, as_json):
     """Walk the code_edges table for callers/callees of a fully-qualified name.
 
     The cell YAML supplies the Postgres DSN and the schema; the impact query
@@ -1175,6 +1190,7 @@ def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, projec
                 project_id=pid,
                 confidence_floor=confidence_floor,
                 edge_type=edge_type,
+                edge_kind=edge_kind,
             )
             callers = _enrich_with_chunk_metadata(
                 dsn, schema=schema, table=table, rows=callers
@@ -1189,6 +1205,7 @@ def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, projec
                 project_id=pid,
                 confidence_floor=confidence_floor,
                 edge_type=edge_type,
+                edge_kind=edge_kind,
             )
             callees = _enrich_with_chunk_metadata(
                 dsn, schema=schema, table=table, rows=callees
@@ -1205,6 +1222,7 @@ def impact_of(config, fqn, depth, direction, edge_type, confidence_floor, projec
             "depth": depth,
             "direction": direction,
             "edge_type": edge_type,
+            "edge_kind": edge_kind,
             "confidence_floor": confidence_floor,
         }
         if direction in ("callers", "both"):

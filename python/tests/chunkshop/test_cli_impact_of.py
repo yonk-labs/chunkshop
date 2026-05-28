@@ -415,3 +415,87 @@ def test_impact_query_unchanged_when_edge_kind_none(impact_cell):
         edge_kind=None,
     )
     assert {r["fqn"] for r in rows_explicit_none} == {"a.entry", "x.alt"}
+
+
+def test_impact_of_cli_rejects_invalid_edge_kind() -> None:
+    """--edge-kind validates against EDGE_KINDS at click parse time."""
+    from click.testing import CliRunner
+
+    from chunkshop.cli import cli
+
+    runner = CliRunner()
+    # No --config / --fqn validation needed — click validation runs first.
+    result = runner.invoke(
+        cli,
+        ["impact-of", "--config", "/dev/null", "--fqn", "x", "--edge-kind", "bogus_kind"],
+    )
+    assert result.exit_code != 0
+    # Click's Choice error mentions the option name.
+    assert "edge-kind" in result.output.lower() or "edge_kind" in result.output.lower()
+
+
+def test_impact_of_cli_accepts_each_codegraph_edge_kind() -> None:
+    """Every value in EDGE_KINDS passes click validation (may fail later on --config)."""
+    from click.testing import CliRunner
+
+    from chunkshop.cli import cli
+    from chunkshop.extractors.code_relationships import EDGE_KINDS
+
+    runner = CliRunner()
+    for kind in EDGE_KINDS:
+        result = runner.invoke(
+            cli,
+            ["impact-of", "--config", "/dev/null", "--fqn", "x", "--edge-kind", kind],
+        )
+        # Will fail downstream (--config /dev/null isn't valid YAML), but the
+        # failure must NOT be on --edge-kind validation.
+        # Look for click's "Invalid value" or "is not one of" patterns specifically
+        # tied to --edge-kind.
+        out = result.output.lower()
+        assert not ("invalid value" in out and "edge-kind" in out), (
+            f"--edge-kind {kind} unexpectedly rejected: {result.output}"
+        )
+
+
+def test_impact_of_cli_json_includes_edge_kind(impact_cell) -> None:
+    """JSON output carries edge_kind (None when not supplied)."""
+    import json
+    from click.testing import CliRunner
+
+    from chunkshop.cli import cli
+
+    cell_path, _schema, project_id = impact_cell
+    # Without --edge-kind: JSON should have "edge_kind": null.
+    r = CliRunner().invoke(
+        cli,
+        [
+            "impact-of",
+            "--config", str(cell_path),
+            "--fqn", "b.middle",
+            "--project-id", project_id,
+            "--json",
+        ],
+    )
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.output)
+    assert "edge_kind" in data
+    assert data["edge_kind"] is None
+
+    # With --edge-kind calls: JSON should echo the supplied value.
+    r2 = CliRunner().invoke(
+        cli,
+        [
+            "impact-of",
+            "--config", str(cell_path),
+            "--fqn", "b.middle",
+            "--project-id", project_id,
+            "--edge-kind", "calls",
+            "--json",
+        ],
+    )
+    assert r2.exit_code == 0, r2.output
+    data2 = json.loads(r2.output)
+    assert data2["edge_kind"] == "calls"
+    # And the row set matches what we get with --edge-type CALLS (fixture seeded edge_kind='calls').
+    callers = {c["fqn"] for c in data2.get("callers", [])}
+    assert callers == {"a.entry", "x.alt"}
