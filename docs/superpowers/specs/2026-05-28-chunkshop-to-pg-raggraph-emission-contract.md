@@ -40,6 +40,16 @@ Every fact row metadata dict contains the following keys (in addition to whateve
 
 Plus any keys inherited from the source document's metadata via `_strip_transient(dict(doc.metadata or {}))` at `consolidation.py:37`. Fact-specific keys win on collision because they come later in the `{**meta, "kind": "fact", ...}` spread (`consolidation.py:63`).
 
+**Upstream-stage keys that ALSO land on fact rows** (verified empirically against the Task 9 ingest of `bakeoff-scotus-ab.yaml`, 2014/2014 fact rows carry each):
+
+| Field | Type | Source line | Notes |
+|---|---|---|---|
+| `framer` | `str` | `framers/identity.py:12` (and every framer in `framers/`) | Name of the framer stage that produced the source `Document` — defaults to `"identity"` when no framer is configured. Lands on every chunk via `doc.metadata` (`runner.py:136-138`). |
+| `frame_seq` | `int` | `framers/identity.py:13` | 0-indexed position within the raw doc the framer produced this frame from. `0` for the identity (1-to-1 pass-through) case. |
+| `cooccur` | `list[dict]` | `extractors/cooccurrence.py:50-78` (full schema in §2) | When the cell wires `extractor: cooccurrence`, the runner calls `extractor.extract(c.original_content)` on EVERY chunk including facts (`runner.py:128`). Fact-row cooccur edges are derived from the fact's `support_span`, not from the parent episode — they're rarely useful for graph construction (a single sentence rarely has enough co-occurring keyphrases), but the key is present and consumers shouldn't choke on it. See §2.1. |
+
+Additionally, any keys set by the framer stage upstream of the chunker (e.g. `regex_boundary`, `jsonpath`, `session_episode`, `heading_boundary` framers all add their own metadata) flow through `doc.metadata` and land on every chunk.
+
 ### 1.3 Failure-mode semantics
 
 If a consolidator callable raises, the chunker emits ONE passthrough episode chunk with `kind: 'episode'` and `consolidation_error: <str(exception)>` in its metadata (`consolidation.py:41-47`). **No fact rows are emitted in that case.** Consumers should not treat "zero facts for a doc" as evidence of an unfactual doc — check for the presence of an episode with `consolidation_error`.
@@ -65,26 +75,33 @@ If a consolidator callable raises, the chunker emits ONE passthrough episode chu
 | `chunkshop fact-search` (CLI) | Restricted to fact rows only via `where={"metadata": {"kind": "fact"}}` | `cli.py:1305` |
 | Plain SQL consumers (incl. pg-raggraph) | Must filter on `metadata->>'kind'` explicitly | — |
 
-pg-raggraph's graph leg should ingest fact rows by filtering `metadata->>'kind' = 'fact'` and the cooccur edges by reading `metadata->'cooccur'` from non-fact (prose) chunks.
+pg-raggraph's graph leg should ingest fact rows by filtering `metadata->>'kind' = 'fact'`, and the prose-level cooccur edges by reading `metadata->'cooccur'` from `metadata->>'kind' = 'episode'` rows. Fact rows ALSO carry a `cooccur` key (per §1.2 / §2.1) but those edges are derived from a single sentence and are not the corpus-level graph signal — filter to episodes.
 
 ### 1.7 Example fact row
+
+Real fact-row metadata captured from the Task 9 ingest of `bakeoff-scotus-ab.yaml` (the `cooccur` list is omitted here for readability — see §2.10 for its shape):
 
 ```json
 {
   "kind": "fact",
-  "subject": "John Roberts",
-  "predicate": "wrote opinion in",
-  "object": "Bostock v. Clayton County",
-  "support_span": "Justice Roberts joined the majority opinion in Bostock v. Clayton County...",
-  "confidence": 0.85,
+  "framer": "identity",
+  "frame_seq": 0,
+  "subject": "Devries",
+  "predicate": "be",
+  "object": "widows",
+  "support_span": "Devries and Shirley McAfee are the widows of two US Navy sailors whom they allege developed cancer after they were exposed to asbestos working on Navy ships and in a naval shipyard.",
+  "confidence": 1.0,
   "truncated": false,
   "source_chunk_seq": 0,
   "consolidator": "lede_spacy",
-  "extractor": "lede_spacy"
+  "extractor": "lede_spacy",
+  "doc_type": "case_overview",
+  "author_id": "j-kavanaugh",
+  "project_id": "case-2018_air-and-liquid-systems-corp-v-devries"
 }
 ```
 
-(Real example values will be replaced in Task 9 after running the bakeoff-scotus-ab.yaml ingest end-to-end.)
+The `doc_type` / `author_id` / `project_id` keys come from the source JSON corpus's per-document metadata and flow through `_strip_transient` (`consolidation.py:37`) — they will differ for every corpus. The `framer` / `frame_seq` / `kind` / `consolidator` / `extractor` / SPO / `support_span` / `confidence` / `truncated` / `source_chunk_seq` keys are the chunkshop-emitted invariants documented in §1.2.
 
 ## 2. Tier-1 Cooccur Edges (`metadata['cooccur']`)
 
@@ -95,7 +112,9 @@ pg-raggraph's graph leg should ingest fact rows by filtering `metadata->>'kind' 
 
 ### 2.1 Location
 
-Cooccur edges live in `metadata['cooccur']` on **prose chunks** (rows where `metadata->>'kind' IS DISTINCT FROM 'fact'`). The key is always present when the `cooccurrence` extractor is wired into the cell; empty text and no-pair text both produce `[]` rather than a missing key (`cooccurrence.py:50-52, 71-78`).
+Cooccur edges live in `metadata['cooccur']` on **every chunk row** the runner emits — verified empirically against the Task 9 ingest (2786/2786 rows in `scotus_ab` and 80/80 rows in `ntsb_ab` carry the key, including all fact rows). The runner calls `extractor.extract(c.original_content)` on every chunk regardless of `kind` (`runner.py:128`); fact rows therefore get cooccur edges derived from their `support_span`, not from the parent episode's text. The key is always present when the `cooccurrence` extractor is wired into the cell; empty text and no-pair text both produce `[]` rather than a missing key (`cooccurrence.py:50-52, 71-78`).
+
+**Consumers building a corpus-level graph from cooccur should filter to episode rows** (`WHERE metadata->>'kind' = 'episode'`). The fact-row cooccur edges are derived from a single sentence's keyphrases and are not the corpus-level signal the extractor is designed to produce — they exist as a uniformity artifact of the extractor pipeline, not as a designed graph signal.
 
 ### 2.2 Edge shape
 
@@ -170,15 +189,17 @@ LIMIT 5;
 
 ### 2.10 Example
 
+Real cooccur list captured from the Task 9 ingest of `bakeoff-scotus-ab.yaml` (first 3 edges from an episode chunk where the leading edge has `weight=2` — illustrates the `(-weight, a, b)` ordering as well as the `a < b` per-edge invariant):
+
 ```json
 "cooccur": [
-  {"a": "antitrust standing", "b": "consumer", "weight": 3},
-  {"a": "apple", "b": "consumer", "weight": 2},
-  {"a": "antitrust standing", "b": "apple", "weight": 1}
+  {"a": "excessive force", "b": "ninth circuit", "weight": 2},
+  {"a": "clearly established", "b": "considered whether clearly established law prohibited", "weight": 1},
+  {"a": "clearly established", "b": "excessive force", "weight": 1}
 ]
 ```
 
-(Real example values from a scotus ingest will be substituted in Task 9.)
+Note the leading edge has `weight=2` (single edge in the chunk with that weight); the next edges all have `weight=1` and are alphabetized by `(a, b)`.
 
 ## 3. Verdict Criteria — "Did Graph Beat Naive?"
 
