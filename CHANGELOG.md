@@ -6,12 +6,17 @@
 
 - **`code_relationships` extractor: typed `edge_kind` column on `code_edges` (CS-2).** The PG `code_edges` table now carries a typed, codegraph-aligned `edge_kind` column (12-value `CHECK` constraint: `contains`, `calls`, `imports`, `exports`, `extends`, `implements`, `references`, `type_of`, `returns`, `instantiates`, `overrides`, `decorates`) alongside the existing uppercase `edge_type` column. Today's three emission paths (`CALLS`, `INHERITS`, `IMPLEMENTS`) map to `calls`, `extends`, `implements`; the other nine values are valid against the constraint but unfilled until CS-1 ports the 20-language extractor stack. `chunkshop.extractors.code_relationships` exposes `EdgeKind` (Literal), `EDGE_KINDS` (tuple), and `edge_type_to_kind()` as the source-of-truth for the ontology.
 - **`chunkshop impact-of --edge-kind <kind>` filter.** New CLI option validated against the 12-value EdgeKind set; ANDs into the recursive-CTE WHERE alongside the existing `--edge-type`. `--edge-kind` is `None` by default — pre-CS-2 invocations are byte-identical.
+- **`code_relationships` extractor: `provenance` + `provenance_metadata` columns on `code_edges` (CS-5).** The PG `code_edges` table now carries provenance tagging — a typed `provenance text NOT NULL DEFAULT 'ast'` column (3-value `CHECK`: `'ast' | 'scip' | 'heuristic'`) plus a `provenance_metadata jsonb NOT NULL DEFAULT '{}'` column for per-edge per-channel context (e.g., `{synthesizedBy: 'react-render', componentName: 'App'}` once CS-3 synthesizers land). Every edge from today's AST extractor is hardcoded to `provenance='ast'` with empty metadata. Foundation for CS-3 — without provenance, an AST-truth edge and a heuristic-guess edge are indistinguishable, and per codegraph's CLAUDE.md "partial coverage is WORSE than none" if you can't tell which is which. `chunkshop.extractors.code_relationships` exposes `Provenance` (Literal) and `PROVENANCES` (tuple).
 
 ### Notes
 
 - `edge_type` is unchanged: same column name, same uppercase values, same primary-key membership, same write semantics. Existing readers (`chunkshop impact-of --edge-type`, `pg-raggraph` consumers, `pg-raggraph/tests/integration/test_chunkshop_bridge.py`) continue working untouched.
 - Cross-backend extension (MariaDB / SQLite / ClickHouse) is a separate follow-up brief blocked by a backend-agnostic `code_edges` DDL refactor — see `skill-output/mission-brief/Mission-Brief-cs2-cross-backend.md`.
 - Rust parity is a separate follow-up brief — see `skill-output/mission-brief/Mission-Brief-cs2-rust-parity.md`.
+- CS-5 is strictly additive on top of CS-2 — `edge_type`, `edge_kind`, and the `code_edges` PRIMARY KEY are byte-identical to the post-CS-2 state.
+- Cross-backend extension (MariaDB / SQLite / ClickHouse) is a separate follow-up brief — see `skill-output/mission-brief/Mission-Brief-cs5-cross-backend.md`. Should be bundled with `Mission-Brief-cs2-cross-backend.md` since they share the backend-agnostic DDL-seam refactor.
+- Rust parity is a separate follow-up brief — see `skill-output/mission-brief/Mission-Brief-cs5-rust-parity.md`. Blocked on `Mission-Brief-cs2-rust-parity.md` (which creates the `rust/chunkshop/src/extractors/` directory CS-5's Rust port lives in).
+- No CLI surface in this PR — `chunkshop impact-of --provenance <kind>` filter is YAGNI until CS-3 produces non-AST edges to filter against.
 
 ## 0.7.0 — 2026-05-27
 
