@@ -198,3 +198,57 @@ jobs:
         # `--no-verify` skips re-running the build (build-cargo already
         # verified) — saves a few minutes on the publish path.
         run: cargo publish -p chunkshop-rs --no-verify
+
+  release-github:
+    name: Create GitHub release
+    # Depends on `verify` only — the GitHub release is independent of the
+    # PyPI / crates.io publish status, matching the rest of this workflow's
+    # "publish targets are independent" convention. If a publish fails the
+    # maintainer can retry it manually; the release page still goes up.
+    needs: verify
+    runs-on: ubuntu-latest
+
+    permissions:
+      # `gh release create` needs write access to releases (contents:write).
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract CHANGELOG section for this version
+        id: notes
+        # The matching section in CHANGELOG.md starts with
+        # `## <version> — <date>` (em-dash, not hyphen) and runs until the
+        # next `## ` heading. Fail loudly if no section is found — that's a
+        # release-prep mistake the maintainer needs to fix before the tag
+        # is meaningful.
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.verify.outputs.version }}"
+          awk -v ver="$VERSION" '
+            /^## / {
+              if (in_section) { exit }
+              if (index($0, "## " ver " ") == 1) { in_section = 1; next }
+            }
+            in_section { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if [[ ! -s /tmp/release-notes.md ]]; then
+            echo "ERROR: no CHANGELOG.md section found for version $VERSION" >&2
+            echo "Expected a heading like: ## $VERSION — YYYY-MM-DD" >&2
+            exit 1
+          fi
+          echo "Found $(wc -l < /tmp/release-notes.md) lines of release notes for v$VERSION"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # `--verify-tag` ensures the tag actually exists at this commit
+        # (it should — the workflow was tag-triggered — but belt-and-braces).
+        # `--latest` lets GitHub auto-decide based on semver against
+        # existing releases.
+        run: |
+          gh release create "v${{ needs.verify.outputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --title "chunkshop ${{ needs.verify.outputs.version }}" \
+            --notes-file /tmp/release-notes.md \
+            --verify-tag
