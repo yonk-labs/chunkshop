@@ -579,6 +579,13 @@ def write_edges_schema(dsn: str, *, schema: str) -> None:
                 "                        'extends','implements','references',"
                 "                        'type_of','returns','instantiates',"
                 "                        'overrides','decorates')),"
+                # CS-5: provenance tagging. Every existing emission path is
+                # AST-derived, so DEFAULT 'ast' correctly backfills pre-CS-5
+                # rows. CS-3 synthesizers will explicitly set 'heuristic' with
+                # a {synthesizedBy: <channel>} provenance_metadata payload.
+                " provenance text NOT NULL DEFAULT 'ast'"
+                "   CHECK (provenance IN ('ast', 'scip', 'heuristic')),"
+                " provenance_metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb,"
                 " PRIMARY KEY (project_id, edge_type, src_node_id, dst_node_id))"
             ).format(fq=fq)
         )
@@ -605,6 +612,12 @@ def write_edges_schema(dsn: str, *, schema: str) -> None:
                 "CREATE INDEX IF NOT EXISTS {ix} ON {fq} "
                 "(project_id, edge_kind)"
             ).format(ix=sql.Identifier("code_edges_kind_idx"), fq=fq)
+        )
+        cur.execute(
+            sql.SQL(
+                "CREATE INDEX IF NOT EXISTS {ix} ON {fq} "
+                "(project_id, provenance)"
+            ).format(ix=sql.Identifier("code_edges_provenance_idx"), fq=fq)
         )
         conn.commit()
 
