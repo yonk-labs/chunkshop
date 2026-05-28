@@ -357,6 +357,12 @@ class CodeRelationshipsExtractor:
                     "dst_node_id": dst_id,
                     "confidence": confidence,
                     "evidence": evidence,
+                    # CS-5: every edge from this extractor is AST-derived.
+                    # CS-3 synthesizers will emit through their own code
+                    # path (not through finalize._emit) with 'heuristic'
+                    # + a {synthesizedBy: <channel>} payload.
+                    "provenance": "ast",
+                    "provenance_metadata": {},
                 }
             )
 
