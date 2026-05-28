@@ -87,7 +87,98 @@ pg-raggraph's graph leg should ingest fact rows by filtering `metadata->>'kind' 
 (Real example values will be replaced in Task 9 after running the bakeoff-scotus-ab.yaml ingest end-to-end.)
 
 ## 2. Tier-1 Cooccur Edges (`metadata['cooccur']`)
-*(filled in Task 4)*
+
+**Source files (on `main` HEAD commit `ef2aceb`):**
+- Emission: `python/src/chunkshop/extractors/cooccurrence.py` (full file, esp. lines 50-78)
+- Config: `python/src/chunkshop/config.py:791-800` (`CooccurrenceExtractor`)
+- Persistence: `python/src/chunkshop/sinks/pg.py:444`
+
+### 2.1 Location
+
+Cooccur edges live in `metadata['cooccur']` on **prose chunks** (rows where `metadata->>'kind' IS DISTINCT FROM 'fact'`). The key is always present when the `cooccurrence` extractor is wired into the cell; empty text and no-pair text both produce `[]` rather than a missing key (`cooccurrence.py:50-52, 71-78`).
+
+### 2.2 Edge shape
+
+```json
+{"a": "string", "b": "string", "weight": <int>}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `a` | `str` | First node of the pair. **`a < b` lexicographic** (case-sensitive on stored bytes). |
+| `b` | `str` | Second node of the pair. |
+| `weight` | `int` | Co-occurrence count: number of salient sentences in the chunk that contain BOTH `a` and `b` (`cooccurrence.py:63-69`). |
+
+### 2.3 Ordering invariants
+
+- **Per-edge:** `a < b` lexicographic. Enforced at `cooccurrence.py:66-69` via a sorted set + `i < j` iteration. Consumers can rely on this — they do NOT need to call `sorted([a, b])` when keying edges.
+- **List-level:** edges are sorted by `(-weight, a, b)` at `cooccurrence.py:77` — strongest pairs first, ties broken alphabetically. Consumers reading the top-N most-coherent pairs can read from the front of the list.
+
+### 2.4 Empty / null semantics
+
+- Empty input text → `metadata['cooccur'] = []` (`cooccurrence.py:51-52`).
+- Non-empty text with no pairs meeting `min_pair_count` → `metadata['cooccur'] = []` (`cooccurrence.py:71-75`).
+- **The key is always present** when the extractor runs. Treat "key missing" only as "the cell wasn't configured with the cooccurrence extractor."
+
+### 2.5 Phrase normalization
+
+| Surface | Normalization |
+|---|---|
+| Internal matching | Lowercase + word-boundary-escaped regex (`cooccurrence.py:60-62, 65`). |
+| **Stored `a`, `b`, `tags` strings** | **Raw rake-nltk output** — chunkshop does NOT explicitly lowercase or strip them (`cooccurrence.py:39-43, 54, 78`). In practice they ARE lowercase because `rake_nltk.Rake.get_ranked_phrases()` lowercases internally, but this is a rake-nltk property, not a chunkshop guarantee. If the RAKE provider is swapped out in the future, casing may change. |
+
+Consumers that need a case-insensitive entity match should `.lower()` defensively.
+
+### 2.6 Word-boundary correctness (PR #34 fix)
+
+Commit `b2288f7` ("fix(cooccurrence): word-boundary phrase matching to cut substring false-positive edges") wraps the phrase pattern with `\b` anchors at `cooccurrence.py:60-62`. This eliminates substring false-positives like `("data", "database")` or `("test", "testing")` — the comment at `cooccurrence.py:57-59` calls this out explicitly. Consumers can rely on stored edges being whole-phrase matches.
+
+### 2.7 `tags` vs `metadata['cooccur']` relation
+
+| | What it holds | Where |
+|---|---|---|
+| `tags` | The node set (all keyphrases for the chunk) | `ExtractResult.tags` (`cooccurrence.py:54, 78`) |
+| `metadata['cooccur']` | The edge set (filtered by `min_pair_count`) | `ExtractResult.metadata['cooccur']` |
+
+Both are derived from the same RAKE keyphrase list (`cooccurrence.py:54`). pg-raggraph's graph leg should treat `tags` as the candidate node set and `metadata['cooccur']` as the candidate edges.
+
+### 2.8 Default knobs
+
+Defaults from `config.py:791-800` (`CooccurrenceExtractor`):
+
+| Knob | Default | Effect |
+|---|---|---|
+| `top_k` | `15` | Max keyphrases per chunk. At default, max edges per chunk ≈ `C(15, 2) = 105`. Dense corpora can land a lot of jsonb. |
+| `min_chars` | `3` | Drops phrases shorter than 3 chars before the matchers are built (`cooccurrence.py:43`). |
+| `max_summary_chars` | `1000` | Lede summary budget that defines the "salient sentence" window (`cooccurrence.py:47`). |
+| `min_pair_count` | `1` | Keep every co-occurring pair. Increase to filter weak edges (`cooccurrence.py:74`). |
+
+### 2.9 Persistence
+
+The full `metadata` dict — including nested `cooccur` list — is serialized via `self.backend.json_literal(c.metadata)` and cast `::jsonb` at write time (`pg.py:444`). The list-of-dicts shape survives intact. Query with standard jsonb operators:
+
+```sql
+-- Top-5 strongest edges across the whole corpus
+SELECT metadata->'cooccur'->edge_idx
+FROM chunkshop_ab_gate.scotus_ab,
+     LATERAL jsonb_array_length(metadata->'cooccur') AS n,
+     LATERAL generate_series(0, LEAST(n-1, 4)) AS edge_idx
+WHERE jsonb_array_length(metadata->'cooccur') > 0
+ORDER BY (metadata->'cooccur'->edge_idx->>'weight')::int DESC
+LIMIT 5;
+```
+
+### 2.10 Example
+
+```json
+"cooccur": [
+  {"a": "antitrust standing", "b": "consumer", "weight": 3},
+  {"a": "apple", "b": "consumer", "weight": 2},
+  {"a": "antitrust standing", "b": "apple", "weight": 1}
+]
+```
+
+(Real example values from a scotus ingest will be substituted in Task 9.)
 
 ## 3. Verdict Criteria — "Did Graph Beat Naive?"
 *(filled in Task 6)*
