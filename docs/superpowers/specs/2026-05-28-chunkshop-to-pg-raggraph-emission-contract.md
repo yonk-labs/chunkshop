@@ -338,40 +338,45 @@ grep -A1 "^### 4\." docs/superpowers/specs/2026-05-28-chunkshop-to-pg-raggraph-e
 
 When all four artifacts land `[x]`, the A/B experiment is ready to run. The verdict it produces is what determines whether more edge tiers (Tier-2 LLM-validate, future RM-C Rust port consumers) are worth building.
 
-### 4.6 Verdict (3 modes × 3 corpora, 2026-05-28/29)
+### 4.6 Verdict (corrected 2026-05-29 — graph WINS on a real graph)
 
-All three §4.2 modes tested across **three corpora** — SCOTUS + NTSB (clean
-prose) and **MHR / MultiHop-RAG** (the graph-favorable multi-hop corpus added
-2026-05-29 after the SCOTUS/NTSB-only run was correctly challenged as testing
-graph on data it wasn't meant for). gpt-4o-mini judge.
+> **⚠️ CORRECTION.** A prior version of this section claimed **"vector is never
+> beaten,"** citing an MHR run. **That MHR result is retracted — it measured an
+> empty graph.** The MHR namespace had 2,288 entities but **0 `relationships`**
+> (pg-raggraph's A/B materializer inserted nodes, never edges), so the "graph"
+> modes walked nothing. And the deep-traversal experiment that the old caveat
+> called "untested" has now been **run** — graph beats vector. Both fixes below.
 
-**Cross-corpus result — vector is never beaten:**
+**The real test, on a real graph.** SCOTUS + NTSB are clean single-domain prose
+where single-doc lookup suffices (graph not expected to help — those rows stand).
+The fair multi-hop test needs a *real entity-resolved graph*, which chunkshop's
+`lede_spacy` facts are **not** (they're grammatical subject-verb-object fragments
+— pronouns, truncated objects, ~1:1 distinct surfaces — not a traversable KG).
+So the corrected run uses **`bench_musique`**: an LLM-extracted KG (9,809 typed
+edges — `PART_OF`/`LOCATED_IN`/`PARTICIPATED_IN`…, avg degree 2.25), 100
+compositional 2/3/4-hop MuSiQue questions, run through pg-raggraph's **actual
+recursive-traversal mode** (`local`, `WITH RECURSIVE … max_hops=2`). Answer-gen
+Qwen; **dual judge** gemma + gpt-5-mini (82% agreement).
 
-| Corpus | naive vs graph_leg | naive vs hybrid |
+**Cross-corpus result — corrected:**
+
+| Corpus | shape | graph vs vector |
 |---|---|---|
-| SCOTUS (clean) | NAIVE 3–0 (−75pp) | near-parity (judge TIE) |
-| NTSB (clean) | NAIVE 3–0 (−92pp) | near-parity (judge −0.08) |
-| **MHR (multi-hop)** | NAIVE (judge 0.74 vs 0.40) | **judge EXACT TIE 0.74 = 0.74** |
+| SCOTUS / NTSB | clean prose | NAIVE wins/ties — graph not expected to help. Valid. |
+| ~~MHR (ab-gate)~~ | ~~multi-hop~~ | **RETRACTED — 0 edges, measured nothing.** |
+| **MuSiQue** (real KG) | **multi-hop, LLM-extracted graph** | **GRAPH (`local`) WINS** — judge 45.3/44.0 vs naive 40.3/39.0 (gemma/gpt-5-mini), **+4-5pp**, stable across 2 runs. |
 
-Even on multi-hop QA — the workload graph is *for* — the production-shaped
-`hybrid` ties vector on answer correctness (it reranked 46/50 top-10s but
-changed no answer outcomes); `graph_leg` loses everywhere.
+**On a real graph with real recursive traversal, graph beats vector on multi-hop
+QA — by ~4-5pp end-to-end.** This *corroborates* the multi-hop thesis. Honest
+caveats: **retrieval recall is flat** (~58-59% all modes — the lift is better
+answer-*context*, not recall); per-hop n=33 splits are noise; only `local` is
+judge-robust; modest magnitude. Full report: pg-raggraph
+`benchmarks/ab-gate/RESULTS.md` + `benchmarks/musique/`.
 
-**⚠️ Load-bearing caveat — deep traversal was NOT tested.** pg-raggraph's
-harness graph ops are *shallow*: `graph_leg` = 1-hop (question entity → fact /
-cooccur → parent chunk); `hybrid` = rerank vector candidates by entity overlap.
-Neither chases a fact edge A→B→C across documents — the deep multi-hop
-traversal that is graph's strongest theoretical case. So these results show
-"**shallow graph augmentation over chunkshop's facts/cooccur doesn't beat
-vector, even on multi-hop data**" — NOT "graph can't help multi-hop." That
-deeper question is open.
-
-The earlier 2-mode (SCOTUS+NTSB) run is superseded by this. Detail below is the
-SCOTUS+NTSB breakdown; the MHR result + the deep-traversal caveat are the new,
-decisive context. Full report: pg-raggraph `benchmarks/ab-gate/RESULTS.md`.
-
-**Verdict: NAIVE WINS — graph wins no metric in either comparison.** But the
-two graph modes tell different stories:
+**SCOTUS + NTSB detail (clean prose — the shallow ab-gate harness over
+chunkshop's emission).** These two corpora are valid and stand: on clean
+single-domain prose, the shallow graph ops don't beat vector. The two graph
+modes tell different stories:
 
 | Comparison | Recall@10 Δ | MRR Δ | Judge Δ | §3.3 |
 |---|---:|---:|---:|---|
@@ -384,33 +389,34 @@ candidates, graph reranks them; no question NER) is **near parity**: it **ties
 on answer quality** (judge 0.875 vs 0.917 combined; SCOTUS exactly 0.833=0.833)
 and loses retrieval only slightly. Latency: naive 51 ms p50, graph_leg/hybrid ~105 ms.
 
-**What this means for §3.8 — direction holds, but read it precisely:**
+**What this means for §3.8 — split by what graph you build:**
 
-- §3.8's NAIVE WINS direction **is** supported: naive wins or ties every metric
-  in both comparisons; graph wins nothing, even in its best (hybrid) mode.
-- BUT this is **not** evidence that facts/cooccur are *harmful*. Hybrid ties on
-  answer quality — the graph layer is neutral-to-slightly-negative on retrieval,
-  not destructive. The honest finding is "**graph doesn't earn its cost on
-  these clean technical corpora,**" not "graph hurts."
-- Caveats that bound this: the `hybrid` reranker is a **v1 entity-overlap
-  centrality heuristic** (untuned); n=24 questions; both corpora are clean
-  single-domain prose. A relevance-tuned graph reranker, or a corpus with real
-  cross-document entity reasoning, could move the hybrid result. This run does
-  not rule that out.
+- On **clean prose** (SCOTUS/NTSB), shallow graph ops over chunkshop's emission
+  don't beat vector — graph doesn't earn its cost there. Not "harmful" (`hybrid`
+  ties on answer quality), just not worth it on that workload.
+- On a **real multi-hop KG** (MuSiQue), deep recursive traversal (`local`)
+  **does** beat vector (+4-5pp). The decisive experiment the old version called
+  "untested" has been run, and it came back **positive** for graph.
+- The discriminating variable is **graph quality**: an entity-resolved,
+  typed-edge KG (LLM extraction) is traversable and wins; `lede_spacy` SVO
+  fragments are not and don't.
 
-**Recommendation (updated after the MHR run):** the freeze/deprioritize call in
-§3.8 is defensible — across clean AND multi-hop corpora, the shallow graph ops
-never beat vector. BUT do **not** treat facts/cooccur as proven-dead, for one
-concrete reason: **deep multi-hop traversal was never implemented or tested**
-(harness ops are 1-hop lookup + entity-overlap rerank; no recursive A→B→C edge
-walk). That is graph's strongest theoretical case and the thing chunkshop's
-fact emission most directly enables. Before retiring facts/cooccur, the
-decisive experiment is a **recursive multi-hop traversal mode** on MHR — if
-even that ties vector, the case to freeze is settled. Until then: pause new
-edge-tier investment (defensible), but keep the emission + RM-C primitives
-(they're the substrate the untested deep-traversal mode would need). Full
-report + per-mode + per-corpus artifacts: pg-raggraph
-`benchmarks/ab-gate/RESULTS.md` (PR yonk-labs/pg-raggraph#54).
+**Recommendation (corrected — decisive experiment is done):**
+
+- **Deprioritize edge-tier investment *over the `lede_spacy` emission specifically*.**
+  Those facts are not a traversable graph; building a graph leg on them won't
+  pay off. This is a narrow call about *that emission*, not about GraphRAG.
+- **Do NOT retire facts/cooccur or RM-C as a class.** The corrected result shows
+  the *real* value is a resolved, typed-edge KG — exactly what stronger
+  extraction (LLM, or an improved consolidator) + RM-C consumers produce. They
+  are the substrate that made `local` beat vector. Retiring them removes the win.
+- **The highest-leverage next step is a *better graph*, not more retrieval
+  modes** — entity resolution + typed relations in the emission, so the
+  recursive traversal that already wins on MuSiQue has a real graph to walk on
+  chunkshop-fed corpora too.
+
+Full report + per-mode + per-corpus artifacts: pg-raggraph
+`benchmarks/ab-gate/RESULTS.md` + `benchmarks/musique/` (PR yonk-labs/pg-raggraph#54).
 
 ## 5. Change-Management
 Shape changes require:
