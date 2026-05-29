@@ -129,32 +129,43 @@ def _walk_symbols(root: Any, file_path: str, source: bytes) -> list[Symbol]:
 
 
 def _enclosing_function(node: Any, source: bytes) -> Optional[tuple[str, Optional[str]]]:
-    """Walk up parents until a function_definition is found.
+    """Return the OUTERMOST enclosing function/method as (name, parent_class).
 
-    Returns (function_name, parent_class_or_None) so the caller can mint
-    the right FQN.
+    Mirrors :func:`_walk_symbols`' "one level deep" emission rule: nested
+    functions are never emitted as Symbols, so a call inside one must be
+    attributed to the outermost enclosing function (the symbol that WAS
+    emitted), not the innermost. Returns None for a module-level call (no
+    enclosing function — there is no symbol to attribute to).
     """
     cur = node.parent
-    parent_class: Optional[str] = None
-    func_name: Optional[str] = None
+    outermost: Optional[Any] = None
     while cur is not None:
-        if cur.type == "function_definition" and func_name is None:
-            name_node = cur.child_by_field_name("name")
-            if name_node is not None:
-                func_name = source[name_node.start_byte : name_node.end_byte].decode(
-                    errors="replace"
-                )
-        elif cur.type == "class_definition" and func_name is not None:
-            name_node = cur.child_by_field_name("name")
-            if name_node is not None:
-                parent_class = source[
-                    name_node.start_byte : name_node.end_byte
-                ].decode(errors="replace")
-            return (func_name, parent_class) if func_name else None
+        if cur.type == "function_definition":
+            outermost = cur  # keep climbing; the last one wins (highest)
         cur = cur.parent
-    if func_name:
-        return (func_name, None)
-    return None
+    if outermost is None:
+        return None
+    name_node = outermost.child_by_field_name("name")
+    if name_node is None:
+        return None
+    func_name = source[name_node.start_byte : name_node.end_byte].decode(
+        errors="replace"
+    )
+    # parent_class = nearest class_definition ancestor of the outermost
+    # function. Because the outermost function has no function ancestor, any
+    # enclosing class makes it a method (matching _walk_symbols).
+    parent_class: Optional[str] = None
+    anc = outermost.parent
+    while anc is not None:
+        if anc.type == "class_definition":
+            cname = anc.child_by_field_name("name")
+            if cname is not None:
+                parent_class = source[
+                    cname.start_byte : cname.end_byte
+                ].decode(errors="replace")
+            break
+        anc = anc.parent
+    return (func_name, parent_class)
 
 
 def _extract_call_sites(
