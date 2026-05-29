@@ -44,7 +44,15 @@ impl SymbolAwareChunker {
             return self.fallback(doc, "python_syntax_error");
         }
 
-        let symbols = extract_symbols_for_language(&language, &doc.id, content);
+        // FQN / node_id are derived from the document's *logical* path so the
+        // same file always mints the same node_id across runs. Prefer
+        // metadata.path / source_path over doc.id (which `id_from: stem`
+        // collapses to the file stem and would lose the directory prefix
+        // Python's build_fqn relies on). Mirrors Python's
+        // `_doc_file_path` at symbol_aware.py:395-408.
+        let file_path = doc_file_path(doc);
+
+        let symbols = extract_symbols_for_language(&language, &file_path, content);
 
         if symbols.is_empty() {
             return self.fallback(doc, "no_symbols");
@@ -56,12 +64,21 @@ impl SymbolAwareChunker {
             .clone()
             .unwrap_or_else(|| "default".to_string());
 
-        let mut chunks: Vec<Chunk> = Vec::with_capacity(symbols.len());
+        // Python emits top-level symbols only — methods (parent_name=Some(_))
+        // bundle into their parent class chunk via the class's full line span.
+        // Mirrors python/src/chunkshop/chunkers/symbol_aware.py:240
+        // (`top_level = [s for s in result.symbols if s.parent_name is None]`).
+        let top_level: Vec<&Symbol> = symbols.iter().filter(|s| s.parent_name.is_none()).collect();
+        if top_level.is_empty() {
+            return self.fallback(doc, "no_symbols");
+        }
+
+        let mut chunks: Vec<Chunk> = Vec::with_capacity(top_level.len());
         let lines: Vec<&str> = content.lines().collect();
 
-        for (seq_idx, sym) in symbols.iter().enumerate() {
+        for (seq_idx, sym) in top_level.iter().enumerate() {
             let source_slice = slice_lines(&lines, sym.line_start, sym.line_end);
-            let node_id = code_symbol_node_id(&project_id, &language, &doc.id, &sym.fqn);
+            let node_id = code_symbol_node_id(&project_id, &language, &file_path, &sym.fqn);
 
             let metadata = json!({
                 "strategy": "symbol_aware",
@@ -130,6 +147,20 @@ fn detect_language(doc: &Document) -> Option<String> {
     lang_from_extension(&doc.id)
 }
 
+/// Resolve the logical file path used for FQN / node_id derivation.
+/// Order: `metadata.path` > `metadata.source_path` > `doc.id`.
+/// Mirrors Python's `_doc_file_path` at symbol_aware.py:395-408.
+fn doc_file_path(doc: &Document) -> String {
+    for key in ["path", "source_path"] {
+        if let Some(val) = doc.metadata.get(key).and_then(|v| v.as_str()) {
+            if !val.is_empty() {
+                return val.to_string();
+            }
+        }
+    }
+    doc.id.clone()
+}
+
 fn lang_from_extension(path: &str) -> Option<String> {
     let ext = std::path::Path::new(path).extension()?.to_str()?;
     match ext {
@@ -186,17 +217,25 @@ mod tests {
         let chunker = SymbolAwareChunker::new(SymbolAwareChunkerConfig::default());
         let chunks = chunker.chunk(&doc);
 
-        // 3 symbols: hello (function), Foo (class), bar (method)
+        // Top-level only: hello (function) + Foo (class). The `bar` method
+        // bundles into the Foo chunk via Foo's line span, matching Python
+        // symbol_aware.py:240 top_level filter.
         assert_eq!(
             chunks.len(),
-            3,
-            "expected 3 symbols, got {}: {:?}",
+            2,
+            "expected 2 top-level symbols, got {}: {:?}",
             chunks.len(),
             chunks
                 .iter()
                 .map(|c| c.metadata.get("symbol_name").cloned())
                 .collect::<Vec<_>>()
         );
+        let names: Vec<&str> = chunks
+            .iter()
+            .filter_map(|c| c.metadata.get("symbol_name").and_then(|v| v.as_str()))
+            .collect();
+        assert!(names.contains(&"hello"), "missing hello: {:?}", names);
+        assert!(names.contains(&"Foo"), "missing Foo: {:?}", names);
         for c in &chunks {
             assert_eq!(
                 c.metadata.get("strategy").and_then(|s| s.as_str()),
