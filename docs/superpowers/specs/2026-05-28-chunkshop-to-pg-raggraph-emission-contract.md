@@ -338,11 +338,37 @@ grep -A1 "^### 4\." docs/superpowers/specs/2026-05-28-chunkshop-to-pg-raggraph-e
 
 When all four artifacts land `[x]`, the A/B experiment is ready to run. The verdict it produces is what determines whether more edge tiers (Tier-2 LLM-validate, future RM-C Rust port consumers) are worth building.
 
-### 4.6 Verdict (complete 3-mode run, 2026-05-28)
+### 4.6 Verdict (3 modes × 3 corpora, 2026-05-28/29)
 
-All three §4.2 modes were tested (the earlier 2-mode run is superseded —
-`hybrid` is now implemented in pg-raggraph's harness). gpt-4o-mini judge, both
-bakeoff corpora.
+All three §4.2 modes tested across **three corpora** — SCOTUS + NTSB (clean
+prose) and **MHR / MultiHop-RAG** (the graph-favorable multi-hop corpus added
+2026-05-29 after the SCOTUS/NTSB-only run was correctly challenged as testing
+graph on data it wasn't meant for). gpt-4o-mini judge.
+
+**Cross-corpus result — vector is never beaten:**
+
+| Corpus | naive vs graph_leg | naive vs hybrid |
+|---|---|---|
+| SCOTUS (clean) | NAIVE 3–0 (−75pp) | near-parity (judge TIE) |
+| NTSB (clean) | NAIVE 3–0 (−92pp) | near-parity (judge −0.08) |
+| **MHR (multi-hop)** | NAIVE (judge 0.74 vs 0.40) | **judge EXACT TIE 0.74 = 0.74** |
+
+Even on multi-hop QA — the workload graph is *for* — the production-shaped
+`hybrid` ties vector on answer correctness (it reranked 46/50 top-10s but
+changed no answer outcomes); `graph_leg` loses everywhere.
+
+**⚠️ Load-bearing caveat — deep traversal was NOT tested.** pg-raggraph's
+harness graph ops are *shallow*: `graph_leg` = 1-hop (question entity → fact /
+cooccur → parent chunk); `hybrid` = rerank vector candidates by entity overlap.
+Neither chases a fact edge A→B→C across documents — the deep multi-hop
+traversal that is graph's strongest theoretical case. So these results show
+"**shallow graph augmentation over chunkshop's facts/cooccur doesn't beat
+vector, even on multi-hop data**" — NOT "graph can't help multi-hop." That
+deeper question is open.
+
+The earlier 2-mode (SCOTUS+NTSB) run is superseded by this. Detail below is the
+SCOTUS+NTSB breakdown; the MHR result + the deep-traversal caveat are the new,
+decisive context. Full report: pg-raggraph `benchmarks/ab-gate/RESULTS.md`.
 
 **Verdict: NAIVE WINS — graph wins no metric in either comparison.** But the
 two graph modes tell different stories:
@@ -372,12 +398,19 @@ and loses retrieval only slightly. Latency: naive 51 ms p50, graph_leg/hybrid ~1
   cross-document entity reasoning, could move the hybrid result. This run does
   not rule that out.
 
-**Recommendation:** the freeze/deprioritize call in §3.8 is defensible on this
-evidence, but frame it as "graph-as-retrieval isn't paying off here," and keep
-the door open for (a) a relevance-tuned hybrid reranker and (b) a messier
-multi-hop corpus before treating facts/cooccur as dead weight. Full report +
-per-mode artifacts + repro: pg-raggraph `benchmarks/ab-gate/RESULTS.md`
-(PR yonk-labs/pg-raggraph#54).
+**Recommendation (updated after the MHR run):** the freeze/deprioritize call in
+§3.8 is defensible — across clean AND multi-hop corpora, the shallow graph ops
+never beat vector. BUT do **not** treat facts/cooccur as proven-dead, for one
+concrete reason: **deep multi-hop traversal was never implemented or tested**
+(harness ops are 1-hop lookup + entity-overlap rerank; no recursive A→B→C edge
+walk). That is graph's strongest theoretical case and the thing chunkshop's
+fact emission most directly enables. Before retiring facts/cooccur, the
+decisive experiment is a **recursive multi-hop traversal mode** on MHR — if
+even that ties vector, the case to freeze is settled. Until then: pause new
+edge-tier investment (defensible), but keep the emission + RM-C primitives
+(they're the substrate the untested deep-traversal mode would need). Full
+report + per-mode + per-corpus artifacts: pg-raggraph
+`benchmarks/ab-gate/RESULTS.md` (PR yonk-labs/pg-raggraph#54).
 
 ## 5. Change-Management
 Shape changes require:
