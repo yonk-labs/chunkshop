@@ -33,6 +33,17 @@ impl SymbolAwareChunker {
         };
 
         let content = doc.content.as_str();
+
+        // Python-specific: tree-sitter is error-tolerant, so check
+        // has_error() explicitly. Matches python/src/chunkshop/chunkers/
+        // symbol_aware.py:120-132 which uses ast.parse to detect SyntaxError.
+        #[cfg(feature = "code-aware-python")]
+        if language == "python"
+            && crate::codeparse::langs::python::has_syntax_errors(content)
+        {
+            return self.fallback(doc, "python_syntax_error");
+        }
+
         let symbols = extract_symbols_for_language(&language, &doc.id, content);
 
         if symbols.is_empty() {
@@ -76,11 +87,27 @@ impl SymbolAwareChunker {
         chunks
     }
 
-    /// Placeholder fallback — returns empty Vec for now. Task 14 wires the
-    /// real fallback to `SentenceAwareChunker` with
-    /// `strategy = "symbol_aware_fallback"`.
-    fn fallback(&self, _doc: &Document, _reason: &str) -> Vec<Chunk> {
-        Vec::new()
+    fn fallback(&self, doc: &Document, reason: &str) -> Vec<Chunk> {
+        use crate::chunker::SentenceAwareChunker;
+        use crate::config::SentenceAwareChunkerConfig;
+
+        let inner = SentenceAwareChunker::new(SentenceAwareChunkerConfig {
+            doc_type: "prose".to_string(),
+            max_chars: 2000,
+            min_chars: 200,
+            if_oversize: None,
+        });
+        let mut chunks = inner.chunk(doc);
+        for c in &mut chunks {
+            // Stamp strategy override + reason for downstream observability.
+            // Mirror of Python's strategy='symbol_aware_fallback' semantics
+            // at python/src/chunkshop/chunkers/symbol_aware.py:120-132.
+            if let Some(obj) = c.metadata.as_object_mut() {
+                obj.insert("strategy".to_string(), json!("symbol_aware_fallback"));
+                obj.insert("fallback_reason".to_string(), json!(reason));
+            }
+        }
+        chunks
     }
 }
 
@@ -181,14 +208,47 @@ mod tests {
     }
 
     #[test]
-    fn empty_doc_falls_back_to_empty() {
-        // No language detected from extension-less id → fallback (empty in v1)
-        let doc = make_doc("plain-text", "hello world");
+    fn unknown_language_falls_back_to_sentence_aware() {
+        let doc = make_doc("mystery.xyz", "some random content here that should still chunk\n");
         let chunker = SymbolAwareChunker::new(SymbolAwareChunkerConfig::default());
         let chunks = chunker.chunk(&doc);
-        assert!(
-            chunks.is_empty(),
-            "v1 fallback returns empty; Task 14 wires real fallback"
+        assert!(!chunks.is_empty(), "unknown language should still produce chunks via sentence_aware");
+        let strategy = chunks[0]
+            .metadata
+            .get("strategy")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        assert_eq!(strategy, "symbol_aware_fallback");
+        let reason = chunks[0]
+            .metadata
+            .get("fallback_reason")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        assert_eq!(reason, "language_undetected");
+    }
+
+    #[cfg(feature = "code-aware-python")]
+    #[test]
+    fn python_syntax_error_falls_back() {
+        // Missing close paren, no body — tree-sitter returns a tree with ERROR nodes
+        let doc = make_doc(
+            "broken.py",
+            "def hello(\n    # missing close paren\n",
         );
+        let chunker = SymbolAwareChunker::new(SymbolAwareChunkerConfig::default());
+        let chunks = chunker.chunk(&doc);
+        assert!(!chunks.is_empty(), "syntax error should fall back, not produce empty");
+        let strategy = chunks[0]
+            .metadata
+            .get("strategy")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        assert_eq!(strategy, "symbol_aware_fallback");
+        let reason = chunks[0]
+            .metadata
+            .get("fallback_reason")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        assert_eq!(reason, "python_syntax_error");
     }
 }
