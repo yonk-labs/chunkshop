@@ -42,6 +42,7 @@ pub mod backends;
 pub mod bakeoff;
 #[cfg(feature = "chunkers")]
 pub mod chunker;
+pub mod codeparse;
 pub mod config;
 #[cfg(feature = "embedder-core")]
 pub mod embedder;

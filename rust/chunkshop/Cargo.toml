@@ -30,6 +30,14 @@ path = "src/main.rs"
 # builds when the consumer opted into the heavy dep stack.
 required-features = ["full"]
 
+[[bin]]
+# Thin CLI exposing build_fqn + code_symbol_node_id for the Python
+# cross-port parity harness (RM-C SC-003). Depends only on the always-on
+# `codeparse` module, so no `required-features` — builds against the slim
+# library too.
+name = "fqn-cli"
+path = "src/bin/fqn-cli.rs"
+
 [dependencies]
 # --- Always-on core (small, used by the chunker module) ---
 anyhow = "1"
@@ -73,7 +81,7 @@ futures = { version = "0.3", optional = true }
 glob = { version = "0.3", optional = true }
 object_store = { version = "0.11", default-features = false, features = ["aws"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
-sha1 = { version = "0.10", optional = true }
+sha1 = "0.10"
 
 # --- `sink` feature: the full modular sink/backend layer ---
 # The v4 modular-backends line moved every backend (PG/MariaDB/SQLite/
@@ -100,6 +108,23 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = tr
 # --- Optional callable summarizer integration ---
 lede = { version = "0.3", optional = true }
 
+# --- `code-aware-*` features: tree-sitter parsers for SymbolAwareChunker (RM-C) ---
+# Runtime + tags lib are version-locked together (both 0.26.x). Grammar crates
+# are pinned to their latest crates.io release as of 2026-05-28; they expose
+# C parsers via the parser-ABI (currently ABI 14/15) which is backward-
+# compatible with tree-sitter 0.25/0.26 runtimes. All deps are `optional` so
+# the default build is unaffected.
+tree-sitter            = { version = "0.26", optional = true }
+tree-sitter-tags       = { version = "0.26", optional = true }
+tree-sitter-python     = { version = "0.25", optional = true }
+tree-sitter-java       = { version = "0.23", optional = true }
+# Should-haves — declared so the [features] block compiles. Extractors for
+# these are deferred to a follow-up (gated on chunkshop#40).
+tree-sitter-go         = { version = "0.25", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-javascript = { version = "0.25", optional = true }
+tree-sitter-rust       = { version = "0.24", optional = true }
+
 [dev-dependencies]
 # `no-env-filter` lets `#[traced_test]` capture warn! events from any crate,
 # not just the test executable. Required to assert on tracing events emitted
@@ -113,6 +138,10 @@ tempfile = "3"
 # regardless of whether the `source` feature (which also pulls `futures`) is
 # enabled.
 futures = "0.3"
+# RM-C Task 7: property-based invariants for build_fqn + code_symbol_node_id
+# in tests/cross_port_proptest.rs (determinism, separator normalization,
+# output shape, project-id divergence).
+proptest = "1"
 
 [features]
 # Default = full feature set for backward compatibility. Existing consumers
@@ -162,7 +191,7 @@ extractor = ["dep:whatlang"]
 # Source loaders: files (glob), HTTP, S3. DB-table sources (PG/MariaDB/
 # SQLite/ClickHouse) additionally require `sink` since they reuse the
 # backend connection layer — they are gated on `all(source, sink)` in code.
-source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:sha1", "dep:tokio"]
+source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:tokio"]
 
 # The full modular sink/backend layer: PG (pgvector), MariaDB (sqlx mysql),
 # SQLite (rusqlite + sqlite-vec), ClickHouse (clickhouse + url/urlencoding).
@@ -190,3 +219,15 @@ bakeoff = ["pipeline"]
 # Enables the `chunkshop.summarizers.lede` callable summarizer module by
 # pulling the `lede` crate from crates.io. Build with: cargo build --features lede
 lede = ["dep:lede"]
+
+# Code-aware chunking (RM-C). Each grammar is opt-in to control binary size.
+# See README.md "Code-aware chunking" for the size delta table.
+code-aware = []  # Umbrella — implied by per-grammar features
+code-aware-python = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-python", "dep:tree-sitter-tags"]
+code-aware-java   = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-java",   "dep:tree-sitter-tags"]
+
+# Should-have grammars (extractors not implemented in v1 — see chunkshop#40).
+code-aware-go         = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-go",         "dep:tree-sitter-tags"]
+code-aware-typescript = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-typescript", "dep:tree-sitter-tags"]
+code-aware-javascript = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-javascript", "dep:tree-sitter-tags"]
+code-aware-rust       = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-rust",       "dep:tree-sitter-tags"]
