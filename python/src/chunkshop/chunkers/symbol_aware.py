@@ -30,6 +30,7 @@ from chunkshop.codeparse import (
     ParseResult,
     Symbol,
     build_fqn,
+    build_scope_chain,
     code_symbol_node_id,
     parse_file,
 )
@@ -292,6 +293,9 @@ class SymbolAwareChunker:
                 "strategy": "symbol_aware",
                 "symbol_name": sym.name,
                 "fqn": sym.fqn,
+                "scope_chain": build_scope_chain(
+                    file_path, sym.name, sym.parent_name
+                ),
                 "symbol_type": sym.symbol_type,
                 "start_line": sym.line_start,
                 "end_line": sym.line_end,
@@ -342,6 +346,9 @@ class SymbolAwareChunker:
                 "strategy": "symbol_aware",
                 "symbol_name": "<module_block>",
                 "fqn": synthetic_fqn,
+                "scope_chain": build_scope_chain(
+                    file_path, "<module_block>", None
+                ),
                 "symbol_type": "module_block",
                 "start_line": start_line,
                 "end_line": end_line,
@@ -372,6 +379,7 @@ class SymbolAwareChunker:
                 "strategy": "symbol_aware",
                 "symbol_name": "<module>",
                 "fqn": synthetic_fqn,
+                "scope_chain": build_scope_chain(file_path, "<module>", None),
                 "symbol_type": "module",
                 "start_line": 1,
                 "end_line": max(len(lines), 1),

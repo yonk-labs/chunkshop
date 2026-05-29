@@ -13,7 +13,11 @@ All commands below assume you're in `python/` unless noted. `uv` is the default 
 ```bash
 cd python
 
-# Install — the full extras set CI uses (so local runs match what CI exercises).
+# Install — one-shot: syncs all extras CI uses + the spaCy model. Idempotent.
+bash ../scripts/dev-setup.sh
+
+# …or run the two steps by hand (this is exactly what dev-setup.sh does).
+# The full extras set CI uses (so local runs match what CI exercises).
 # `code` pulls tree-sitter + Python/Java grammars for the symbol_aware chunker
 # + code_relationships extractor. `all-parsers` pulls pypdf/python-docx/etc.
 # for the SP-3 file-parser layer. `lede` + `lede-spacy` flip the 6 search /
@@ -93,9 +97,10 @@ The pipeline is `Source → Chunker → Embedder → Extractor → Sink`. Every 
 Prose: `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`,
 `semantic`. Summarization layers: `summary_embed`, `hierarchical_summary`,
 `consolidation`. Code-aware: `code_aware` (Python AST, stdlib), `symbol_aware`
-(multi-lang tree-sitter — Python + Java, with regex fallback for Go / TS / JS;
-stamps `fqn` + `node_id` per chunk to drive `chunkshop search --by-symbol` +
-`chunkshop impact-of`).
+(multi-lang tree-sitter — Python, Java, Go, TypeScript, JavaScript, all via
+real grammars in the `[code]` extra; `regex_fallback.py` is the safety net when
+the extra is absent. Stamps `fqn` + `scope_chain` + `node_id` per chunk to drive
+`chunkshop search --by-symbol` + `chunkshop impact-of`).
 
 chunkshop's own factorial bakeoff (772-doc legal QA corpus, 30 gold questions)
 found `hierarchy` wins every embedder column on prose by prepending the section
