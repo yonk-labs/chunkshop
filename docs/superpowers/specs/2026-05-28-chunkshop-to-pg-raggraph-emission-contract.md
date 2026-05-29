@@ -284,7 +284,7 @@ This section lists every pg-raggraph deliverable required for the A/B experiment
 
 ### 4.1 `resolve_entity()` — the entity-resolution primitive
 
-- **Status:** `[ ]` (as of 2026-05-28)
+- **Status:** `[x]` (shipped 2026-05-28, pg-raggraph v0.5.0a5 — `resolve_entity_lookup` in `pg_raggraph.resolution`)
 - **Purpose:** Collapse a fact endpoint (`subject` / `object`) or a cooccur node (`a` / `b`) onto a canonical node ID so multiple surface strings ("Apple", "Apple Inc.", "apple inc") resolve to the same graph node.
 - **Expected signature** (illustrative — pg-raggraph picks the exact shape):
   ```python
@@ -302,7 +302,7 @@ This section lists every pg-raggraph deliverable required for the A/B experiment
 
 ### 4.2 Retrieval-mode harness
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (shipped 2026-05-28 — `pg_raggraph.ab_gate.harness.run_harness_mode`; `naive_vector` + `graph_leg` live, `hybrid` deferred)
 - **Purpose:** Run the same gold question through multiple retrieval modes against the same corpus, emit comparable result sets so the A/B verdict (§3) can be computed.
 - **Required modes:**
   - `naive_vector` — ANN over `embedding` column, excluding fact rows (`metadata->>'kind' IS DISTINCT FROM 'fact'`). The naive baseline.
@@ -315,7 +315,7 @@ This section lists every pg-raggraph deliverable required for the A/B experiment
 
 ### 4.3 A/B runner
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (shipped 2026-05-28 — `pg_raggraph.ab_gate.runner.run_ab_matrix` + `pgrg ab-gate run`)
 - **Purpose:** Orchestrate `{harness × corpus × mode}` matrix runs, write structured results to disk for the results writer to consume.
 - **Required corpora (chunkshop-provided):**
   - `bakeoff-scotus` — legal prose, 12 gold questions (`docs/samples/bakeoff-scotus/gold-scotus.yaml`). Ingest config: `docs/samples/bakeoff-scotus/bakeoff-scotus-ab.yaml` (added in this PR).
@@ -324,7 +324,7 @@ This section lists every pg-raggraph deliverable required for the A/B experiment
 
 ### 4.4 Results writer
 
-- **Status:** `[ ]`
+- **Status:** `[x]` (shipped 2026-05-28 — `pg_raggraph.ab_gate.writer.compute_verdict` + `pgrg ab-gate verdict`; judge runtime = `llm-judge`)
 - **Purpose:** Apply the verdict criteria (§3) to the A/B runner's raw output and emit a structured results doc (JSON + Markdown summary) that resolves the gate to a single PASS / FAIL.
 - **Expected output:** per-metric per-corpus tables, the combined verdict, and the §3.7 worked-example-style step-by-step calculation showing how the verdict was reached.
 
@@ -337,6 +337,36 @@ grep -A1 "^### 4\." docs/superpowers/specs/2026-05-28-chunkshop-to-pg-raggraph-e
 ```
 
 When all four artifacts land `[x]`, the A/B experiment is ready to run. The verdict it produces is what determines whether more edge tiers (Tier-2 LLM-validate, future RM-C Rust port consumers) are worth building.
+
+### 4.6 Verdict (run 2026-05-28)
+
+All four artifacts are `[x]`. The experiment was run end-to-end: chunkshop
+emitted `lede_spacy` facts + cooccur edges for both bakeoff corpora (SCOTUS
+772 episodes / 2014 facts; NTSB 20 / 60), pg-raggraph imported them, materialized
+graph entities from the fact endpoints + cooccur nodes, ran `naive_vector` vs
+`graph_leg` over the gold questions, and judged answers with `gpt-4o-mini`.
+
+**Verdict: NAIVE WINS** (3 metrics to 0; both corpora agree).
+
+| Combined metric | naive | graph | Δ | §3.2 label |
+|---|---:|---:|---:|---|
+| Recall@10 | 0.875 | 0.042 | −83.3pp | NAIVE WINS |
+| MRR | 0.623 | 0.042 | −0.581 | NAIVE WINS |
+| LLM-judge win-rate | 0.917 | 0.208 | −0.708 | NAIVE WINS |
+
+§3.3 combiner → NAIVE WINS; §3.4 asymmetry guard not triggered (graph loses
+both corpora). Latency (§3.6, informational): naive 51 ms p50, graph 105 ms.
+
+**Per §3.8 → freeze edge-tier work; deprioritize Rust RM-C consumers;
+reconsider whether the existing facts/cooccur are worth maintaining.**
+
+Caveats (from the pg-raggraph run; they bound the magnitude, not the direction):
+small gold sets (12 Q/corpus); `graph_leg` only attempted 5/12 questions per
+corpus because query-side `lede_spacy` NER often found no entities and fell back
+to whitespace tokens; 2/12 SCOTUS gold docs were absent (symmetric across both
+legs). None of these flip an 83-percentage-point recall gap. Full report +
+artifacts + repro: pg-raggraph `benchmarks/ab-gate/RESULTS.md` (PR
+yonk-labs/pg-raggraph#54).
 
 ## 5. Change-Management
 Shape changes require:
