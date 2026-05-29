@@ -338,35 +338,42 @@ grep -A1 "^### 4\." docs/superpowers/specs/2026-05-28-chunkshop-to-pg-raggraph-e
 
 When all four artifacts land `[x]`, the A/B experiment is ready to run. The verdict it produces is what determines whether more edge tiers (Tier-2 LLM-validate, future RM-C Rust port consumers) are worth building.
 
-### 4.6 Verdict (run 2026-05-28)
+### 4.6 Verdict (run 2026-05-28) — ⚠️ PROVISIONAL, `hybrid` mode NOT tested
 
-All four artifacts are `[x]`. The experiment was run end-to-end: chunkshop
-emitted `lede_spacy` facts + cooccur edges for both bakeoff corpora (SCOTUS
-772 episodes / 2014 facts; NTSB 20 / 60), pg-raggraph imported them, materialized
-graph entities from the fact endpoints + cooccur nodes, ran `naive_vector` vs
-`graph_leg` over the gold questions, and judged answers with `gpt-4o-mini`.
+The four artifacts are `[x]` and the experiment ran end-to-end. **But it tested
+only 2 of the 3 modes §4.2 defines** — `naive_vector` and `graph_leg`. The
+third, `hybrid` (vector seeds candidates, graph expands/reranks), is the
+production-shaped mode this emission was designed to feed, and it was **not
+run** (it is `NotImplementedError` in pg-raggraph's harness). So this verdict
+answers a narrower question than §3's gate.
 
-**Verdict: NAIVE WINS** (3 metrics to 0; both corpora agree).
+**Provisional verdict: NAIVE WINS vs `graph_leg` (graph-as-primary).** This is
+NOT the same as "naive beats graph" — the mode where graph was expected to help
+was never measured.
 
-| Combined metric | naive | graph | Δ | §3.2 label |
+| Combined metric | naive | `graph_leg` | Δ | §3.2 label |
 |---|---:|---:|---:|---|
-| Recall@10 | 0.875 | 0.042 | −83.3pp | NAIVE WINS |
-| MRR | 0.623 | 0.042 | −0.581 | NAIVE WINS |
-| LLM-judge win-rate | 0.917 | 0.208 | −0.708 | NAIVE WINS |
+| Recall@10 | 0.875 | 0.125 | −75.0pp | NAIVE WINS |
+| MRR | 0.623 | 0.088 | −0.535 | NAIVE WINS |
+| LLM-judge win-rate | 0.917 | 0.250 | −0.667 | NAIVE WINS |
 
-§3.3 combiner → NAIVE WINS; §3.4 asymmetry guard not triggered (graph loses
-both corpora). Latency (§3.6, informational): naive 51 ms p50, graph 105 ms.
+(Numbers use pg-raggraph's improved query-term encoder, which lifted `graph_leg`
+SCOTUS coverage 5/12 → 9/12; an earlier run reported −83.3pp. Both predate any
+`hybrid` test.) Latency (§3.6): naive 51 ms p50, `graph_leg` 105 ms.
 
-**Per §3.8 → freeze edge-tier work; deprioritize Rust RM-C consumers;
-reconsider whether the existing facts/cooccur are worth maintaining.**
+**Why `graph_leg` losing does NOT settle the gate:** `graph_leg` must
+entity-resolve the *question* to seed its walk, so it fails by construction on
+queries with weak NER (NTSB's descriptive keyword questions; ~3/12 SCOTUS even
+after the encoder fix). `hybrid` has the opposite failure profile — the vector
+leg seeds the candidate set and the graph never entity-resolves the question,
+only the retrieved chunks. A large part of the −75pp gap is an artifact of
+running graph in its worst-fit mode.
 
-Caveats (from the pg-raggraph run; they bound the magnitude, not the direction):
-small gold sets (12 Q/corpus); `graph_leg` only attempted 5/12 questions per
-corpus because query-side `lede_spacy` NER often found no entities and fell back
-to whitespace tokens; 2/12 SCOTUS gold docs were absent (symmetric across both
-legs). None of these flip an 83-percentage-point recall gap. Full report +
-artifacts + repro: pg-raggraph `benchmarks/ab-gate/RESULTS.md` (PR
-yonk-labs/pg-raggraph#54).
+**§3.8 is therefore NOT triggered.** Do **not** freeze edge-tier work, drop
+RM-C consumers, or abandon facts/cooccur on this evidence — the deciding mode
+hasn't been measured. Resolution is gated on pg-raggraph implementing + A/B
+testing `hybrid` (tracked: pg-raggraph issue + PR yonk-labs/pg-raggraph#54).
+Full report + repro: pg-raggraph `benchmarks/ab-gate/RESULTS.md`.
 
 ## 5. Change-Management
 Shape changes require:
