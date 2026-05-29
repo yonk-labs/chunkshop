@@ -60,6 +60,19 @@ pub fn extract_symbols(file_path: &str, source: &str) -> Vec<Symbol> {
                 .unwrap_or("")
                 .to_string();
 
+            // Python's stdlib-ast walker explicitly does NOT descend into
+            // function bodies (it returns after each FunctionDef visit), so
+            // any def/class nested inside a function body is invisible to
+            // Python's chunker. Mirror that: skip captures whose nearest
+            // enclosing definition is a function (def / async def / lambda).
+            // Covers all three nesting flavors in real code:
+            //   - inner def (closure / helper)         e.g. `_consolidator._bundled`
+            //   - inner class (factory / configurator) e.g. `cli._JsonFormatter`
+            //   - method on an inner class             (symmetry; same root cause)
+            if is_inside_function(node) {
+                continue;
+            }
+
             let (symbol_type, parent_name) = match capture_name {
                 "function.name" => {
                     // Skip if this is also a method (already captured below).
@@ -123,6 +136,31 @@ fn is_inside_class(node: tree_sitter::Node) -> bool {
     false
 }
 
+/// Returns `true` if `node` is nested inside a function body.
+///
+/// The capture is an `identifier` whose immediate parent is the
+/// `function_definition` / `class_definition` it names — we skip past that
+/// owning definition and check from its grandparent up. A symbol nested in
+/// a function (closure / inner class / inner def) is invisible to Python's
+/// stdlib-ast walker because it returns early after each function visit
+/// (see `python/src/chunkshop/codeparse/langs/python.py:122`).
+fn is_inside_function(node: tree_sitter::Node) -> bool {
+    // Skip the immediate parent (the def/class this identifier IS the name
+    // of) — we want to know whether the *owning* definition is itself nested
+    // inside another function body, not whether the identifier sits inside
+    // the def it names.
+    let Some(owner) = node.parent() else { return false; };
+    let mut current = owner.parent();
+    while let Some(p) = current {
+        let k = p.kind();
+        if k == "function_definition" || k == "lambda" {
+            return true;
+        }
+        current = p.parent();
+    }
+    false
+}
+
 fn enclosing_class_name(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
     while let Some(p) = current {
@@ -169,6 +207,65 @@ mod tests {
     fn empty_source_returns_no_symbols() {
         let syms = extract_symbols("empty.py", "");
         assert!(syms.is_empty());
+    }
+
+    // --- Nested-in-function parity regression suite ---
+    //
+    // Real-corpus parity check (RM-C follow-up against chunkshop's own
+    // python/src/chunkshop tree) surfaced that the Rust extractor emitted
+    // 11 extra symbols Python doesn't see. Root cause: Python's stdlib-ast
+    // walker doesn't descend into function bodies. These tests lock the fix.
+
+    #[test]
+    fn skips_nested_function_inside_function() {
+        // Pattern: closure / inner helper. Real example:
+        // chunkshop.chunkers._consolidator.build_consolidator defines `_bundled`.
+        let src = "\
+def outer():
+    def inner():
+        return 1
+    return inner
+";
+        let syms = extract_symbols("test.py", src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["outer"], "expected only outer, got {names:?}");
+    }
+
+    #[test]
+    fn skips_nested_class_inside_function() {
+        // Pattern: class defined inside a function. Real example:
+        // chunkshop.cli setup_logging defines `_JsonFormatter`.
+        let src = "\
+def setup_logging():
+    class _JsonFormatter:
+        def format(self, record):
+            return ''
+    return _JsonFormatter
+";
+        let syms = extract_symbols("test.py", src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["setup_logging"], "expected only setup_logging, got {names:?}");
+    }
+
+    #[test]
+    fn keeps_module_level_class_with_nested_method_using_inner_class() {
+        // Outer class + method that uses an inner class inside its body.
+        // Outer class + method are at module / class scope → kept.
+        // Inner class + its method are inside a function body → skipped.
+        let src = "\
+class Outer:
+    def make(self):
+        class Inner:
+            def go(self):
+                return 1
+        return Inner
+";
+        let syms = extract_symbols("test.py", src);
+        let names: Vec<&str> = syms.iter().map(|s| s.name.as_str()).collect();
+        // Order may vary; assert set membership.
+        let want: std::collections::HashSet<&str> = ["Outer", "make"].into_iter().collect();
+        let got: std::collections::HashSet<&str> = names.iter().copied().collect();
+        assert_eq!(got, want, "expected {want:?}, got {got:?}");
     }
 
     #[test]
