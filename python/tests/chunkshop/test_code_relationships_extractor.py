@@ -160,6 +160,68 @@ def test_external_call_not_emitted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# SC-004: provenance distinguishes name-heuristic edges from AST-direct ones
+# ---------------------------------------------------------------------------
+
+_PY_INTRA_FILE = (
+    "def helper(v):\n"
+    "    return v * 2\n"
+    "\n"
+    "def caller(v):\n"
+    "    return helper(v)\n"
+)
+
+
+def test_intra_file_call_edge_is_ast_provenance() -> None:
+    """A call resolved within one file (AST witnessed it) stays provenance='ast'."""
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract(_PY_INTRA_FILE, language="python", source_path="a.py")
+    edges = ext.finalize(project_id="test")
+
+    calls = [e for e in edges if e["edge_type"] == "CALLS" and e["dst_fqn"].endswith(".helper")]
+    assert len(calls) == 1
+    assert calls[0]["evidence"]["resolution"] == "intra_file"
+    assert calls[0]["provenance"] == "ast"
+
+
+def test_cross_file_unique_name_edge_is_heuristic_provenance() -> None:
+    """A cross-file call resolved by unique-name matching is a heuristic, not AST truth."""
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract("def helper(v):\n    return v * 2\n", language="python", source_path="a.py")
+    ext.extract("def caller(v):\n    return helper(v)\n", language="python", source_path="b.py")
+    edges = ext.finalize(project_id="test")
+
+    calls = [e for e in edges if e["edge_type"] == "CALLS" and e["dst_fqn"].endswith(".helper")]
+    assert len(calls) == 1
+    assert calls[0]["evidence"]["resolution"] == "unique_name"
+    assert calls[0]["provenance"] == "heuristic"
+
+
+def test_cross_file_ambiguous_name_edges_are_heuristic_provenance() -> None:
+    """Ambiguous cross-file name matches are heuristics (the lowest-confidence band)."""
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract("def helper(v):\n    return v * 2\n", language="python", source_path="a.py")
+    ext.extract("def helper(v):\n    return v\n", language="python", source_path="c.py")
+    ext.extract("def caller(v):\n    return helper(v)\n", language="python", source_path="b.py")
+    edges = ext.finalize(project_id="test")
+
+    calls = [e for e in edges if e["edge_type"] == "CALLS" and e["dst_fqn"].endswith(".helper")]
+    assert len(calls) == 2
+    for e in calls:
+        assert e["evidence"]["resolution"] == "ambiguous_name"
+        assert e["provenance"] == "heuristic"
+
+
+# ---------------------------------------------------------------------------
 # 4. INHERITS / IMPLEMENTS edges
 # ---------------------------------------------------------------------------
 
