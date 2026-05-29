@@ -22,6 +22,7 @@
 
 ### Changed
 
+- **`code_relationships`: name-heuristic cross-file edges now tagged `provenance='heuristic'` (#42 SC-004).** Previously every `finalize()` edge was hardcoded `provenance='ast'`. Now only AST-direct intra-file edges (`evidence.resolution == 'intra_file'`) keep `'ast'`; cross-file edges resolved by unique-/ambiguous-name matching (CALLS, INHERITS, IMPLEMENTS) are tagged `'heuristic'`. This separates name-heuristic edges from a future Rust stack-graphs resolver (`'scip'`) sharing the same `code_edges` table. Schema unchanged — the `provenance` CHECK already permitted `'heuristic'`. The `_emit` chokepoint param is typed `Provenance` (not `str`).
 - **A/B emission contract: §4.6 verdict qualified by new §4.6.1.** The "NAIVE WINS" verdict (PR #45) tested 2 of 3 retrieval modes defined in §4.2 (`naive_vector` + `graph_leg`-as-primary). The `hybrid` mode (vector-first then graph-expansion — chunkshop's intended production shape, per §4.2 "optional but recommended") was not run. The new §4.6.1 documents this gap, explains why graph-as-primary's failure profile (NER fallback to whitespace tokens skipped 7/12 questions by construction) doesn't extrapolate to hybrid, and **puts §3.8's "freeze edge-tier work / deprioritize RM-C / reconsider facts/cooccur" directive ON HOLD** pending a hybrid-mode re-run. Tracking issue filed against pg-raggraph.
 
 ## 0.7.0 — 2026-05-27
