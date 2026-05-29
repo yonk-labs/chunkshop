@@ -18,6 +18,10 @@
 - Rust parity is a separate follow-up brief — see `skill-output/mission-brief/Mission-Brief-cs5-rust-parity.md`. Blocked on `Mission-Brief-cs2-rust-parity.md` (which creates the `rust/chunkshop/src/extractors/` directory CS-5's Rust port lives in).
 - No CLI surface in this PR — `chunkshop impact-of --provenance <kind>` filter is YAGNI until CS-3 produces non-AST edges to filter against.
 
+### Changed
+
+- **A/B emission contract: §4.6 verdict qualified by new §4.6.1.** The "NAIVE WINS" verdict (PR #45) tested 2 of 3 retrieval modes defined in §4.2 (`naive_vector` + `graph_leg`-as-primary). The `hybrid` mode (vector-first then graph-expansion — chunkshop's intended production shape, per §4.2 "optional but recommended") was not run. The new §4.6.1 documents this gap, explains why graph-as-primary's failure profile (NER fallback to whitespace tokens skipped 7/12 questions by construction) doesn't extrapolate to hybrid, and **puts §3.8's "freeze edge-tier work / deprioritize RM-C / reconsider facts/cooccur" directive ON HOLD** pending a hybrid-mode re-run. Tracking issue filed against pg-raggraph.
+
 ## 0.7.0 — 2026-05-27
 
 Agent-memory fact extraction goes batteries-included, plus a read-time
