@@ -108,6 +108,23 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = tr
 # --- Optional callable summarizer integration ---
 lede = { version = "0.3", optional = true }
 
+# --- `code-aware-*` features: tree-sitter parsers for SymbolAwareChunker (RM-C) ---
+# Runtime + tags lib are version-locked together (both 0.26.x). Grammar crates
+# are pinned to their latest crates.io release as of 2026-05-28; they expose
+# C parsers via the parser-ABI (currently ABI 14/15) which is backward-
+# compatible with tree-sitter 0.25/0.26 runtimes. All deps are `optional` so
+# the default build is unaffected.
+tree-sitter            = { version = "0.26", optional = true }
+tree-sitter-tags       = { version = "0.26", optional = true }
+tree-sitter-python     = { version = "0.25", optional = true }
+tree-sitter-java       = { version = "0.23", optional = true }
+# Should-haves — declared so the [features] block compiles. Extractors for
+# these are deferred to a follow-up (gated on chunkshop#40).
+tree-sitter-go         = { version = "0.25", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-javascript = { version = "0.25", optional = true }
+tree-sitter-rust       = { version = "0.24", optional = true }
+
 [dev-dependencies]
 # `no-env-filter` lets `#[traced_test]` capture warn! events from any crate,
 # not just the test executable. Required to assert on tracing events emitted
@@ -202,3 +219,15 @@ bakeoff = ["pipeline"]
 # Enables the `chunkshop.summarizers.lede` callable summarizer module by
 # pulling the `lede` crate from crates.io. Build with: cargo build --features lede
 lede = ["dep:lede"]
+
+# Code-aware chunking (RM-C). Each grammar is opt-in to control binary size.
+# See README.md "Code-aware chunking" for the size delta table.
+code-aware = []  # Umbrella — implied by per-grammar features
+code-aware-python = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-python", "dep:tree-sitter-tags"]
+code-aware-java   = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-java",   "dep:tree-sitter-tags"]
+
+# Should-have grammars (extractors not implemented in v1 — see chunkshop#40).
+code-aware-go         = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-go",         "dep:tree-sitter-tags"]
+code-aware-typescript = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-typescript", "dep:tree-sitter-tags"]
+code-aware-javascript = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-javascript", "dep:tree-sitter-tags"]
+code-aware-rust       = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-rust",       "dep:tree-sitter-tags"]
