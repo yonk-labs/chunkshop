@@ -324,7 +324,7 @@ class CodeRelationshipsExtractor:
             dst_fqn: str,
             confidence: float,
             evidence: dict[str, Any],
-            provenance: str = "ast",
+            provenance: Provenance = "ast",
         ) -> None:
             src = self._symbols.get(src_fqn)
             dst = self._symbols.get(dst_fqn)
