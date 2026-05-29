@@ -613,6 +613,11 @@ pub enum ChunkerConfig {
     /// per-triple `kind=fact` chunks from a `Consolidator` callable.
     /// Mirror of Python `chunkshop.chunkers.consolidation.ConsolidationChunker`.
     Consolidation(ConsolidationChunkerConfig),
+    /// RM-C: emits one chunk per extracted code symbol (function / class /
+    /// method) via tree-sitter. Gated on the `code-aware` feature; per-grammar
+    /// dispatch in the factory is gated on `code-aware-<lang>`.
+    #[cfg(feature = "code-aware")]
+    SymbolAware(SymbolAwareChunkerConfig),
 }
 
 impl ChunkerConfig {
@@ -636,6 +641,8 @@ impl ChunkerConfig {
                 c.max_chars.or_else(|| c.base.effective_max_chars())
             }
             ChunkerConfig::Consolidation(c) => c.base.effective_max_chars(),
+            #[cfg(feature = "code-aware")]
+            ChunkerConfig::SymbolAware(_) => None,
         }
     }
 
@@ -651,6 +658,8 @@ impl ChunkerConfig {
             ChunkerConfig::SummaryEmbed(c) => c.if_oversize.as_deref(),
             ChunkerConfig::HierarchicalSummary(c) => c.if_oversize.as_deref(),
             ChunkerConfig::Consolidation(c) => c.if_oversize.as_deref(),
+            #[cfg(feature = "code-aware")]
+            ChunkerConfig::SymbolAware(_) => None,
         }
     }
 
@@ -665,6 +674,8 @@ impl ChunkerConfig {
             ChunkerConfig::SummaryEmbed(_) => "summary_embed",
             ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
             ChunkerConfig::Consolidation(_) => "consolidation",
+            #[cfg(feature = "code-aware")]
+            ChunkerConfig::SymbolAware(_) => "symbol_aware",
         }
     }
 }
@@ -679,6 +690,17 @@ pub struct SentenceAwareChunkerConfig {
     pub min_chars: usize,
     #[serde(default)]
     pub if_oversize: Option<Box<ChunkerConfig>>,
+}
+
+/// RM-C: config for `SymbolAwareChunker`. Mirrors Python
+/// `chunkshop.chunkers.symbol_aware.SymbolAwareChunkerConfig`.
+#[cfg(feature = "code-aware")]
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SymbolAwareChunkerConfig {
+    /// Optional project_id passed to `code_symbol_node_id` for scoping.
+    /// Defaults to "default" to mirror Python.
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1481,6 +1503,8 @@ fn validate_chunker_config(c: &ChunkerConfig) -> Result<()> {
             validate_chunker_config(&c.base)
         }
         ChunkerConfig::Consolidation(c) => validate_chunker_config(&c.base),
+        #[cfg(feature = "code-aware")]
+        ChunkerConfig::SymbolAware(_) => Ok(()),
     }
 }
 
