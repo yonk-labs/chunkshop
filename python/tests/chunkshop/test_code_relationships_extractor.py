@@ -160,6 +160,68 @@ def test_external_call_not_emitted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# SC-004: provenance distinguishes name-heuristic edges from AST-direct ones
+# ---------------------------------------------------------------------------
+
+_PY_INTRA_FILE = (
+    "def helper(v):\n"
+    "    return v * 2\n"
+    "\n"
+    "def caller(v):\n"
+    "    return helper(v)\n"
+)
+
+
+def test_intra_file_call_edge_is_ast_provenance() -> None:
+    """A call resolved within one file (AST witnessed it) stays provenance='ast'."""
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract(_PY_INTRA_FILE, language="python", source_path="a.py")
+    edges = ext.finalize(project_id="test")
+
+    calls = [e for e in edges if e["edge_type"] == "CALLS" and e["dst_fqn"].endswith(".helper")]
+    assert len(calls) == 1
+    assert calls[0]["evidence"]["resolution"] == "intra_file"
+    assert calls[0]["provenance"] == "ast"
+
+
+def test_cross_file_unique_name_edge_is_heuristic_provenance() -> None:
+    """A cross-file call resolved by unique-name matching is a heuristic, not AST truth."""
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract("def helper(v):\n    return v * 2\n", language="python", source_path="a.py")
+    ext.extract("def caller(v):\n    return helper(v)\n", language="python", source_path="b.py")
+    edges = ext.finalize(project_id="test")
+
+    calls = [e for e in edges if e["edge_type"] == "CALLS" and e["dst_fqn"].endswith(".helper")]
+    assert len(calls) == 1
+    assert calls[0]["evidence"]["resolution"] == "unique_name"
+    assert calls[0]["provenance"] == "heuristic"
+
+
+def test_cross_file_ambiguous_name_edges_are_heuristic_provenance() -> None:
+    """Ambiguous cross-file name matches are heuristics (the lowest-confidence band)."""
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract("def helper(v):\n    return v * 2\n", language="python", source_path="a.py")
+    ext.extract("def helper(v):\n    return v\n", language="python", source_path="c.py")
+    ext.extract("def caller(v):\n    return helper(v)\n", language="python", source_path="b.py")
+    edges = ext.finalize(project_id="test")
+
+    calls = [e for e in edges if e["edge_type"] == "CALLS" and e["dst_fqn"].endswith(".helper")]
+    assert len(calls) == 2
+    for e in calls:
+        assert e["evidence"]["resolution"] == "ambiguous_name"
+        assert e["provenance"] == "heuristic"
+
+
+# ---------------------------------------------------------------------------
 # 4. INHERITS / IMPLEMENTS edges
 # ---------------------------------------------------------------------------
 
@@ -496,23 +558,17 @@ def test_finalize_emits_correct_edge_kind_for_inherits_and_implements() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_finalize_emits_provenance_ast_with_empty_metadata() -> None:
-    """Every edge from finalize() carries provenance='ast' and provenance_metadata={}."""
+def test_finalize_provenance_matches_resolution_kind() -> None:
+    """Cross-file name-resolved edges are 'heuristic'; intra-file edges are 'ast'.
+    All edges retain edge_type/edge_kind and an empty provenance_metadata.
+    """
     from chunkshop.config import CodeRelationshipsExtractor as Cfg
     from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
 
     ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
-    # Minimal cross-file Python: a.py defines foo; b.py calls foo.
-    ext.extract(
-        "def foo():\n    pass\n",
-        language="python",
-        source_path="a.py",
-    )
-    ext.extract(
-        "def bar():\n    foo()\n",
-        language="python",
-        source_path="b.py",
-    )
+    # Cross-file: a.py defines foo; b.py calls foo -> unique-name heuristic edge.
+    ext.extract("def foo():\n    pass\n", language="python", source_path="a.py")
+    ext.extract("def bar():\n    foo()\n", language="python", source_path="b.py")
     edges = ext.finalize(project_id="test")
 
     assert len(edges) >= 1
@@ -520,6 +576,14 @@ def test_finalize_emits_provenance_ast_with_empty_metadata() -> None:
         # CS-2 regression: edge_type + edge_kind still present.
         assert "edge_type" in e
         assert "edge_kind" in e
-        # CS-5: provenance + provenance_metadata present with default values.
-        assert e["provenance"] == "ast"
+        # CS-5 regression: provenance_metadata still defaults to {}.
         assert e["provenance_metadata"] == {}
+        # SC-004: provenance tracks the resolution method.
+        resolution = e["evidence"].get("resolution")
+        if resolution == "intra_file":
+            assert e["provenance"] == "ast"
+        else:
+            assert e["provenance"] == "heuristic"
+
+    # This corpus produces exactly one cross-file heuristic edge.
+    assert any(e["provenance"] == "heuristic" for e in edges)

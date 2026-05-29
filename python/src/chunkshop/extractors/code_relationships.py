@@ -324,6 +324,7 @@ class CodeRelationshipsExtractor:
             dst_fqn: str,
             confidence: float,
             evidence: dict[str, Any],
+            provenance: Provenance = "ast",
         ) -> None:
             src = self._symbols.get(src_fqn)
             dst = self._symbols.get(dst_fqn)
@@ -357,11 +358,10 @@ class CodeRelationshipsExtractor:
                     "dst_node_id": dst_id,
                     "confidence": confidence,
                     "evidence": evidence,
-                    # CS-5: every edge from this extractor is AST-derived.
-                    # CS-3 synthesizers will emit through their own code
-                    # path (not through finalize._emit) with 'heuristic'
-                    # + a {synthesizedBy: <channel>} payload.
-                    "provenance": "ast",
+                    # SC-004: AST-direct intra-file edges keep 'ast'; cross-file
+                    # name-resolved edges pass provenance='heuristic' so a future
+                    # stack-graphs resolver ('scip') stays distinguishable.
+                    "provenance": provenance,
                     "provenance_metadata": {},
                 }
             )
@@ -398,6 +398,7 @@ class CodeRelationshipsExtractor:
                         "snippet": pc["snippet"],
                         "resolution": "unique_name",
                     },
+                    provenance="heuristic",
                 )
             else:
                 for cand in candidates:
@@ -412,6 +413,7 @@ class CodeRelationshipsExtractor:
                             "resolution": "ambiguous_name",
                             "candidates": candidates,
                         },
+                        provenance="heuristic",
                     )
 
         # ----- INHERITS / IMPLEMENTS edges -----
@@ -426,6 +428,7 @@ class CodeRelationshipsExtractor:
                     dst_fqn=candidates[0],
                     confidence=self.cfg.unique_match_confidence,
                     evidence={"resolution": "unique_name"},
+                    provenance="heuristic",
                 )
             else:
                 for cand in candidates:
@@ -438,6 +441,7 @@ class CodeRelationshipsExtractor:
                             "resolution": "ambiguous_name",
                             "candidates": candidates,
                         },
+                        provenance="heuristic",
                     )
 
         edges.sort(key=lambda e: (e["edge_type"], e["src_fqn"], e["dst_fqn"]))
