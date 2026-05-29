@@ -368,6 +368,50 @@ legs). None of these flip an 83-percentage-point recall gap. Full report +
 artifacts + repro: pg-raggraph `benchmarks/ab-gate/RESULTS.md` (PR
 yonk-labs/pg-raggraph#54).
 
+### 4.6.1 Hybrid-mode-untested caveat (status: §3.8 freeze ON HOLD)
+
+**The §4.6 verdict tested 2 of 3 retrieval modes the contract defined in §4.2.**
+The `hybrid` mode (§4.2: "combine the two", marked optional-but-recommended) was
+NOT run — the pg-raggraph harness command in `benchmarks/ab-gate/RESULTS.md`
+step 4 invokes only `--mode naive_vector --mode graph_leg`. The verdict tables
+have only two columns (naive, graph); no hybrid column exists in any §4.6
+artifact.
+
+This is load-bearing because **hybrid is the production-shaped mode**:
+- `graph_leg` (as tested) is graph-as-PRIMARY retrieval — entity-resolve the
+  *question*, walk edges, return chunks. Per §4.6 caveat #2, this failed to
+  even attempt 7/12 questions per corpus when query NER fell back to whitespace.
+  That's 7/12 forced-misses by construction, not by the graph data being bad.
+- `hybrid` (untested) is vector-first-then-graph — ANN retrieves top-K chunks,
+  graph leg expands by following fact/cooccur edges from those chunks. The
+  vector leg sets the recall floor; the graph leg supplies precision lift /
+  context expansion. The hybrid never has to entity-resolve the *question*,
+  only the *retrieved chunks*. Completely different failure profile from
+  `graph_leg`-as-primary.
+
+**Consequence:** the §4.6 verdict establishes that graph-as-PRIMARY loses
+decisively on these corpora — a real result, but for the wrong question
+relative to chunkshop's intended production shape. The verdict does NOT
+establish that the facts/cooccur infrastructure has no value in the hybrid
+pattern; that question is open.
+
+**Status of §3.8's directive:** ON HOLD. Until the hybrid mode lands and is
+re-run against the same gold sets, this contract does NOT trigger:
+- "freeze edge-tier work" — CS-3 synthesizers, CS-4 framework routes, and
+  follow-up edge tiers proceed at the maintainer's discretion.
+- "deprioritize Rust RM-C consumers" — the Rust port of `codeparse` primitives
+  (see chunkshop PR #46) and downstream RM-C work proceed.
+- "reconsider whether the existing facts/cooccur are worth maintaining" — the
+  emission shape stays.
+
+**To close out:** pg-raggraph implements `--mode hybrid` (the contract's §4.2
+"optional but recommended" mode) and re-runs the same gold-Q set. A follow-up
+§4.6.2 entry will record the hybrid result. If hybrid beats naive on ≥2 of 3
+metrics per §3.3, the original §4.6 verdict is overridden. If hybrid still
+loses, §3.8 fires for real.
+
+Tracking issue: yonk-labs/pg-raggraph (filed alongside this amendment).
+
 ## 5. Change-Management
 Shape changes require:
 1. A PR to chunkshop bumping this doc's version + a note in `CHANGELOG.md`.
