@@ -325,3 +325,31 @@ def test_write_edges_on_conflict_updates_provenance(schema: str) -> None:
             "ON CONFLICT DO UPDATE did not flip provenance_metadata — "
             "SET provenance_metadata = EXCLUDED.provenance_metadata may be missing"
         )
+
+
+def test_heuristic_cross_file_edges_persist(schema: str) -> None:
+    """Cross-file name-resolved edges round-trip into code_edges as provenance='heuristic'."""
+    import psycopg
+
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import (
+        CodeRelationshipsExtractor,
+        write_edges,
+        write_edges_schema,
+    )
+
+    write_edges_schema(DSN, schema=schema)
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract("def helper(v):\n    return v * 2\n", language="python", source_path="a.py")
+    ext.extract("def caller(v):\n    return helper(v)\n", language="python", source_path="b.py")
+    write_edges(ext, dsn=DSN, schema=schema, project_id="test")
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            f'SELECT provenance FROM "{schema}".code_edges '
+            "WHERE edge_type = 'CALLS' AND dst_fqn LIKE '%%.helper'"
+        )
+        rows = [r[0] for r in cur.fetchall()]
+    assert rows, "no CALLS->helper edge persisted"
+    assert all(p == "heuristic" for p in rows)
