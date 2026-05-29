@@ -105,6 +105,22 @@ def edge_type_to_kind(edge_type: str) -> EdgeKind:
         ) from None
 
 
+# ---------------------------------------------------------------------------
+# CS-5: provenance ontology
+# ---------------------------------------------------------------------------
+#
+# The 3-value vocabulary is ported from codegraph's `Edge.provenance` field
+# (renaming codegraph's `'tree-sitter'` → `'ast'` to leave room for future
+# non-tree-sitter AST sources). Additive — every existing emission path is
+# AST-derived, so the chokepoint hardcodes `'ast'`. CS-3 synthesizers will
+# emit `'heuristic'` through their own code path (not through finalize._emit)
+# with a `{synthesizedBy: <channel>}` provenance_metadata payload.
+
+Provenance = Literal["ast", "scip", "heuristic"]
+
+PROVENANCES: tuple[Provenance, ...] = ("ast", "scip", "heuristic")
+
+
 # Inheritance / implementation regexes. We carry these in the extractor
 # rather than punching them into SP-A's ParseResult because SP-A's surface
 # is frozen for v1 and these are SP-C-only signals. The patterns are
@@ -341,6 +357,12 @@ class CodeRelationshipsExtractor:
                     "dst_node_id": dst_id,
                     "confidence": confidence,
                     "evidence": evidence,
+                    # CS-5: every edge from this extractor is AST-derived.
+                    # CS-3 synthesizers will emit through their own code
+                    # path (not through finalize._emit) with 'heuristic'
+                    # + a {synthesizedBy: <channel>} payload.
+                    "provenance": "ast",
+                    "provenance_metadata": {},
                 }
             )
 
@@ -563,6 +585,13 @@ def write_edges_schema(dsn: str, *, schema: str) -> None:
                 "                        'extends','implements','references',"
                 "                        'type_of','returns','instantiates',"
                 "                        'overrides','decorates')),"
+                # CS-5: provenance tagging. Every existing emission path is
+                # AST-derived, so DEFAULT 'ast' correctly backfills pre-CS-5
+                # rows. CS-3 synthesizers will explicitly set 'heuristic' with
+                # a {synthesizedBy: <channel>} provenance_metadata payload.
+                " provenance text NOT NULL DEFAULT 'ast'"
+                "   CHECK (provenance IN ('ast', 'scip', 'heuristic')),"
+                " provenance_metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb,"
                 " PRIMARY KEY (project_id, edge_type, src_node_id, dst_node_id))"
             ).format(fq=fq)
         )
@@ -589,6 +618,12 @@ def write_edges_schema(dsn: str, *, schema: str) -> None:
                 "CREATE INDEX IF NOT EXISTS {ix} ON {fq} "
                 "(project_id, edge_kind)"
             ).format(ix=sql.Identifier("code_edges_kind_idx"), fq=fq)
+        )
+        cur.execute(
+            sql.SQL(
+                "CREATE INDEX IF NOT EXISTS {ix} ON {fq} "
+                "(project_id, provenance)"
+            ).format(ix=sql.Identifier("code_edges_provenance_idx"), fq=fq)
         )
         conn.commit()
 
@@ -631,14 +666,18 @@ def write_edges(
             Json(e.get("evidence") or {}),
             # CS-2: every finalize() edge now carries edge_kind (Task 3).
             e["edge_kind"],
+            # CS-5: every finalize() edge now carries provenance + metadata.
+            e["provenance"],
+            Json(e.get("provenance_metadata") or {}),
         )
         for e in edges
     ]
 
     insert = sql.SQL(
         "INSERT INTO {fq} (project_id, edge_type, src_fqn, dst_fqn,"
-        " src_node_id, dst_node_id, confidence, evidence, edge_kind) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        " src_node_id, dst_node_id, confidence, evidence, edge_kind,"
+        " provenance, provenance_metadata) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
         "ON CONFLICT (project_id, edge_type, src_node_id, dst_node_id) "
         "DO UPDATE SET"
         "  src_fqn = EXCLUDED.src_fqn,"
@@ -647,7 +686,13 @@ def write_edges(
         "  evidence = EXCLUDED.evidence,"
         # CS-2: preserve edge_kind on update so a re-run with a changed
         # mapping (future ontology migration) doesn't leave stale values.
-        "  edge_kind = EXCLUDED.edge_kind"
+        "  edge_kind = EXCLUDED.edge_kind,"
+        # CS-5: preserve provenance + provenance_metadata on update so a
+        # CS-3-era reclassification (e.g., an edge previously synthesized
+        # heuristically gets re-derived from AST in a later run) cleanly
+        # overwrites instead of leaving stale provenance.
+        "  provenance = EXCLUDED.provenance,"
+        "  provenance_metadata = EXCLUDED.provenance_metadata"
     ).format(fq=fq)
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:

@@ -489,3 +489,37 @@ def test_finalize_emits_correct_edge_kind_for_inherits_and_implements() -> None:
     assert by_kind["extends"]["edge_type"] == "INHERITS"
     assert "implements" in by_kind
     assert by_kind["implements"]["edge_type"] == "IMPLEMENTS"
+
+
+# ---------------------------------------------------------------------------
+# CS-5: provenance on every finalize edge
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_emits_provenance_ast_with_empty_metadata() -> None:
+    """Every edge from finalize() carries provenance='ast' and provenance_metadata={}."""
+    from chunkshop.config import CodeRelationshipsExtractor as Cfg
+    from chunkshop.extractors.code_relationships import CodeRelationshipsExtractor
+
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    # Minimal cross-file Python: a.py defines foo; b.py calls foo.
+    ext.extract(
+        "def foo():\n    pass\n",
+        language="python",
+        source_path="a.py",
+    )
+    ext.extract(
+        "def bar():\n    foo()\n",
+        language="python",
+        source_path="b.py",
+    )
+    edges = ext.finalize(project_id="test")
+
+    assert len(edges) >= 1
+    for e in edges:
+        # CS-2 regression: edge_type + edge_kind still present.
+        assert "edge_type" in e
+        assert "edge_kind" in e
+        # CS-5: provenance + provenance_metadata present with default values.
+        assert e["provenance"] == "ast"
+        assert e["provenance_metadata"] == {}
