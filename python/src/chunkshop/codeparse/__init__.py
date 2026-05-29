@@ -8,6 +8,7 @@ Public surface (stable for SP-B / SP-C / SP-D)::
         CallSite,
         ParseResult,
         build_fqn,
+        build_scope_chain,
         code_symbol_node_id,
     )
 
@@ -26,6 +27,7 @@ from __future__ import annotations
 from chunkshop.codeparse.base import CallSite, ParseResult, Symbol
 from chunkshop.codeparse.fqn import build_fqn
 from chunkshop.codeparse.id import code_symbol_node_id
+from chunkshop.codeparse.scope import build_scope_chain
 from chunkshop.codeparse.tree_sitter_wrapper import parse_file
 
 __all__ = [
@@ -33,6 +35,7 @@ __all__ = [
     "ParseResult",
     "Symbol",
     "build_fqn",
+    "build_scope_chain",
     "code_symbol_node_id",
     "parse_file",
 ]

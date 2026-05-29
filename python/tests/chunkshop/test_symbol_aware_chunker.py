@@ -132,6 +132,32 @@ def test_python_function_boundaries():
         assert c.original_content.strip() != ""
 
 
+def test_top_level_functions_stamp_scope_chain():
+    """Top-level functions get a human-readable scope_chain: ``stem > name``."""
+    chunker = _make(include_imports=False)
+    chunks = chunker.chunk(_doc(THREE_PY_FNS, path="three_fns.py"))
+
+    fn_chunks = [c for c in chunks if c.metadata.get("symbol_type") == "function"]
+    chains = {c.metadata["scope_chain"] for c in fn_chunks}
+    assert chains == {
+        "three_fns > add",
+        "three_fns > subtract",
+        "three_fns > multiply",
+    }
+
+
+def test_method_scope_chain_includes_parent_class():
+    """A method's scope_chain slots its enclosing class: ``stem > Class > method``."""
+    content = PY_FIXTURE.read_text()
+    chunker = _make(granularity="function", include_imports=False)
+    chunks = chunker.chunk(_doc(content, path="calc/sample.py"))
+
+    # granularity=function bundles methods into the class chunk; the class
+    # chunk's own scope_chain is ``stem > Calculator`` (no parent).
+    class_chunks = [c for c in chunks if c.metadata.get("symbol_type") == "class"]
+    assert class_chunks[0].metadata["scope_chain"] == "sample > Calculator"
+
+
 # --- 4. python class with methods (function granularity) ------------------
 
 
