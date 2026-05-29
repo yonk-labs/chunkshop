@@ -24,6 +24,12 @@
 
 - **A/B emission contract: §4.6 verdict qualified by new §4.6.1.** The "NAIVE WINS" verdict (PR #45) tested 2 of 3 retrieval modes defined in §4.2 (`naive_vector` + `graph_leg`-as-primary). The `hybrid` mode (vector-first then graph-expansion — chunkshop's intended production shape, per §4.2 "optional but recommended") was not run. The new §4.6.1 documents this gap, explains why graph-as-primary's failure profile (NER fallback to whitespace tokens skipped 7/12 questions by construction) doesn't extrapolate to hybrid, and **puts §3.8's "freeze edge-tier work / deprioritize RM-C / reconsider facts/cooccur" directive ON HOLD** pending a hybrid-mode re-run. Tracking issue filed against pg-raggraph.
 
+### Fixed
+
+- **`codeparse`: calls inside nested functions now attribute to the outermost emitted symbol (Risk 1).** Previously `_enclosing_function` returned the innermost function, so a call inside a nested function produced a `CALLS` edge whose `caller_node_id` referenced a symbol that was never emitted (an orphan edge source). Fixed for Python and the ECMAScript family (TypeScript + JavaScript, which share the walker). Go/Java were already structurally safe (no nested function *declarations*).
+- **`codeparse`: Python symbol spans now include decorator lines (Risk 2).** A decorated `def`/`class` previously began at the `def`/`class` line, dropping `@decorator` lines from the symbol's `original_content` and `start_line` metadata. The span now starts at the first decorator (the `decorated_definition` node).
+- Added a corpus-scale invariant test (no orphan callers, in-bounds spans, no parse crashes, deterministic node_ids) over chunkshop's own source tree, plus realistic per-language fixtures exercising nesting + decorators. This is the regression net that hardens the extractor pattern before it is replicated across new languages (sub-project A).
+
 ## 0.7.0 — 2026-05-27
 
 Agent-memory fact extraction goes batteries-included, plus a read-time
