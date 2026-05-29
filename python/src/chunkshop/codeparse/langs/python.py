@@ -80,6 +80,20 @@ def _walk_symbols(root: Any, file_path: str, source: bytes) -> list[Symbol]:
     """
     symbols: list[Symbol] = []
 
+    def _span(node: Any) -> tuple[int, int]:
+        """1-based inclusive span, widened to the decorator block if any.
+
+        A decorated ``def``/``class`` is wrapped in a ``decorated_definition``
+        node whose first child is the ``@decorator``. Without this, the span
+        would start at the ``def``/``class`` line and silently drop the
+        decorator lines from the symbol's ``original_content``.
+        """
+        span_node = node
+        parent = node.parent
+        if parent is not None and parent.type == "decorated_definition":
+            span_node = parent
+        return (span_node.start_point[0] + 1, span_node.end_point[0] + 1)
+
     def visit(node: Any, parent_class: Optional[str]) -> None:
         ntype = node.type
         if ntype == "class_definition":
@@ -93,8 +107,8 @@ def _walk_symbols(root: Any, file_path: str, source: bytes) -> list[Symbol]:
                         name=name,
                         fqn=build_fqn(file_path, name, None),
                         symbol_type="class",
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
+                        line_start=_span(node)[0],
+                        line_end=_span(node)[1],
                         parent_name=None,
                     )
                 )
@@ -113,8 +127,8 @@ def _walk_symbols(root: Any, file_path: str, source: bytes) -> list[Symbol]:
                         name=name,
                         fqn=build_fqn(file_path, name, parent_class),
                         symbol_type=sym_type,
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
+                        line_start=_span(node)[0],
+                        line_end=_span(node)[1],
                         parent_name=parent_class,
                     )
                 )
