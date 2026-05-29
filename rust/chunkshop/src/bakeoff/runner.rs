@@ -60,6 +60,8 @@ pub fn chunker_label(cfg: &ChunkerConfig) -> String {
         ChunkerConfig::SummaryEmbed(_) => "summary_embed".to_string(),
         ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary".to_string(),
         ChunkerConfig::Consolidation(_) => "consolidation".to_string(),
+        #[cfg(feature = "code-aware")]
+        ChunkerConfig::SymbolAware(_) => "symbol_aware".to_string(),
     }
 }
 

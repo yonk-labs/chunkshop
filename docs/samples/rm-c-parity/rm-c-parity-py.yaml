@@ -1,0 +1,37 @@
+# Python-side ingest for RM-C cross-port E2E parity test (SC-004).
+# Consumed by python/tests/chunkshop/test_rm_c_e2e_parity.py.
+#
+# Mission brief: skill-output/mission-brief/Mission-Brief-rm-c-rust-code-aware-chunkers.md
+# Plan: docs/superpowers/plans/2026-05-28-rm-c-rust-code-aware-chunkers.md
+
+cell_name: rm_c_parity_py
+
+source:
+  type: files
+  glob: python/tests/fixtures/rm-c-parity/*
+  id_from: stem
+
+chunker:
+  type: symbol_aware
+
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+  threads: 4
+
+extractor:
+  type: none
+
+target:
+  type: postgres
+  dsn_env: CHUNKSHOP_TEST_DSN
+  database: chunkshop_test
+  table: rm_c_py
+  mode: overwrite
+  force_overwrite: true
+  hnsw: false
+
+runtime:
+  omp_num_threads: 2
+  log_path: /tmp/chunkshop-rm-c-py.log

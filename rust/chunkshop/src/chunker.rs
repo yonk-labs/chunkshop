@@ -1567,6 +1567,10 @@ pub fn build_chunker(cfg: ChunkerConfig) -> anyhow::Result<Box<dyn ChunkerImpl +
                 fact_max_chars,
             ))
         }
+        #[cfg(feature = "code-aware")]
+        ChunkerConfig::SymbolAware(c) => Box::new(
+            crate::chunkers::symbol_aware::SymbolAwareChunker::new(c),
+        ),
     })
 }
 

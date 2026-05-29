@@ -311,6 +311,13 @@ fn chunker_to_yaml_value(c: &crate::config::ChunkerConfig) -> Result<Value> {
                  not the bakeoff matrix; exclude it from bakeoff configs."
             ));
         }
+        #[cfg(feature = "code-aware")]
+        C::SymbolAware(_) => {
+            return Err(anyhow::anyhow!(
+                "symbol_aware chunker is not in the bakeoff matrix today; \
+                 it targets source-code corpora, not the prose QA corpus."
+            ));
+        }
     })
 }
 

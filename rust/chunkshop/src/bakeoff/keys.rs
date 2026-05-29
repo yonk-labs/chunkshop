@@ -70,6 +70,13 @@ pub fn chunker_key(cfg: &ChunkerConfig) -> Result<String> {
                  (RM-A), not the bakeoff matrix; exclude it from bakeoff configs."
             ));
         }
+        #[cfg(feature = "code-aware")]
+        ChunkerConfig::SymbolAware(_) => {
+            return Err(anyhow!(
+                "symbol_aware chunker is not in the bakeoff matrix today; \
+                 it targets source-code corpora, not the prose QA corpus."
+            ));
+        }
     })
 }
 

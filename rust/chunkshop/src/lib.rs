@@ -42,6 +42,8 @@ pub mod backends;
 pub mod bakeoff;
 #[cfg(feature = "chunkers")]
 pub mod chunker;
+#[cfg(all(feature = "code-aware", feature = "chunkers"))]
+pub mod chunkers;
 pub mod codeparse;
 pub mod config;
 #[cfg(feature = "embedder-core")]

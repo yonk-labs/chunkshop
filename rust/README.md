@@ -24,7 +24,8 @@ and the same bakeoff YAML produces equivalent leaderboards in both languages
 > | `RawStore` (filesystem + S3) | ✅ | ✅ (RM-B) |
 > | `orchestrate` (N cells in parallel subprocesses) | ✅ | ❌ |
 > | chunkshop-connectors plugin (gdrive/github/blob/rss/slack/notion/dropbox/gitlab + 20 stubs) | ✅ | Python-only by design (spec D6) |
-> | `code_aware` / `symbol_aware` chunkers + `code_relationships` / `code_summary` extractors | ✅ | Python-only by design (spec D6) |
+> | `symbol_aware` chunker (Python + Java grammars, syntax-error fallback) | ✅ | ✅ (RM-C, opt-in `code-aware-python` / `code-aware-java` features — see crate `README.md` "Code-aware chunking") |
+> | `code_aware` chunker + `code_relationships` / `code_summary` extractors | ✅ | ❌ (tracked in chunkshop#40/#41/#42/#43) |
 >
 > Cross-language bakeoff parity is **verified** per-run by
 > `scripts/parity_check_bakeoff.py`: same YAML, leaderboards within
