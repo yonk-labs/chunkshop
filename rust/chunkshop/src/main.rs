@@ -52,6 +52,8 @@ fn chunker_type_label(c: &ChunkerConfig) -> &'static str {
         ChunkerConfig::SummaryEmbed(_) => "summary_embed",
         ChunkerConfig::HierarchicalSummary(_) => "hierarchical_summary",
         ChunkerConfig::Consolidation(_) => "consolidation",
+        #[cfg(feature = "code-aware")]
+        ChunkerConfig::SymbolAware(_) => "symbol_aware",
     }
 }
 
