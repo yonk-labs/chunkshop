@@ -338,42 +338,46 @@ grep -A1 "^### 4\." docs/superpowers/specs/2026-05-28-chunkshop-to-pg-raggraph-e
 
 When all four artifacts land `[x]`, the A/B experiment is ready to run. The verdict it produces is what determines whether more edge tiers (Tier-2 LLM-validate, future RM-C Rust port consumers) are worth building.
 
-### 4.6 Verdict (run 2026-05-28) — ⚠️ PROVISIONAL, `hybrid` mode NOT tested
+### 4.6 Verdict (complete 3-mode run, 2026-05-28)
 
-The four artifacts are `[x]` and the experiment ran end-to-end. **But it tested
-only 2 of the 3 modes §4.2 defines** — `naive_vector` and `graph_leg`. The
-third, `hybrid` (vector seeds candidates, graph expands/reranks), is the
-production-shaped mode this emission was designed to feed, and it was **not
-run** (it is `NotImplementedError` in pg-raggraph's harness). So this verdict
-answers a narrower question than §3's gate.
+All three §4.2 modes were tested (the earlier 2-mode run is superseded —
+`hybrid` is now implemented in pg-raggraph's harness). gpt-4o-mini judge, both
+bakeoff corpora.
 
-**Provisional verdict: NAIVE WINS vs `graph_leg` (graph-as-primary).** This is
-NOT the same as "naive beats graph" — the mode where graph was expected to help
-was never measured.
+**Verdict: NAIVE WINS — graph wins no metric in either comparison.** But the
+two graph modes tell different stories:
 
-| Combined metric | naive | `graph_leg` | Δ | §3.2 label |
+| Comparison | Recall@10 Δ | MRR Δ | Judge Δ | §3.3 |
 |---|---:|---:|---:|---|
-| Recall@10 | 0.875 | 0.125 | −75.0pp | NAIVE WINS |
-| MRR | 0.623 | 0.088 | −0.535 | NAIVE WINS |
-| LLM-judge win-rate | 0.917 | 0.250 | −0.667 | NAIVE WINS |
+| naive vs `graph_leg` (graph-as-primary) | −75.0pp | −0.535 | −0.667 | NAIVE WINS 3–0 |
+| naive vs `hybrid` (graph-as-augmentation) | −12.5pp | −0.113 | −0.042 → **TIE** | NAIVE WINS 2–0–1 |
 
-(Numbers use pg-raggraph's improved query-term encoder, which lifted `graph_leg`
-SCOTUS coverage 5/12 → 9/12; an earlier run reported −83.3pp. Both predate any
-`hybrid` test.) Latency (§3.6): naive 51 ms p50, `graph_leg` 105 ms.
+`graph_leg` loses badly (it must entity-resolve the *question* to seed its walk,
+so it fails on weak-NER queries — its worst-fit mode). `hybrid` (vector seeds
+candidates, graph reranks them; no question NER) is **near parity**: it **ties
+on answer quality** (judge 0.875 vs 0.917 combined; SCOTUS exactly 0.833=0.833)
+and loses retrieval only slightly. Latency: naive 51 ms p50, graph_leg/hybrid ~105 ms.
 
-**Why `graph_leg` losing does NOT settle the gate:** `graph_leg` must
-entity-resolve the *question* to seed its walk, so it fails by construction on
-queries with weak NER (NTSB's descriptive keyword questions; ~3/12 SCOTUS even
-after the encoder fix). `hybrid` has the opposite failure profile — the vector
-leg seeds the candidate set and the graph never entity-resolves the question,
-only the retrieved chunks. A large part of the −75pp gap is an artifact of
-running graph in its worst-fit mode.
+**What this means for §3.8 — direction holds, but read it precisely:**
 
-**§3.8 is therefore NOT triggered.** Do **not** freeze edge-tier work, drop
-RM-C consumers, or abandon facts/cooccur on this evidence — the deciding mode
-hasn't been measured. Resolution is gated on pg-raggraph implementing + A/B
-testing `hybrid` (tracked: pg-raggraph issue + PR yonk-labs/pg-raggraph#54).
-Full report + repro: pg-raggraph `benchmarks/ab-gate/RESULTS.md`.
+- §3.8's NAIVE WINS direction **is** supported: naive wins or ties every metric
+  in both comparisons; graph wins nothing, even in its best (hybrid) mode.
+- BUT this is **not** evidence that facts/cooccur are *harmful*. Hybrid ties on
+  answer quality — the graph layer is neutral-to-slightly-negative on retrieval,
+  not destructive. The honest finding is "**graph doesn't earn its cost on
+  these clean technical corpora,**" not "graph hurts."
+- Caveats that bound this: the `hybrid` reranker is a **v1 entity-overlap
+  centrality heuristic** (untuned); n=24 questions; both corpora are clean
+  single-domain prose. A relevance-tuned graph reranker, or a corpus with real
+  cross-document entity reasoning, could move the hybrid result. This run does
+  not rule that out.
+
+**Recommendation:** the freeze/deprioritize call in §3.8 is defensible on this
+evidence, but frame it as "graph-as-retrieval isn't paying off here," and keep
+the door open for (a) a relevance-tuned hybrid reranker and (b) a messier
+multi-hop corpus before treating facts/cooccur as dead weight. Full report +
+per-mode artifacts + repro: pg-raggraph `benchmarks/ab-gate/RESULTS.md`
+(PR yonk-labs/pg-raggraph#54).
 
 ## 5. Change-Management
 Shape changes require:
