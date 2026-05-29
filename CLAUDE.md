@@ -13,7 +13,11 @@ All commands below assume you're in `python/` unless noted. `uv` is the default 
 ```bash
 cd python
 
-# Install — the full extras set CI uses (so local runs match what CI exercises).
+# Install — one-shot: syncs all extras CI uses + the spaCy model. Idempotent.
+bash ../scripts/dev-setup.sh
+
+# …or run the two steps by hand (this is exactly what dev-setup.sh does).
+# The full extras set CI uses (so local runs match what CI exercises).
 # `code` pulls tree-sitter + Python/Java grammars for the symbol_aware chunker
 # + code_relationships extractor. `all-parsers` pulls pypdf/python-docx/etc.
 # for the SP-3 file-parser layer. `lede` + `lede-spacy` flip the 6 search /
