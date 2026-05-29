@@ -338,35 +338,85 @@ grep -A1 "^### 4\." docs/superpowers/specs/2026-05-28-chunkshop-to-pg-raggraph-e
 
 When all four artifacts land `[x]`, the A/B experiment is ready to run. The verdict it produces is what determines whether more edge tiers (Tier-2 LLM-validate, future RM-C Rust port consumers) are worth building.
 
-### 4.6 Verdict (run 2026-05-28)
+### 4.6 Verdict (corrected 2026-05-29 — graph WINS on a real graph)
 
-All four artifacts are `[x]`. The experiment was run end-to-end: chunkshop
-emitted `lede_spacy` facts + cooccur edges for both bakeoff corpora (SCOTUS
-772 episodes / 2014 facts; NTSB 20 / 60), pg-raggraph imported them, materialized
-graph entities from the fact endpoints + cooccur nodes, ran `naive_vector` vs
-`graph_leg` over the gold questions, and judged answers with `gpt-4o-mini`.
+> **⚠️ CORRECTION.** A prior version of this section claimed **"vector is never
+> beaten,"** citing an MHR run. **That MHR result is retracted — it measured an
+> empty graph.** The MHR namespace had 2,288 entities but **0 `relationships`**
+> (pg-raggraph's A/B materializer inserted nodes, never edges), so the "graph"
+> modes walked nothing. And the deep-traversal experiment that the old caveat
+> called "untested" has now been **run** — graph beats vector. Both fixes below.
 
-**Verdict: NAIVE WINS** (3 metrics to 0; both corpora agree).
+**The real test, on a real graph.** SCOTUS + NTSB are clean single-domain prose
+where single-doc lookup suffices (graph not expected to help — those rows stand).
+The fair multi-hop test needs a *real entity-resolved graph*, which chunkshop's
+`lede_spacy` facts are **not** (they're grammatical subject-verb-object fragments
+— pronouns, truncated objects, ~1:1 distinct surfaces — not a traversable KG).
+So the corrected run uses **`bench_musique`**: an LLM-extracted KG (9,809 typed
+edges — `PART_OF`/`LOCATED_IN`/`PARTICIPATED_IN`…, avg degree 2.25), 100
+compositional 2/3/4-hop MuSiQue questions, run through pg-raggraph's **actual
+recursive-traversal mode** (`local`, `WITH RECURSIVE … max_hops=2`). Answer-gen
+Qwen; **dual judge** gemma + gpt-5-mini (82% agreement).
 
-| Combined metric | naive | graph | Δ | §3.2 label |
+**Cross-corpus result — corrected:**
+
+| Corpus | shape | graph vs vector |
+|---|---|---|
+| SCOTUS / NTSB | clean prose | NAIVE wins/ties — graph not expected to help. Valid. |
+| ~~MHR (ab-gate)~~ | ~~multi-hop~~ | **RETRACTED — 0 edges, measured nothing.** |
+| **MuSiQue** (real KG) | **multi-hop, LLM-extracted graph** | **GRAPH (`local`) WINS** — judge 45.3/44.0 vs naive 40.3/39.0 (gemma/gpt-5-mini), **+4-5pp**, stable across 2 runs. |
+
+**On a real graph with real recursive traversal, graph beats vector on multi-hop
+QA — by ~4-5pp end-to-end.** This *corroborates* the multi-hop thesis. Honest
+caveats: **retrieval recall is flat** (~58-59% all modes — the lift is better
+answer-*context*, not recall); per-hop n=33 splits are noise; only `local` is
+judge-robust; modest magnitude. Full report: pg-raggraph
+`benchmarks/ab-gate/RESULTS.md` + `benchmarks/musique/`.
+
+**SCOTUS + NTSB detail (clean prose — the shallow ab-gate harness over
+chunkshop's emission).** These two corpora are valid and stand: on clean
+single-domain prose, the shallow graph ops don't beat vector. The two graph
+modes tell different stories:
+
+| Comparison | Recall@10 Δ | MRR Δ | Judge Δ | §3.3 |
 |---|---:|---:|---:|---|
-| Recall@10 | 0.875 | 0.042 | −83.3pp | NAIVE WINS |
-| MRR | 0.623 | 0.042 | −0.581 | NAIVE WINS |
-| LLM-judge win-rate | 0.917 | 0.208 | −0.708 | NAIVE WINS |
+| naive vs `graph_leg` (graph-as-primary) | −75.0pp | −0.535 | −0.667 | NAIVE WINS 3–0 |
+| naive vs `hybrid` (graph-as-augmentation) | −12.5pp | −0.113 | −0.042 → **TIE** | NAIVE WINS 2–0–1 |
 
-§3.3 combiner → NAIVE WINS; §3.4 asymmetry guard not triggered (graph loses
-both corpora). Latency (§3.6, informational): naive 51 ms p50, graph 105 ms.
+`graph_leg` loses badly (it must entity-resolve the *question* to seed its walk,
+so it fails on weak-NER queries — its worst-fit mode). `hybrid` (vector seeds
+candidates, graph reranks them; no question NER) is **near parity**: it **ties
+on answer quality** (judge 0.875 vs 0.917 combined; SCOTUS exactly 0.833=0.833)
+and loses retrieval only slightly. Latency: naive 51 ms p50, graph_leg/hybrid ~105 ms.
 
-**Per §3.8 → freeze edge-tier work; deprioritize Rust RM-C consumers;
-reconsider whether the existing facts/cooccur are worth maintaining.**
+**What this means for §3.8 — split by what graph you build:**
 
-Caveats (from the pg-raggraph run; they bound the magnitude, not the direction):
-small gold sets (12 Q/corpus); `graph_leg` only attempted 5/12 questions per
-corpus because query-side `lede_spacy` NER often found no entities and fell back
-to whitespace tokens; 2/12 SCOTUS gold docs were absent (symmetric across both
-legs). None of these flip an 83-percentage-point recall gap. Full report +
-artifacts + repro: pg-raggraph `benchmarks/ab-gate/RESULTS.md` (PR
-yonk-labs/pg-raggraph#54).
+- On **clean prose** (SCOTUS/NTSB), shallow graph ops over chunkshop's emission
+  don't beat vector — graph doesn't earn its cost there. Not "harmful" (`hybrid`
+  ties on answer quality), just not worth it on that workload.
+- On a **real multi-hop KG** (MuSiQue), deep recursive traversal (`local`)
+  **does** beat vector (+4-5pp). The decisive experiment the old version called
+  "untested" has been run, and it came back **positive** for graph.
+- The discriminating variable is **graph quality**: an entity-resolved,
+  typed-edge KG (LLM extraction) is traversable and wins; `lede_spacy` SVO
+  fragments are not and don't.
+
+**Recommendation (corrected — decisive experiment is done):**
+
+- **Deprioritize edge-tier investment *over the `lede_spacy` emission specifically*.**
+  Those facts are not a traversable graph; building a graph leg on them won't
+  pay off. This is a narrow call about *that emission*, not about GraphRAG.
+- **Do NOT retire facts/cooccur or RM-C as a class.** The corrected result shows
+  the *real* value is a resolved, typed-edge KG — exactly what stronger
+  extraction (LLM, or an improved consolidator) + RM-C consumers produce. They
+  are the substrate that made `local` beat vector. Retiring them removes the win.
+- **The highest-leverage next step is a *better graph*, not more retrieval
+  modes** — entity resolution + typed relations in the emission, so the
+  recursive traversal that already wins on MuSiQue has a real graph to walk on
+  chunkshop-fed corpora too.
+
+Full report + per-mode + per-corpus artifacts: pg-raggraph
+`benchmarks/ab-gate/RESULTS.md` + `benchmarks/musique/` (PR yonk-labs/pg-raggraph#54).
 
 ### 4.6.1 Hybrid-mode-untested caveat (status: §3.8 freeze ON HOLD)
 
