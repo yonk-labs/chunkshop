@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Optional
 
 from chunkshop.codeparse import Symbol, build_fqn, code_symbol_node_id
@@ -172,6 +173,26 @@ def _key(fqn: str) -> str:
     return fqn.rsplit(".", 1)[-1]
 
 
+_IDENT_SPLIT = re.compile(r"[^A-Za-z0-9_]+")
+
+
+def _import_tokens(imports: list[str]) -> set[str]:
+    """Lowercased identifier tokens across all of a file's import strings.
+
+    Language-agnostic: splits each import on non-identifier chars so
+    ``"from foo.bar import helper"`` -> {"from","foo","bar","import","helper"}
+    and ``"use crate::a::b;"`` -> {"use","crate","a","b"}. Keyword noise
+    (``from``/``import``/``use``/``include``) is harmless — narrowing matches
+    against a candidate file's *stem*, which is never a language keyword.
+    """
+    out: set[str] = set()
+    for imp in imports:
+        for tok in _IDENT_SPLIT.split(imp):
+            if tok:
+                out.add(tok.lower())
+    return out
+
+
 class CodeRelationshipsExtractor:
     """See module docstring."""
 
@@ -188,6 +209,9 @@ class CodeRelationshipsExtractor:
         self.cfg = cfg
         # symbols: fqn -> {language, file_path, symbol}
         self._symbols: dict[str, dict[str, Any]] = {}
+        # C: file_path -> set of import tokens, for import-aware narrowing
+        # of ambiguous cross-file name matches in finalize().
+        self._file_imports: dict[str, set[str]] = {}
         # name -> set of fqns that share that bare name
         self._by_name: dict[str, set[str]] = defaultdict(set)
         # Unresolved CALLS edges: (caller_fqn, caller_lang, caller_path,
@@ -224,6 +248,14 @@ class CodeRelationshipsExtractor:
 
         path = source_path or "<text>"
         result = parse_text(text, language=lang, file_path=path)
+
+        # C: stash the caller file's import tokens for import-aware cross-file
+        # resolution in finalize(). Merge (a file may arrive across multiple
+        # chunks) so tokens accumulate rather than overwrite.
+        if result.imports:
+            self._file_imports.setdefault(path, set()).update(
+                _import_tokens(result.imports)
+            )
 
         # Register every symbol we saw so finalize() can resolve names.
         for sym in result.symbols:
@@ -401,20 +433,42 @@ class CodeRelationshipsExtractor:
                     provenance="heuristic",
                 )
             else:
-                for cand in candidates:
+                # C: narrow by the caller file's imports. If exactly one
+                # candidate's module is imported, emit a single precise edge;
+                # otherwise keep the ambiguous fan-out (no regression).
+                supported = [
+                    c for c in candidates
+                    if self._import_supported(pc["caller_path"], c)
+                ]
+                if len(supported) == 1:
                     _emit(
                         edge_type="CALLS",
                         src_fqn=pc["caller_fqn"],
-                        dst_fqn=cand,
-                        confidence=self.cfg.ambiguous_match_confidence,
+                        dst_fqn=supported[0],
+                        confidence=self.cfg.unique_match_confidence,
                         evidence={
                             "line": pc["line"],
                             "snippet": pc["snippet"],
-                            "resolution": "ambiguous_name",
+                            "resolution": "import_resolved",
                             "candidates": candidates,
                         },
                         provenance="heuristic",
                     )
+                else:
+                    for cand in candidates:
+                        _emit(
+                            edge_type="CALLS",
+                            src_fqn=pc["caller_fqn"],
+                            dst_fqn=cand,
+                            confidence=self.cfg.ambiguous_match_confidence,
+                            evidence={
+                                "line": pc["line"],
+                                "snippet": pc["snippet"],
+                                "resolution": "ambiguous_name",
+                                "candidates": candidates,
+                            },
+                            provenance="heuristic",
+                        )
 
         # ----- INHERITS / IMPLEMENTS edges -----
         for ce in self._pending_class_edges:
@@ -431,18 +485,37 @@ class CodeRelationshipsExtractor:
                     provenance="heuristic",
                 )
             else:
-                for cand in candidates:
+                # C: same import-aware narrowing as the CALLS branch, keyed
+                # on the subclass's own file imports (ce["src_path"]).
+                supported = [
+                    c for c in candidates
+                    if self._import_supported(ce["src_path"], c)
+                ]
+                if len(supported) == 1:
                     _emit(
                         edge_type=ce["edge_type"],
                         src_fqn=ce["src_fqn"],
-                        dst_fqn=cand,
-                        confidence=self.cfg.ambiguous_match_confidence,
+                        dst_fqn=supported[0],
+                        confidence=self.cfg.unique_match_confidence,
                         evidence={
-                            "resolution": "ambiguous_name",
+                            "resolution": "import_resolved",
                             "candidates": candidates,
                         },
                         provenance="heuristic",
                     )
+                else:
+                    for cand in candidates:
+                        _emit(
+                            edge_type=ce["edge_type"],
+                            src_fqn=ce["src_fqn"],
+                            dst_fqn=cand,
+                            confidence=self.cfg.ambiguous_match_confidence,
+                            evidence={
+                                "resolution": "ambiguous_name",
+                                "candidates": candidates,
+                            },
+                            provenance="heuristic",
+                        )
 
         edges.sort(key=lambda e: (e["edge_type"], e["src_fqn"], e["dst_fqn"]))
         return edges
@@ -450,6 +523,24 @@ class CodeRelationshipsExtractor:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _import_supported(self, caller_path: str, candidate_fqn: str) -> bool:
+        """True if the caller file imports the module defining candidate_fqn.
+
+        Conservative, language-agnostic: the candidate's file *stem*
+        (``foo/bar.py`` -> ``bar``) must appear in the caller's import
+        tokens. Two files defining the same name differ by stem, so the
+        stem is the disambiguator. Returns False when the caller has no
+        recorded imports (then the ambiguous fan-out is preserved).
+        """
+        tokens = self._file_imports.get(caller_path, set())
+        if not tokens:
+            return False
+        cand = self._symbols.get(candidate_fqn)
+        if cand is None:
+            return False
+        stem = Path(cand["file_path"]).stem.lower()
+        return bool(stem) and stem in tokens
 
     def _project_id_for(self, file_path: str) -> str:
         """Project ID used during the per-chunk pass.
