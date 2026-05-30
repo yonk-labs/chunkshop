@@ -19,6 +19,12 @@ in either, and how to A/B two embedders on the same corpus.
 > user-facing catalogue: verified-working models, known-broken ones,
 > dimensions, max tokens, ONNX file sizes, and an int8 explainer.
 
+> **Don't want local ONNX at all?** The opt-in `type: openai` embedder calls a
+> remote OpenAI-compatible `/v1/embeddings` endpoint instead (OpenAI, Azure,
+> Voyage, Mistral, Together, or a local TEI/vLLM/Ollama server) via `base_url` +
+> `model` + optional `api_key_env`. `fastembed` stays the default. See
+> [**`docs/reference/embedder-openai.md`**](reference/embedder-openai.md).
+
 ## Catalogue
 
 | `model_name`                             | dim | Precision | Python | Rust  | Notes                                  |

@@ -30,6 +30,12 @@ For task-oriented walkthroughs, see [`docs/cookbook/`](../cookbook/).
 | [`chunker-code-aware`](chunker-code-aware.md) | Python AST chunker (stdlib `ast`). One chunk per top-level def/class. |
 | [`chunker-symbol-aware`](chunker-symbol-aware.md) | Multi-language (Python, Java, Go, TypeScript, JavaScript, Rust, C, C++, C#, Ruby) — all via real tree-sitter grammars in the `[code]` extra (regex fallback when the extra is absent). |
 
+## Embedders
+
+| Surface | One-liner |
+|---|---|
+| [`embedder-openai`](embedder-openai.md) | Opt-in `type: openai` remote embedder for any OpenAI-compatible `/v1/embeddings` endpoint (OpenAI / Voyage / Mistral / Together / local TEI/vLLM/Ollama). `fastembed` stays the default. |
+
 ## Extractors
 
 | Surface | One-liner |

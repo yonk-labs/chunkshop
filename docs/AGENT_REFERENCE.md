@@ -471,7 +471,8 @@ to materialize the `code_edges` table.
 
 ## Available embedders (discriminator + config schema)
 
-Only one type today: `fastembed`.
+Two types: `fastembed` (default, local ONNX) and `openai` (opt-in, remote
+OpenAI-compatible `/v1/embeddings`).
 
 ```yaml
 embedder:
@@ -498,6 +499,25 @@ Chunkshop ships these int8 variants registered out of the box:
 - `Xenova/bge-large-en-v1.5-int8` (dim 1024) — high-quality
 
 See `docs/embedder-catalogue.md` for the full list + benchmarks.
+
+The opt-in remote embedder (calls any OpenAI-compatible `/v1/embeddings`
+endpoint — OpenAI, Azure, Voyage, Mistral, Together, or local TEI/vLLM/Ollama):
+
+```yaml
+embedder:
+  type: openai
+  model: text-embedding-3-small             # model the endpoint serves
+  dim: 1536                                 # MUST match the model's output width
+  base_url: https://api.openai.com/v1       # repoint for other providers / local servers
+  api_key_env: OPENAI_API_KEY               # env var NAME holding the bearer token; omit for keyless local
+  batch_size: 64
+  timeout: 60
+  max_retries: 3
+```
+
+`fastembed` stays the default. The API key is read from the named env var at
+runtime — never written in YAML. See `docs/reference/embedder-openai.md` for the
+per-provider config table (incl. the Anthropic→Voyage note and Azure caveat).
 
 ---
 

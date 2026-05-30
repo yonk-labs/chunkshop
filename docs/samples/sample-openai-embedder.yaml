@@ -1,0 +1,30 @@
+# Remote embedder example. NOT the default — fastembed is. This shows the
+# opt-in `type: openai` embedder against a keyless local server; the commented
+# block shows a keyed cloud provider (key supplied via api_key_env, never here).
+cell_name: openai_embedder_example
+source:
+  type: inline
+  documents:
+    - id: doc-1
+      content: "chunkshop can embed against a remote OpenAI-compatible endpoint."
+chunker:
+  type: sentence_aware
+  max_chars: 2000
+embedder:
+  type: openai
+  model: nomic-embed-text          # a model your endpoint serves
+  dim: 768                         # MUST match the model's output width
+  base_url: http://localhost:11434/v1   # local Ollama; keyless
+  # --- keyed cloud provider instead (OpenAI / Voyage / Mistral / Together): ---
+  # model: text-embedding-3-small
+  # dim: 1536
+  # base_url: https://api.openai.com/v1
+  # api_key_env: OPENAI_API_KEY    # env var NAME — export the key, don't write it here
+  batch_size: 64
+  timeout: 60
+  max_retries: 3
+target:
+  type: postgres
+  mode: overwrite
+  table: openai_embedder_demo
+  dsn_env: CHUNKSHOP_DSN
