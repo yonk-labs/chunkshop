@@ -775,7 +775,43 @@ class FastembedEmbedder(_Base):
         return self
 
 
-EmbedderConfig = Annotated[Union[FastembedEmbedder], Field(discriminator="type")]
+class OpenAIEmbedder(_Base):
+    """Remote embedder calling an OpenAI-compatible /v1/embeddings endpoint.
+
+    Opt-in alternative to `fastembed` (still the default). `base_url` repoints
+    it at OpenAI, Azure, Voyage, Mistral, Together, or a local TEI/vLLM/Ollama
+    server. `api_key_env` is the NAME of an env var holding the bearer token —
+    never the key itself; omit it for keyless local servers.
+    """
+
+    type: Literal["openai"]
+    model: str
+    dim: int
+    base_url: str = "https://api.openai.com/v1"
+    api_key_env: Optional[str] = None
+    batch_size: int = 64
+    timeout: float = 60.0
+    max_retries: int = 3
+
+    @field_validator("base_url")
+    @classmethod
+    def _base_url_http(cls, v: str) -> str:
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("embedder.base_url must start with http:// or https://")
+        return v
+
+    @model_validator(mode="after")
+    def _positive_bounds(self):
+        if self.dim <= 0 or self.batch_size <= 0:
+            raise ValueError("embedder.dim and embedder.batch_size must be > 0")
+        if self.max_retries < 0:
+            raise ValueError("embedder.max_retries must be >= 0")
+        return self
+
+
+EmbedderConfig = Annotated[
+    Union[FastembedEmbedder, OpenAIEmbedder], Field(discriminator="type")
+]
 
 
 class NoneExtractor(_Base):
