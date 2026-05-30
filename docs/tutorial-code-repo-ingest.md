@@ -134,8 +134,8 @@ extractor:
 
 embedder:
   type: fastembed
-  model_name: Xenova/bge-small-en-v1.5-int8
-  dim: 384
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
   batch_size: 64
   threads: 2
 
@@ -179,9 +179,10 @@ Some load-bearing bits to call out:
   metadata where the CLI's column predicates can't reach it.
 - **`fts.enabled: true`** creates a Postgres GIN tsvector index so
   `chunkshop search` can use the FTS leg alongside semantic.
-- **`Xenova/bge-small-en-v1.5-int8`** is chunkshop's default code-
-  friendly int8 model. ~30 MB download on first run; cached at
-  `~/.cache/fastembed/`.
+- **`Xenova/bge-base-en-v1.5-int8`** is chunkshop's shipped default
+  int8 embedder (768 dim, MTEB-backed). Downloaded on first run; cached
+  at `~/.cache/fastembed/`. Swap to `Xenova/bge-small-en-v1.5-int8`
+  (384 dim, ~30 MB) for a smaller footprint — set `dim: 384` to match.
 
 ---
 
