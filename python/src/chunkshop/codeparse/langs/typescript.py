@@ -148,26 +148,34 @@ def _walk_symbols(
 def _enclosing_function(
     node: Any, source: bytes
 ) -> Optional[tuple[str, Optional[str]]]:
-    """Walk up to the enclosing method/function; return (name, parent_class)."""
+    """Return the OUTERMOST enclosing function/method as (name, parent_class).
+
+    Same "one level deep" rule as python.py: a call inside a nested
+    function_declaration must roll up to the outermost emitted symbol, never
+    the nested one. Shared by javascript.py via import.
+    """
     cur = node.parent
-    func_name: Optional[str] = None
-    is_method = False
+    outermost: Optional[Any] = None
     while cur is not None:
-        if cur.type in ("method_definition", "function_declaration") and func_name is None:
-            name_node = cur.child_by_field_name("name")
-            if name_node is not None:
-                func_name = _text(name_node, source)
-                is_method = cur.type == "method_definition"
-        elif cur.type == "class_declaration" and func_name is not None:
-            if is_method:
-                name_node = cur.child_by_field_name("name")
-                parent = _text(name_node, source) if name_node else None
-                return (func_name, parent)
-            return (func_name, None)
+        if cur.type in ("function_declaration", "method_definition"):
+            outermost = cur  # keep climbing; the last one wins (highest)
         cur = cur.parent
-    if func_name:
-        return (func_name, None)
-    return None
+    if outermost is None:
+        return None
+    name_node = outermost.child_by_field_name("name")
+    if name_node is None:
+        return None
+    func_name = _text(name_node, source)
+    parent: Optional[str] = None
+    if outermost.type == "method_definition":
+        anc = outermost.parent
+        while anc is not None:
+            if anc.type == "class_declaration":
+                cn = anc.child_by_field_name("name")
+                parent = _text(cn, source) if cn is not None else None
+                break
+            anc = anc.parent
+    return (func_name, parent)
 
 
 def _extract_call_sites(
