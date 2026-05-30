@@ -29,7 +29,7 @@ each seed up to that many hops.
 | `request_delay_seconds` | `float`     | `0.5`                                              | `ge=0`. Per-source minimum delay between outbound requests. |
 | `respect_robots`        | `bool`      | `True`                                             | When True, fetch + honor `/robots.txt` per host (cached). |
 | `max_pages`             | `int`       | `1000`                                             | `ge=1`. Hard runaway cap. |
-| `user_agent`            | `str`       | `"chunkshop/0.5 (+https://github.com/yonk-labs/chunkshop)"` | Sent on every request + used for robots.txt evaluation. |
+| `user_agent`            | `str`       | `"chunkshop/0.6 (+https://github.com/yonk-labs/chunkshop)"` | Sent on every request + used for robots.txt evaluation. |
 
 ## Public API
 

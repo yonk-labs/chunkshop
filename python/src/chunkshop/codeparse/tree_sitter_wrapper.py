@@ -39,9 +39,10 @@ def parse_file(
     """Parse a source file and return its ParseResult.
 
     ``language`` is one of {"python", "java", "go", "typescript",
-    "javascript"} or None (auto-detect from suffix). Unknown languages
-    return an empty ParseResult — not an error — so an ingest pipeline
-    can hand off any file blindly without pre-filtering.
+    "javascript", "rust", "c", "cpp", "csharp", "ruby"} or None
+    (auto-detect from suffix). Unknown languages return an empty
+    ParseResult — not an error — so an ingest pipeline can hand off any
+    file blindly without pre-filtering.
 
     The function NEVER raises on a missing tree-sitter package, malformed
     UTF-8, or a parser crash. Every failure mode falls through to the

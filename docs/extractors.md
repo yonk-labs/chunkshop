@@ -675,7 +675,14 @@ uv sync --extra nlp
 | Compact fact/report metadata for judged RAG      | `lede_report`                            |
 | Filter retrievals by org / person / place        | `spacy_entities` + promote `entities.ORG` |
 | Segment by language in a multilingual corpus     | `lang_detect` + promote `language`        |
+| Cross-file code edges (CALLS/INHERITS/IMPLEMENTS) over source | `code_relationships` — see [reference](reference/extractor-code-relationships.md) |
 | All of the above in one pass                     | `composite` chaining them all            |
+
+> **Source code?** `code_relationships` is a structural-edge extractor, not a
+> tag extractor — it emits rows into the `code_edges` table (resolved by AST +
+> import-aware name matching across 10 languages) rather than chunk tags. Pair
+> it with the [`symbol_aware`](reference/chunker-symbol-aware.md) chunker. Full
+> contract: [`reference/extractor-code-relationships.md`](reference/extractor-code-relationships.md).
 
 Decision tree:
 

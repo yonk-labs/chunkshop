@@ -28,7 +28,7 @@ For task-oriented walkthroughs, see [`docs/cookbook/`](../cookbook/).
 | Surface | One-liner |
 |---|---|
 | [`chunker-code-aware`](chunker-code-aware.md) | Python AST chunker (stdlib `ast`). One chunk per top-level def/class. |
-| [`chunker-symbol-aware`](chunker-symbol-aware.md) | Multi-language (Python / Java / Go / TS / JS) via tree-sitter + regex fallback. |
+| [`chunker-symbol-aware`](chunker-symbol-aware.md) | Multi-language (Python, Java, Go, TypeScript, JavaScript, Rust, C, C++, C#, Ruby) — all via real tree-sitter grammars in the `[code]` extra (regex fallback when the extra is absent). |
 
 ## Extractors
 
@@ -68,6 +68,7 @@ For task-oriented walkthroughs, see [`docs/cookbook/`](../cookbook/).
 
 | Surface | One-liner |
 |---|---|
+| [`cli-admin`](cli-admin.md) | `chunkshop init` / `validate` / `prefetch` — scaffold a cell, check a config, warm the embedder cache. |
 | [`cli-search`](cli-search.md) | `chunkshop search --query …` (hybrid retrieval) with `--by-symbol`, `--compress`, `--include-facts`. |
 | [`cli-fact-search`](cli-fact-search.md) | `chunkshop fact-search --query …` returns `kind='fact'` rows with their chunk→doc breadcrumb. |
 | [`cli-impact-of`](cli-impact-of.md) | `chunkshop impact-of --fqn …` walks the `code_edges` table for callers/callees. |

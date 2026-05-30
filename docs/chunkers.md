@@ -46,7 +46,7 @@ last two are layers that wrap any base chunker.
 | `hierarchy` (**default**) | Split on `#…` markdown headings; prepend the heading to `embedded_content` | Markdown with structure; the bakeoff-winning default                    | `prefix_heading`, `min_section_chars`, `max_chars`                                         |   no   |               ✅               |
 | `fixed_overlap`         | Sliding word window with stride                                             | QA / FAQ rows; baseline / control in any bakeoff                        | `window_words`, `step_words`                                                               |   no   |               ✅               |
 | `code_aware`            | Split Python at function/class boundaries via stdlib `ast`; non-Python falls back to `sentence_aware` | Source-code corpora — chunkshop's own tree, GitHub mirrors, vendor SDKs | `max_chars`, `include_imports`, `language` (`python`/`auto`)                            |   no   |    Python-only (no Rust port yet)   |
-| `symbol_aware`          | Split at function/class/interface boundaries across **multiple languages** via tree-sitter (Python + Java) + regex fallback (Go / TS / JS); stamps `symbol_name` / `fqn` / `node_id` per chunk for `--by-symbol` and `impact-of` | Multi-language code corpora — what you reach for instead of `code_aware` when the repo isn't pure-Python | `granularity` (`function` / `class` / `module`), `include_imports`, `max_chars`, `languages` (list, or auto-detect from extension), `if_oversize` | no | Python-only (no Rust port yet) |
+| `symbol_aware`          | Split at function/class/interface boundaries across **10 languages** — Python, Java, Go, TypeScript, JavaScript, Rust, C, C++, C#, and Ruby — all via real tree-sitter grammars in the `[code]` extra (`regex_fallback` only when `[code]` is absent); stamps `symbol_name` / `fqn` / `node_id` per chunk for `--by-symbol` and `impact-of` | Multi-language code corpora — what you reach for instead of `code_aware` when the repo isn't pure-Python | `granularity` (`function` / `class` / `module`), `include_imports`, `max_chars`, `languages` (list, or auto-detect from extension), `if_oversize` | no | Python-only (no Rust port yet) |
 | `semantic`              | Boundary detection via sentence-embedding similarity drops                  | Transcripts, interviews, auto-captioned audio — anything with no headings | `boundary_model`, `breakpoint_percentile`, `min_sentences_per_chunk`, `max_chunk_chars`    |   no   |    algorithm-only (Rust drift ~1e-3 cos)    |
 | `neighbor_expand`       | Wraps any base; glues ±N neighbors into each row's `embedded_content`       | Boost top-k recall when answers span chunks                             | `base`, `window`                                                                           |  yes   |               ✅               |
 | `summary_embed`         | Wraps any base; replaces `embedded_content` with a summary                  | Match-summary / return-raw retrieval; long docs where raw embeds dilute | `base`, `summarizer` (external / callable / passthrough)                                    |  yes   |   ✅ (passthrough/external; Rust callable currently passthrough-only) |
@@ -66,14 +66,14 @@ flowchart TB
     Q --> HAS_HEADINGS[Markdown with<br/># / ## / ### headings]
     Q --> PROSE[Plain prose<br/>no structure]
     Q --> CODE_PY[Python source code]
-    Q --> CODE_MULTI[Multi-language source<br/>Python + Java + Go + TS + JS]
+    Q --> CODE_MULTI[Multi-language source<br/>10 languages via tree-sitter]
     Q --> CODE[Other code or logs<br/>line-based]
     Q --> QA[QA / FAQ / turns<br/>short discrete items]
     Q --> UNSTRUCTURED[Transcript / interview /<br/>auto-transcribed audio]
     HAS_HEADINGS --> H[hierarchy<br/>default; prepends heading]
     PROSE --> SA[sentence_aware<br/>paragraph-respecting]
     CODE_PY --> CA[code_aware<br/>splits at function/class via AST]
-    CODE_MULTI --> SYA[symbol_aware<br/>tree-sitter + regex per language,<br/>stamps fqn + node_id for impact-of]
+    CODE_MULTI --> SYA[symbol_aware<br/>10 languages via tree-sitter,<br/>stamps fqn + node_id for impact-of]
     CODE --> SA_CODE[sentence_aware<br/>doc_type: code]
     QA --> FO[fixed_overlap<br/>window/step by word count]
     UNSTRUCTURED --> SEM[semantic<br/>embedding-drift boundaries]

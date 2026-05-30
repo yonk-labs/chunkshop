@@ -3,16 +3,17 @@
 **Module**: `chunkshop.chunkers.symbol_aware`
 **Type**: Chunker
 **Ship status**: verified
-**Optional extra**: `chunkshop[code]` (tree-sitter + Python + Java grammars) — Go / TS / JS work via regex fallback even without this extra
+**Optional extra**: `chunkshop[code]` — real tree-sitter grammars for all ten languages: Python, Java, Go, TypeScript, JavaScript, Rust, C, C++, C#, and Ruby. Without the extra the regex fallback covers the same ten.
 **Since**: 2026-05-25 (commit `64b15bf`, SP-B)
 
 ## Purpose
 
 Multi-language code chunker. Splits source files at symbol boundaries
 (function / class / method) for any language `chunkshop.codeparse`
-understands: Python, Java (tree-sitter), Go / TypeScript / JavaScript
-(regex fallback). Generalises [`code_aware`](chunker-code-aware.md)
-which is Python-only.
+understands: Python, Java, Go, TypeScript, JavaScript, Rust, C, C++, C#,
+and Ruby — all via real tree-sitter grammars in the `[code]` extra
+(regex fallback when the extra is absent). Generalises
+[`code_aware`](chunker-code-aware.md) which is Python-only.
 
 Each chunk carries the symbol's name, fully-qualified name, type,
 language, and a deterministic `node_id`. This is what makes the
@@ -182,13 +183,25 @@ columns — this is the load-bearing wiring for `chunkshop search
 
 ## Languages supported
 
-| Language    | Parser path                       | Notes |
-|-------------|-----------------------------------|-------|
-| Python      | tree-sitter-python OR regex       | Requires `[code]` extra for tree-sitter; falls through to regex without it. |
-| Java        | tree-sitter-java OR regex         | Same. Constructors currently labeled `symbol_type="method"`. |
-| Go          | regex fallback                    | No tree-sitter grammar in `[code]` extra today. |
-| TypeScript  | regex fallback                    | Same. |
-| JavaScript  | regex fallback                    | Same. |
+Every language ships a real tree-sitter grammar in the `[code]` extra and
+falls through to the regex extractor when the extra is absent (or a
+grammar raises). Symbol kinds: functions + classes + methods universally;
+interfaces for Java / TypeScript / C# (and Rust traits); structs / enums
+map to `class` for Go / Rust / C / C++; Ruby maps `module` → `class` and
+call-detection is best-effort.
+
+| Language    | Parser path                            | Notes |
+|-------------|----------------------------------------|-------|
+| Python      | tree-sitter-python OR regex            | Requires `[code]` extra for tree-sitter; falls through to regex without it. |
+| Java        | tree-sitter-java OR regex              | Constructors currently labeled `symbol_type="method"`. |
+| Go          | tree-sitter-go OR regex                | structs / enums map to `class`. |
+| TypeScript  | tree-sitter-typescript OR regex        | interfaces extracted as `interface`. |
+| JavaScript  | tree-sitter-javascript OR regex        | functions + classes + methods. |
+| Rust        | tree-sitter-rust OR regex              | traits → `interface`; structs / enums → `class`. |
+| C           | tree-sitter-c OR regex                 | structs / enums → `class`. |
+| C++         | tree-sitter-cpp OR regex               | structs / enums → `class`. |
+| C#          | tree-sitter-c-sharp OR regex           | interfaces extracted as `interface`. |
+| Ruby        | tree-sitter-ruby OR regex              | `module` → `class`; call-detection best-effort. |
 
 ## How it integrates with the pipeline
 
@@ -209,7 +222,9 @@ the full pipeline.
 ## Tests proving the contract
 
 - `tests/chunkshop/test_chunker_symbol_aware.py`:
-  - Python AST + Java tree-sitter + Go regex paths
+  - Python AST + tree-sitter paths across all ten languages (Python,
+    Java, Go, TypeScript, JavaScript, Rust, C, C++, C#, Ruby), with the
+    regex fallback exercised when the `[code]` extra is absent
   - granularity matrix (function / class / module)
   - FQN rebuild against logical path
   - `node_id` determinism across runs

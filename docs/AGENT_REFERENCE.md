@@ -77,16 +77,32 @@ Parsers auto-dispatch by extension. PDF/DOCX/PPTX/XLSX/HTML require
 optional extras (`chunkshop[pdf,docx,pptx,xlsx,html]` or the umbrella
 `chunkshop[office]` / `chunkshop[all-parsers]`).
 
-### `json_corpus` — line-delimited JSON / JSONL
+### `json_corpus` — one JSON object containing a documents array
+
+Reads a **single** JSON file (not JSONL / line-delimited). The file is one
+JSON object; `documents_key` indexes into it to get the array of rows. Each
+row's leftover keys (everything except `id_field` / `content_field` /
+`title_field`) become the chunk metadata.
 
 ```yaml
 source:
   type: json_corpus
-  path: /data/corpus.jsonl
-  id_key: id
-  content_key: body
-  title_key: title           # optional
-  metadata_keys: [author, ts]
+  path: /data/corpus.json
+  documents_key: documents   # default — key holding the documents array
+  id_field: id               # default
+  content_field: content     # default
+  title_field: title         # default; optional, set null to skip
+```
+
+Example corpus file:
+
+```json
+{
+  "documents": [
+    {"id": "1", "content": "…body…", "title": "First", "author": "ko"},
+    {"id": "2", "content": "…body…", "title": "Second", "author": "mt"}
+  ]
+}
 ```
 
 ### `pg_table` / `sqlite_table` / `mariadb_table` / `clickhouse_table`
@@ -336,9 +352,11 @@ chunker:
   languages: null          # or ["python", "java", ...]
 ```
 
-Languages: Python, Java (tree-sitter with `chunkshop[code]`), Go, TS,
-JS (regex fallback always works). Stamps `metadata.symbol_name`, `fqn`,
-`symbol_type`, `start_line`, `end_line`, `language`, `node_id`.
+Languages (10, all via real tree-sitter grammars in `chunkshop[code]`):
+Python, Java, Go, TypeScript, JavaScript, Rust, C, C++, C#, Ruby. When the
+`[code]` extra is absent, a regex fallback parser is used instead. Stamps
+`metadata.symbol_name`, `fqn`, `symbol_type`, `start_line`, `end_line`,
+`language`, `node_id`.
 
 ---
 
@@ -785,11 +803,18 @@ tier_of(NotionConnector)  # "experimental"
 ```bash
 chunkshop --help
 # Commands:
+#   init           Interactive scaffold for a new cell YAML
+#   validate       Validate a YAML config without running it (exit 0 if valid)
 #   ingest         Run a single cell ingest from YAML
+#   prefetch       Download the config's embedder model so first ingest never blocks
 #   orchestrate    Spawn N cell processes from a config dir
+#   bakeoff        Run a multi-backend chunker x embedder matrix bakeoff
 #   search         Hybrid-search a cell's target (with --by-symbol)
-#   impact-of     Walk code_edges for callers/callees of an FQN
-#   ...
+#   fact-search    Search a cell's facts; each result carries its chunk/doc breadcrumb
+#   impact-of      Walk code_edges for callers/callees of an FQN
+#                  (--edge-type CALLS, plus --edge-kind; --edge-kind wins when both given)
+#   eval validate  Validate an eval matrix without running retrieval or judges
+#   eval plan      Expand an eval matrix into a concrete execution manifest
 ```
 
 ### Known gaps (CLI discovery)

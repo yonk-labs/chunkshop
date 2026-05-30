@@ -3,7 +3,7 @@
 **Module**: `chunkshop.codeparse`
 **Type**: Utility — primitives for code-symbol extraction
 **Ship status**: verified
-**Optional extra**: `chunkshop[code]` (tree-sitter + Python + Java grammars). Without it the regex fallback still handles all five supported languages.
+**Optional extra**: `chunkshop[code]` (real tree-sitter grammars for all ten languages: Python, Java, Go, TypeScript, JavaScript, Rust, C, C++, C#, and Ruby). Without it the regex fallback still handles all ten supported languages.
 **Since**: 2026-05-25 (commit `89cce16`, SP-A)
 
 ## Purpose
@@ -16,7 +16,7 @@ foundation for the `symbol_aware` chunker (SP-B), the
 Importing `chunkshop.codeparse` does NOT pull in tree-sitter — the
 heavy native wheels stay dormant until you actually parse something.
 When the optional `[code]` extra isn't installed, `parse_file` /
-`parse_text` fall through to a regex extractor that covers all five
+`parse_text` fall through to a regex extractor that covers all ten
 supported languages with reduced precision but never zero coverage.
 
 ## Public API
@@ -45,7 +45,8 @@ def parse_file(
 ```
 
 - `language` is one of `{"python", "java", "go", "typescript",
-  "javascript"}` or `None` (auto-detect by suffix).
+  "javascript", "rust", "c", "cpp", "csharp", "ruby"}` or `None`
+  (auto-detect by suffix).
 - Unknown language → empty `ParseResult` (not an error).
 - File-disappears / read failure → empty `ParseResult` with `language`
   set.
@@ -164,8 +165,9 @@ for any single project, short enough to land in URLs.
 ## Behavior contract
 
 1. **Lazy tree-sitter import.** Each language module (`python`, `java`,
-   `go`, `typescript`, `javascript`) imports its tree-sitter package
-   inside its first `parse()` call.
+   `go`, `typescript`, `javascript`, `rust`, `c`, `cpp`, `csharp`,
+   `ruby`) imports its tree-sitter package inside its first `parse()`
+   call.
 2. **Universal regex fallback.** Tree-sitter package missing OR
    grammar bug OR any exception → falls through to
    `regex_fallback.extract_with_regex(...)`. Every supported language
@@ -184,13 +186,22 @@ for any single project, short enough to land in URLs.
 
 ## Language coverage
 
-| Language    | tree-sitter (with `[code]`) | Regex fallback (always) |
-|-------------|------------------------------|--------------------------|
-| Python      | `tree-sitter-python` 0.21+   | Yes |
-| Java        | `tree-sitter-java` 0.21+     | Yes |
-| Go          | Not in `[code]` today        | Yes |
-| TypeScript  | Not in `[code]` today        | Yes |
-| JavaScript  | Not in `[code]` today        | Yes |
+All ten languages ship a real tree-sitter grammar in the `[code]` extra.
+The regex fallback covers the same ten when the extra is absent (or a
+grammar raises).
+
+| Language    | tree-sitter (with `[code]`)      | Regex fallback (always) |
+|-------------|-----------------------------------|--------------------------|
+| Python      | `tree-sitter-python` 0.21+        | Yes |
+| Java        | `tree-sitter-java` 0.21+          | Yes |
+| Go          | `tree-sitter-go` 0.21+            | Yes |
+| TypeScript  | `tree-sitter-typescript` 0.21+    | Yes |
+| JavaScript  | `tree-sitter-javascript` 0.21+    | Yes |
+| Rust        | `tree-sitter-rust` 0.23+          | Yes |
+| C           | `tree-sitter-c` 0.23+             | Yes |
+| C++         | `tree-sitter-cpp` 0.23+           | Yes |
+| C#          | `tree-sitter-c-sharp` 0.23+       | Yes |
+| Ruby        | `tree-sitter-ruby` 0.23+          | Yes |
 
 ## Errors
 
@@ -263,7 +274,7 @@ extra mapping table.
 - `tests/chunkshop/test_codeparse_*`:
   - `parse_file` Python tree-sitter path (when `[code]` extra
     available)
-  - regex fallback for all five languages
+  - regex fallback for all ten languages
   - language auto-detection by suffix
   - `build_fqn` recipe (3-part path, extension strip, parent compose)
   - `code_symbol_node_id` determinism across calls
