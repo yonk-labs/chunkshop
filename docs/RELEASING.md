@@ -53,10 +53,17 @@ NEW="0.5.0"
 #    Rust:   edit rust/Cargo.toml, change [workspace.package].version.
 #    The verify job in the workflow rejects the tag otherwise.
 
+# 2b. Regenerate the Rust lockfile so it records the new version.
+#     ⚠️ THE #1 RELEASE GOTCHA: CI builds with `cargo --locked`, which FAILS
+#     the crates.io publish if rust/Cargo.lock is out of sync with Cargo.toml.
+#     Bumping [workspace.package].version leaves the lock stale until you do:
+(cd rust && cargo update --workspace)   # rewrites rust/Cargo.lock to $NEW
+
 # 3. Update CHANGELOG.md with what's in the release.
 
-# 4. Commit, push to main.
-git add python/pyproject.toml rust/Cargo.toml CHANGELOG.md
+# 4. Commit, push to main. NOTE: include rust/Cargo.lock — omitting it is the
+#    stale-lock failure that silently blocks the crates.io half of the release.
+git add python/pyproject.toml rust/Cargo.toml rust/Cargo.lock CHANGELOG.md
 git commit -m "release: v$NEW"
 git push origin main
 
@@ -88,6 +95,7 @@ After the workflow finishes:
 | Python build error | PyPI publish skipped; cargo publish still runs | Fix the Python build; bump the patch (e.g. v0.4.1) and retag |
 | PyPI upload error (e.g. token / OIDC config) | PyPI publish fails; cargo publish unaffected | Fix the trusted-publisher config and retag, OR upload manually with `uv build && twine upload dist/*` |
 | `cargo test` failure | `build-cargo` job fails before `publish-cargo`; PyPI unaffected | Fix the test, retag |
+| Stale `rust/Cargo.lock` (version bump didn't regen it) | `cargo --locked` fails the cargo job before `publish-cargo`; PyPI may still publish, leaving the two packages out of sync | `(cd rust && cargo update --workspace)`, commit `rust/Cargo.lock`, **move the tag to the fixed commit** (`git tag -f vX.Y.Z <sha> && git push -f origin vX.Y.Z`) and re-trigger. Caught earlier by the `--locked` pre-flight above |
 | crates.io upload error (e.g. token expired) | `publish-cargo` fails; PyPI unaffected | Refresh `CARGO_REGISTRY_TOKEN` and retag |
 
 **Yanking a release:**
@@ -136,13 +144,15 @@ gh pr checks <pr-number> --repo yonk-labs/chunkshop
 (cd python && uv build --sdist --wheel && ls dist/)
 # Should produce chunkshop-$VERSION.tar.gz and chunkshop-$VERSION-py3-*.whl.
 
-# Rust: package + dry-run publish.
-(cd rust && cargo publish --dry-run -p chunkshop-rs)
+# Rust: package + dry-run publish. --locked mirrors CI exactly: it FAILS if
+# rust/Cargo.lock is stale vs Cargo.toml (the #1 release gotcha — catch it here,
+# not in the publish workflow after the tag is already pushed).
+(cd rust && cargo publish --dry-run --locked -p chunkshop-rs)
 # Should end with "warning: aborting upload due to dry run".
 
 # Run full test suites once more.
 (cd python && uv run pytest -q)
-(cd rust && cargo test --workspace --lib)
+(cd rust && cargo test --workspace --lib --locked)
 
 # Dependency audits. Current Rust upstream waivers are documented in the
 # dependency-audit workflow and MariaDB engine docs.
