@@ -485,18 +485,37 @@ class CodeRelationshipsExtractor:
                     provenance="heuristic",
                 )
             else:
-                for cand in candidates:
+                # C: same import-aware narrowing as the CALLS branch, keyed
+                # on the subclass's own file imports (ce["src_path"]).
+                supported = [
+                    c for c in candidates
+                    if self._import_supported(ce["src_path"], c)
+                ]
+                if len(supported) == 1:
                     _emit(
                         edge_type=ce["edge_type"],
                         src_fqn=ce["src_fqn"],
-                        dst_fqn=cand,
-                        confidence=self.cfg.ambiguous_match_confidence,
+                        dst_fqn=supported[0],
+                        confidence=self.cfg.unique_match_confidence,
                         evidence={
-                            "resolution": "ambiguous_name",
+                            "resolution": "import_resolved",
                             "candidates": candidates,
                         },
                         provenance="heuristic",
                     )
+                else:
+                    for cand in candidates:
+                        _emit(
+                            edge_type=ce["edge_type"],
+                            src_fqn=ce["src_fqn"],
+                            dst_fqn=cand,
+                            confidence=self.cfg.ambiguous_match_confidence,
+                            evidence={
+                                "resolution": "ambiguous_name",
+                                "candidates": candidates,
+                            },
+                            provenance="heuristic",
+                        )
 
         edges.sort(key=lambda e: (e["edge_type"], e["src_fqn"], e["dst_fqn"]))
         return edges

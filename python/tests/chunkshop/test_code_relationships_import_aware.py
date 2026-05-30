@@ -89,3 +89,44 @@ def test_two_supported_keeps_fanout() -> None:
         if e["edge_type"] == "CALLS" and e["dst_fqn"].endswith(".helper")
     ]
     assert len(helper_edges) == 2
+
+
+# --- class-edge narrowing (INHERITS) ---------------------------------------
+
+_BASE_A = "class Base:\n    pass\n"
+_BASE_B = "class Base:\n    pass\n"
+
+
+def test_ambiguous_inherits_narrows_to_imported_base() -> None:
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract(_BASE_A, language="python", source_path="a.py")
+    ext.extract(_BASE_B, language="python", source_path="b.py")
+    ext.extract(
+        "from a import Base\n\nclass Sub(Base):\n    pass\n",
+        language="python",
+        source_path="c.py",
+    )
+    edges = ext.finalize(project_id="t")
+    inherits = [
+        e for e in edges
+        if e["edge_type"] == "INHERITS" and e["dst_fqn"].endswith(".Base")
+    ]
+    assert len(inherits) == 1
+    assert inherits[0]["dst_fqn"] == "a.Base"
+    assert inherits[0]["evidence"]["resolution"] == "import_resolved"
+
+
+def test_ambiguous_inherits_no_import_keeps_fanout() -> None:
+    ext = CodeRelationshipsExtractor(Cfg(type="code_relationships"))
+    ext.extract(_BASE_A, language="python", source_path="a.py")
+    ext.extract(_BASE_B, language="python", source_path="b.py")
+    ext.extract(
+        "class Sub(Base):\n    pass\n", language="python", source_path="c.py"
+    )
+    edges = ext.finalize(project_id="t")
+    inherits = [
+        e for e in edges
+        if e["edge_type"] == "INHERITS" and e["dst_fqn"].endswith(".Base")
+    ]
+    assert len(inherits) == 2
+    assert all(e["evidence"]["resolution"] == "ambiguous_name" for e in inherits)
