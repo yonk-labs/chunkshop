@@ -10,6 +10,8 @@ import numpy as np
 
 from chunkshop.config import OpenAIEmbedder as Cfg
 
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
 
 class OpenAIEmbeddingProvider:
     """Embedder backed by a remote OpenAI-compatible /v1/embeddings endpoint.
@@ -58,7 +60,7 @@ class OpenAIEmbeddingProvider:
         body = json.dumps(
             {"model": self.cfg.model, "input": batch, "encoding_format": "float"}
         ).encode("utf-8")
-        payload = self._post(body)
+        payload = self._post_with_retry(body)
         data = payload.get("data")
         if not isinstance(data, list) or not data:
             raise ValueError(
@@ -67,12 +69,39 @@ class OpenAIEmbeddingProvider:
         ordered = sorted(data, key=lambda d: d.get("index", 0))
         return [d["embedding"] for d in ordered]
 
-    def _post(self, body: bytes) -> dict:
-        req = urllib.request.Request(
-            self._url, data=body, headers=self._headers, method="POST"
+    def _post_with_retry(self, body: bytes) -> dict:
+        for attempt in range(self.cfg.max_retries + 1):
+            try:
+                req = urllib.request.Request(
+                    self._url, data=body, headers=self._headers, method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=self.cfg.timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                retryable = exc.code in _RETRYABLE_STATUS
+                if retryable and attempt < self.cfg.max_retries:
+                    time.sleep(min(0.5 * (2 ** attempt), 8.0))
+                    continue
+                detail = ""
+                try:
+                    detail = exc.read().decode("utf-8", "replace")[:500]
+                except Exception:  # pragma: no cover — defensive
+                    pass
+                raise RuntimeError(
+                    f"embeddings request to {self._url} failed: "
+                    f"HTTP {exc.code} {detail}"
+                ) from exc
+            except urllib.error.URLError as exc:
+                if attempt < self.cfg.max_retries:
+                    time.sleep(min(0.5 * (2 ** attempt), 8.0))
+                    continue
+                raise RuntimeError(
+                    f"embeddings request to {self._url} failed after "
+                    f"{self.cfg.max_retries + 1} attempts: {exc}"
+                ) from exc
+        raise RuntimeError(  # pragma: no cover — loop always returns/raises
+            f"embeddings request to {self._url} exhausted retries"
         )
-        with urllib.request.urlopen(req, timeout=self.cfg.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
 
 
 __all__ = ["OpenAIEmbeddingProvider"]

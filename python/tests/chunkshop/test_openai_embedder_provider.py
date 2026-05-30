@@ -131,3 +131,62 @@ def test_batching_splits_requests(monkeypatch):
     out = p.embed(["a", "b", "c", "d", "e"])
     assert out.shape == (5, 3)
     assert calls == [2, 2, 1]  # 5 inputs at batch_size=2
+
+
+import urllib.error
+
+
+def _http_error(code):
+    return urllib.error.HTTPError(
+        url="https://api.test/v1/embeddings", code=code, msg="x", hdrs=None,
+        fp=io.BytesIO(b'{"error":"boom"}'),
+    )
+
+
+def test_retries_on_503_then_succeeds(monkeypatch):
+    monkeypatch.setattr(
+        "chunkshop.embedders.openai_provider.time.sleep", lambda *_: None
+    )
+    seq = [_http_error(503), _FakeResp(_embeddings_payload([[1.0, 2.0, 3.0]]))]
+
+    def fake_urlopen(req, timeout=None):
+        item = seq.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(
+        "chunkshop.embedders.openai_provider.urllib.request.urlopen", fake_urlopen
+    )
+    out = OpenAIEmbeddingProvider(_cfg(max_retries=2)).embed(["a"])
+    assert out.shape == (1, 3) and not seq  # both queue items consumed
+
+
+def test_raises_after_exhausting_retries(monkeypatch):
+    monkeypatch.setattr(
+        "chunkshop.embedders.openai_provider.time.sleep", lambda *_: None
+    )
+
+    def always_503(req, timeout=None):
+        raise _http_error(503)
+
+    monkeypatch.setattr(
+        "chunkshop.embedders.openai_provider.urllib.request.urlopen", always_503
+    )
+    with pytest.raises(RuntimeError, match="HTTP 503"):
+        OpenAIEmbeddingProvider(_cfg(max_retries=1)).embed(["a"])
+
+
+def test_non_retryable_4xx_raises_immediately(monkeypatch):
+    calls = {"n": 0}
+
+    def bad_request(req, timeout=None):
+        calls["n"] += 1
+        raise _http_error(400)
+
+    monkeypatch.setattr(
+        "chunkshop.embedders.openai_provider.urllib.request.urlopen", bad_request
+    )
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        OpenAIEmbeddingProvider(_cfg(max_retries=3)).embed(["a"])
+    assert calls["n"] == 1  # no retries on 400
