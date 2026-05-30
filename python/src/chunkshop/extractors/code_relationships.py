@@ -433,20 +433,42 @@ class CodeRelationshipsExtractor:
                     provenance="heuristic",
                 )
             else:
-                for cand in candidates:
+                # C: narrow by the caller file's imports. If exactly one
+                # candidate's module is imported, emit a single precise edge;
+                # otherwise keep the ambiguous fan-out (no regression).
+                supported = [
+                    c for c in candidates
+                    if self._import_supported(pc["caller_path"], c)
+                ]
+                if len(supported) == 1:
                     _emit(
                         edge_type="CALLS",
                         src_fqn=pc["caller_fqn"],
-                        dst_fqn=cand,
-                        confidence=self.cfg.ambiguous_match_confidence,
+                        dst_fqn=supported[0],
+                        confidence=self.cfg.unique_match_confidence,
                         evidence={
                             "line": pc["line"],
                             "snippet": pc["snippet"],
-                            "resolution": "ambiguous_name",
+                            "resolution": "import_resolved",
                             "candidates": candidates,
                         },
                         provenance="heuristic",
                     )
+                else:
+                    for cand in candidates:
+                        _emit(
+                            edge_type="CALLS",
+                            src_fqn=pc["caller_fqn"],
+                            dst_fqn=cand,
+                            confidence=self.cfg.ambiguous_match_confidence,
+                            evidence={
+                                "line": pc["line"],
+                                "snippet": pc["snippet"],
+                                "resolution": "ambiguous_name",
+                                "candidates": candidates,
+                            },
+                            provenance="heuristic",
+                        )
 
         # ----- INHERITS / IMPLEMENTS edges -----
         for ce in self._pending_class_edges:
@@ -482,6 +504,24 @@ class CodeRelationshipsExtractor:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _import_supported(self, caller_path: str, candidate_fqn: str) -> bool:
+        """True if the caller file imports the module defining candidate_fqn.
+
+        Conservative, language-agnostic: the candidate's file *stem*
+        (``foo/bar.py`` -> ``bar``) must appear in the caller's import
+        tokens. Two files defining the same name differ by stem, so the
+        stem is the disambiguator. Returns False when the caller has no
+        recorded imports (then the ambiguous fan-out is preserved).
+        """
+        tokens = self._file_imports.get(caller_path, set())
+        if not tokens:
+            return False
+        cand = self._symbols.get(candidate_fqn)
+        if cand is None:
+            return False
+        stem = Path(cand["file_path"]).stem.lower()
+        return bool(stem) and stem in tokens
 
     def _project_id_for(self, file_path: str) -> str:
         """Project ID used during the per-chunk pass.
