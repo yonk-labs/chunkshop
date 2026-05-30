@@ -49,10 +49,10 @@ office = ["chunkshop[pdf,docx,pptx,xlsx]"]
 all-parsers = ["chunkshop[pdf,docx,pptx,xlsx,html]"]
 # Symbol-aware code parsing (SP-A foundation). Ships tree-sitter grammars
 # for every language chunkshop's codeparse layer recognises: Python, Java,
-# Go, TypeScript, JavaScript. The regex fallback in regex_fallback.py stays
-# as the safety net (used when this extra isn't installed, or when a grammar
-# raises), but with the extra installed every language uses a real parser —
-# no more lossy regex for Go/TS/JS (see chunkshop#40).
+# Go, TypeScript, JavaScript, Rust, C, C++, C#, Ruby. The regex fallback in
+# regex_fallback.py stays as the safety net (used when this extra isn't
+# installed, or when a grammar raises), but with the extra installed every
+# language uses a real parser — no more lossy regex (see chunkshop#40).
 code = [
     "tree-sitter>=0.21",
     "tree-sitter-python>=0.21",
@@ -60,6 +60,11 @@ code = [
     "tree-sitter-go>=0.21",
     "tree-sitter-typescript>=0.21",
     "tree-sitter-javascript>=0.21",
+    "tree-sitter-rust>=0.23",
+    "tree-sitter-c>=0.23",
+    "tree-sitter-cpp>=0.23",
+    "tree-sitter-c-sharp>=0.23",
+    "tree-sitter-ruby>=0.23",
 ]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 

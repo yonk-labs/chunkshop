@@ -107,7 +107,10 @@ def parse_text(
 
 
 _SUPPORTED_LANGUAGES = frozenset(
-    {"python", "java", "go", "typescript", "javascript"}
+    {
+        "python", "java", "go", "typescript", "javascript",
+        "rust", "c", "cpp", "csharp", "ruby",
+    }
 )
 
 
@@ -151,6 +154,36 @@ def _dispatch(
             )
         if language == "javascript":
             from chunkshop.codeparse.langs import javascript as lang_mod
+
+            return lang_mod.parse(
+                source=source, file_path=file_path, project_id=project_id
+            )
+        if language == "rust":
+            from chunkshop.codeparse.langs import rust as lang_mod
+
+            return lang_mod.parse(
+                source=source, file_path=file_path, project_id=project_id
+            )
+        if language == "c":
+            from chunkshop.codeparse.langs import c as lang_mod
+
+            return lang_mod.parse(
+                source=source, file_path=file_path, project_id=project_id
+            )
+        if language == "cpp":
+            from chunkshop.codeparse.langs import cpp as lang_mod
+
+            return lang_mod.parse(
+                source=source, file_path=file_path, project_id=project_id
+            )
+        if language == "csharp":
+            from chunkshop.codeparse.langs import csharp as lang_mod
+
+            return lang_mod.parse(
+                source=source, file_path=file_path, project_id=project_id
+            )
+        if language == "ruby":
+            from chunkshop.codeparse.langs import ruby as lang_mod
 
             return lang_mod.parse(
                 source=source, file_path=file_path, project_id=project_id
