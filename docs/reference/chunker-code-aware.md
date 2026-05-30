@@ -17,9 +17,10 @@ For non-Python documents, the chunker delegates to a fallback
 (`if_oversize` if set, otherwise `sentence_aware`) so the same cell can
 hold a mixed-language corpus without exploding.
 
-For multi-language code (Python + Java + Go + TS + JS), use the
+For multi-language code (10 languages: Python, Java, Go, TypeScript,
+JavaScript, Rust, C, C++, C#, Ruby), use the
 [`symbol_aware`](chunker-symbol-aware.md) chunker instead — it
-generalises this one via tree-sitter + a regex fallback.
+generalises this one via real tree-sitter grammars (with a regex fallback).
 
 ## Config schema
 

@@ -82,6 +82,13 @@ def write_edges(
 4. **Class inheritance regexes** (Python `class X(Base):`, Java
    `class X extends Y implements Z`) capture INHERITS / IMPLEMENTS
    edges that codeparse's `ParseResult` doesn't surface.
+
+> **Caller attribution (Feature B).** A call site inside a *nested*
+> function attributes to the **outermost** emitted symbol — the one the
+> chunker actually stamped — rather than the inner closure. Calls at
+> module scope (no enclosing emitted function) produce no orphan `CALLS`
+> edge. For Python, a symbol's span is widened to include its decorator
+> lines, so `@decorator` rows stay attached to the symbol they decorate.
 5. **Per-chunk metadata** stamps `callees` — a list of:
    ```python
    {
@@ -100,17 +107,35 @@ def write_edges(
 
 ### Phase 2 — `finalize(*, project_id)`
 
-1. **Unique name match** → one edge at `unique_match_confidence=0.9`.
-2. **Multiple matches** → one edge per candidate at
-   `ambiguous_match_confidence=0.5`. Each carries the full
-   `candidates` list in `evidence`.
-3. **Zero matches** (external library call) → no edge emitted.
-4. **Intra-file pre-resolved calls** also get an edge at the unique
-   band so `impact-of` works inside a single file.
-5. **Deterministic output.** Sorted by
+1. **Intra-file pre-resolved calls** get an edge at the unique band
+   (`unique_match_confidence=0.9`) with `resolution="intra_file"` so
+   `impact-of` works inside a single file. These are AST-direct, so they
+   keep `provenance="ast"`.
+2. **Unique name match** (exactly one corpus symbol shares the callee
+   name) → one edge at `unique_match_confidence=0.9` with
+   `resolution="unique_name"`.
+3. **Import-resolved match** → when a name matches candidates in more
+   than one file, the resolver narrows by the caller file's imports
+   (the candidate file's *stem* must appear in the caller's import
+   tokens). If **exactly one** candidate is import-supported, a single
+   edge is emitted at `unique_match_confidence=0.9` with
+   `resolution="import_resolved"` and the full `candidates` list in
+   `evidence`.
+4. **Ambiguous name match** → if **zero or two-or-more** candidates are
+   import-supported, fan out one edge per candidate at
+   `ambiguous_match_confidence=0.5` with `resolution="ambiguous_name"`.
+   Each carries the full `candidates` list in `evidence`.
+5. **Zero matches** (external library call) → no edge emitted.
+6. **Provenance.** Intra-file (`intra_file`) edges are AST-direct and
+   carry `provenance="ast"`. The three cross-file kinds (`unique_name`,
+   `import_resolved`, `ambiguous_name`) are name-heuristic resolutions
+   and carry `provenance="heuristic"`, so a future stack-graphs resolver
+   (`scip`) stays distinguishable. The same import-aware narrowing
+   applies to INHERITS / IMPLEMENTS class edges.
+7. **Deterministic output.** Sorted by
    `(edge_type, src_fqn, dst_fqn)`. Two `finalize()` calls return the
    same list, comparable with `==`.
-6. **Idempotent.** Calling `finalize()` twice doesn't mutate accumulated
+8. **Idempotent.** Calling `finalize()` twice doesn't mutate accumulated
    state.
 
 Returned edge shape:
@@ -118,6 +143,7 @@ Returned edge shape:
 ```python
 {
     "edge_type": "CALLS" | "INHERITS" | "IMPLEMENTS",
+    "edge_kind": "calls" | "extends" | "implements",  # 12-value codegraph EdgeKind, derived from edge_type
     "src_fqn": "<caller fqn>",
     "dst_fqn": "<callee fqn>",
     "src_node_id": "node-<sha1[:16]>",
@@ -126,17 +152,20 @@ Returned edge shape:
     "evidence": {
         "line": <int>,
         "snippet": "<line text>",
-        "resolution": "intra_file" | "unique_name" | "ambiguous_name",
-        "candidates": [...],   # only for ambiguous
+        "resolution": "intra_file" | "unique_name" | "import_resolved" | "ambiguous_name",
+        "candidates": [...],   # present for import_resolved + ambiguous
     },
+    "provenance": "ast" | "heuristic",   # CHECK also reserves 'scip'
+    "provenance_metadata": {},           # jsonb, defaults to {}
 }
 ```
 
 ### Module-level helpers
 
 `write_edges_schema(dsn, *, schema)` — idempotent DDL for
-`<schema>.code_edges`. Creates the table + 3 indexes (incl. a partial
-index on `confidence >= 0.7`). Safe to re-run.
+`<schema>.code_edges`. Creates the table + 5 indexes (incl. a partial
+index on `confidence >= 0.7`, plus `edge_kind` and `provenance`
+indexes). Safe to re-run.
 
 `write_edges(extractor, *, dsn, schema, project_id)` — calls
 `extractor.finalize(project_id=project_id)` and writes the edges via
@@ -163,13 +192,29 @@ CREATE TABLE <schema>.code_edges (
     dst_node_id text NOT NULL,
     confidence double precision NOT NULL,
     evidence jsonb,
+    edge_kind text NOT NULL DEFAULT 'references'
+        CHECK (edge_kind IN ('contains','calls','imports','exports',
+                             'extends','implements','references',
+                             'type_of','returns','instantiates',
+                             'overrides','decorates')),
+    provenance text NOT NULL DEFAULT 'ast'
+        CHECK (provenance IN ('ast', 'scip', 'heuristic')),
+    provenance_metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
     PRIMARY KEY (project_id, edge_type, src_node_id, dst_node_id)
 );
 CREATE INDEX code_edges_src_idx ON … (project_id, src_node_id);
 CREATE INDEX code_edges_dst_idx ON … (project_id, dst_node_id);
 CREATE INDEX code_edges_confident_idx ON …
     (project_id, confidence) WHERE confidence >= 0.7;
+CREATE INDEX code_edges_kind_idx ON … (project_id, edge_kind);
+CREATE INDEX code_edges_provenance_idx ON … (project_id, provenance);
 ```
+
+`edge_kind` defaults to `'references'` so a pre-CS-2 row from an older
+client still satisfies `NOT NULL`; the extractor's `write_edges` path
+always supplies an explicit value via `edge_type_to_kind`. `provenance`
+defaults to `'ast'` so pre-CS-5 rows backfill correctly; the `'scip'`
+value is reserved for a future stack-graphs resolver.
 
 ## Inputs
 

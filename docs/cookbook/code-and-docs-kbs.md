@@ -100,9 +100,10 @@ target:
 
 To cover more languages, run the same cell shape with different
 `source.glob` + `source_tag`. The `symbol_aware` chunker handles
-Python, Java, Go, TypeScript, and JavaScript natively. Other
-extensions (e.g. `.rs`) fall back to `sentence_aware` chunking —
-still useful, just no symbol awareness.
+Python, Java, Go, TypeScript, JavaScript, Rust, C, C++, C#, and Ruby
+natively — all via real tree-sitter grammars in the `[code]` extra.
+File types with no codeparse support fall back to `sentence_aware`
+chunking — still useful, just no symbol awareness.
 
 ### `kb_docs` cell
 

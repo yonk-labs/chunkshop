@@ -32,8 +32,9 @@ pip install \
 
 The extras:
 
-- `[code]` — `tree-sitter` + `tree-sitter-python` + `tree-sitter-java`,
-  so the `symbol_aware` chunker uses real tree-sitter for Python
+- `[code]` — `tree-sitter` plus real grammars for all ten supported
+  languages (Python, Java, Go, TypeScript, JavaScript, Rust, C, C++,
+  C#, and Ruby), so the `symbol_aware` chunker uses real tree-sitter
   instead of the regex fallback.
 - `[lede]` — `lede` package, used by `code_summary` (default backend)
   and by `chunkshop search --return summary+chunks`.

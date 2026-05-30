@@ -33,7 +33,8 @@ chunkshop impact-of --config CFG --fqn FQN [OPTIONS]
 | `--depth`           | int    | `1`                    | Number of edge hops to walk. `1 ≤ depth ≤ 10`. |
 | `--direction`       | choice | `"callers"`            | `callers` / `callees` / `both`. |
 | `--edge-type`       | string | `"CALLS"`              | Edge type to follow: `CALLS` / `INHERITS` / `IMPLEMENTS`. |
-| `--confidence`      | float  | `0.7`                  | Minimum edge confidence. Ambiguous edges are 0.5. |
+| `--edge-kind`       | choice | `None`                 | Optional typed codegraph EdgeKind filter. One of `contains`, `calls`, `imports`, `exports`, `extends`, `implements`, `references`, `type_of`, `returns`, `instantiates`, `overrides`, `decorates`. **ANDs** with `--edge-type` when both are given. Today the extractor only populates `calls` / `extends` / `implements`; the other 9 are reserved. |
+| `--confidence`      | float  | `0.7`                  | Minimum edge confidence. Ambiguous (`ambiguous_name`) edges are 0.5 and are filtered out by the default floor; `import_resolved` edges land at 0.9 and pass it. |
 | `--project-id`      | string | `cell_name` from YAML  | Project ID scope for the edges table. |
 | `--json`            | flag   | off                    | JSON output instead of human-readable tree. |
 
@@ -80,6 +81,7 @@ impact-of: chunkshop.sources.http.HttpSource.iter_changes_since
   "depth": 1,
   "direction": "both",
   "edge_type": "CALLS",
+  "edge_kind": null,
   "confidence_floor": 0.7,
   "callers": [
     {
@@ -96,6 +98,15 @@ impact-of: chunkshop.sources.http.HttpSource.iter_changes_since
   "callees": [...]
 }
 ```
+
+The top-level JSON echoes back `edge_kind` (the value passed to
+`--edge-kind`, or `null` when unset) alongside the existing `edge_type`.
+Per-edge **provenance** (`ast` for intra-file, `heuristic` for cross-file
+name resolution) is stored on each `code_edges` row and is recoverable
+from `evidence.resolution` on the source edges — `intra_file` is `ast`;
+`unique_name` / `import_resolved` / `ambiguous_name` are `heuristic`.
+(The impact-of result rows surface `evidence` and the FQNs, not a
+separate `provenance` column.)
 
 ## Errors
 
@@ -141,6 +152,18 @@ chunkshop impact-of \
     --config repo.yaml \
     --fqn chunkshop.config.Pipeline \
     --confidence 0.5
+```
+
+## Example: typed EdgeKind filter
+
+```bash
+# AND the typed codegraph EdgeKind on top of --edge-type. Here: only
+# `calls` edges (the kind the extractor derives from edge_type=CALLS).
+chunkshop impact-of \
+    --config repo.yaml \
+    --fqn chunkshop.runner.run_cell \
+    --edge-type CALLS \
+    --edge-kind calls
 ```
 
 ## Prerequisites

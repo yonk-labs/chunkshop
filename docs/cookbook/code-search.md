@@ -173,6 +173,9 @@ The default confidence floor is `0.7`, which is the threshold the
 `code_relationships` extractor uses for unique-name resolution. Ambiguous
 edges (multiple corpus symbols share a bare name) come out at `0.5` and
 are filtered out by default; lower `--confidence` if you want to see them.
+When the calling file's imports disambiguate the target, import-aware
+narrowing can collapse an otherwise-ambiguous match to a single
+higher-confidence edge tagged `resolution="import_resolved"`.
 
 ### project_id
 
@@ -231,15 +234,23 @@ Indexes are created on `(project_id, src_node_id)`,
 ## Languages supported today
 
 The `symbol_aware` chunker + `code_relationships` extractor share a
-tree-sitter-based parser with regex fallback:
+tree-sitter-based parser. All ten supported languages use real
+tree-sitter grammars shipped in the `[code]` extra — Python, Java, Go,
+TypeScript, JavaScript, Rust, C, C++, C#, and Ruby:
 
 - Python (full)
 - Java (full)
 - Go (full)
 - TypeScript / JavaScript (full)
+- Rust (full)
+- C / C++ (full)
+- C# (full)
+- Ruby (full)
 
-Other languages fall back to a `sentence_aware` chunker tagged with
-`strategy="symbol_aware_fallback"` so an ingest never silently drops a
+`regex_fallback` is only the safety net when the `[code]` extra is
+absent. Only file types with **no** codeparse support (i.e. not in the
+list above) fall back to a `sentence_aware` chunker tagged with
+`strategy="symbol_aware_fallback"`, so an ingest never silently drops a
 document. The `code_relationships` extractor emits no edges for the
 fallback chunks.
 

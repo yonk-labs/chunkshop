@@ -97,8 +97,9 @@ The pipeline is `Source → Chunker → Embedder → Extractor → Sink`. Every 
 Prose: `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`,
 `semantic`. Summarization layers: `summary_embed`, `hierarchical_summary`,
 `consolidation`. Code-aware: `code_aware` (Python AST, stdlib), `symbol_aware`
-(multi-lang tree-sitter — Python, Java, Go, TypeScript, JavaScript, all via
-real grammars in the `[code]` extra; `regex_fallback.py` is the safety net when
+(multi-lang tree-sitter — Python, Java, Go, TypeScript, JavaScript, Rust, C,
+C++, C#, Ruby — 10 languages, all via real grammars in the `[code]` extra;
+`regex_fallback.py` is the safety net when
 the extra is absent. Stamps `fqn` + `scope_chain` + `node_id` per chunk to drive
 `chunkshop search --by-symbol` + `chunkshop impact-of`).
 
