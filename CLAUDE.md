@@ -105,7 +105,8 @@ the extra is absent. Stamps `fqn` + `scope_chain` + `node_id` per chunk to drive
 chunkshop's own factorial bakeoff (772-doc legal QA corpus, 30 gold questions)
 found `hierarchy` wins every embedder column on prose by prepending the section
 heading to `embedded_content` as free framing context. `hierarchy + int8
-bge-small` is the shipped default in `example-files-to-bge.yaml`. For source-
+bge-base` (`Xenova/bge-base-en-v1.5-int8`, 768d) is the shipped default in
+`example-files-to-bge.yaml`. For source-
 code corpora, `symbol_aware` is the right reach — it's what unlocks
 `code_relationships` extractor's cross-file edge resolution. Full discussion in
 `docs/chunkers.md` + per-chunker reference at `docs/reference/chunker-*.md`.

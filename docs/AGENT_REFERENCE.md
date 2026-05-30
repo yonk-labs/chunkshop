@@ -475,8 +475,8 @@ embedder:
 
 Chunkshop ships these int8 variants registered out of the box:
 
-- `Xenova/bge-small-en-v1.5-int8` (dim 384) — fast, default for many docs
-- `Xenova/bge-base-en-v1.5-int8` (dim 768) — middle ground
+- `Xenova/bge-small-en-v1.5-int8` (dim 384) — fast, smaller footprint
+- `Xenova/bge-base-en-v1.5-int8` (dim 768) — **the shipped default** (MTEB-backed; beats bge-small by ~3–5 pts)
 - `Xenova/bge-large-en-v1.5-int8` (dim 1024) — high-quality
 
 See `docs/embedder-catalogue.md` for the full list + benchmarks.
