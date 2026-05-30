@@ -190,3 +190,10 @@ def test_non_retryable_4xx_raises_immediately(monkeypatch):
     with pytest.raises(RuntimeError, match="HTTP 400"):
         OpenAIEmbeddingProvider(_cfg(max_retries=3)).embed(["a"])
     assert calls["n"] == 1  # no retries on 400
+
+
+def test_load_embedder_dispatches_to_openai_provider():
+    from chunkshop.embedders import load_embedder
+    p = load_embedder(_cfg())
+    assert type(p).__name__ == "OpenAIEmbeddingProvider"
+    assert p.dim == 3

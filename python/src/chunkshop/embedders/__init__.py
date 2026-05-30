@@ -1,4 +1,8 @@
-from chunkshop.config import EmbedderConfig, FastembedEmbedder as FastCfg
+from chunkshop.config import (
+    EmbedderConfig,
+    FastembedEmbedder as FastCfg,
+    OpenAIEmbedder as OpenAICfg,
+)
 from chunkshop.embedders._registry import register_int8_variants, register_byo_model
 from chunkshop.embedders.base import Embedder
 from chunkshop.embedders.fastembed_provider import FastembedProvider
@@ -16,6 +20,11 @@ def load_embedder(cfg: EmbedderConfig) -> Embedder:
         if cfg.hf_repo is not None:
             register_byo_model(cfg)
         return FastembedProvider(cfg)
+    if isinstance(cfg, OpenAICfg):
+        # Lazy import: keep `import chunkshop.embedders` light.
+        from chunkshop.embedders.openai_provider import OpenAIEmbeddingProvider
+
+        return OpenAIEmbeddingProvider(cfg)
     raise ValueError(f"unknown embedder type: {type(cfg).__name__}")
 
 
