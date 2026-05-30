@@ -102,6 +102,68 @@ _REGEX_PATTERNS: dict[str, list[tuple[str, re.Pattern[str]]]] = {
         ("method", re.compile(r"^func\s+\([^)]+\)\s+(\w+)\s*\(", re.MULTILINE)),
         ("class", re.compile(r"^type\s+(\w+)\s+struct\b", re.MULTILINE)),
     ],
+    # The five below are best-effort fallbacks only — the [code] extra ships
+    # real tree-sitter grammars for each. Anchored to common top-level forms.
+    "rust": [
+        (
+            "class",
+            re.compile(r"^\s*(?:pub\s+)?(?:struct|enum)\s+(\w+)", re.MULTILINE),
+        ),
+        ("interface", re.compile(r"^\s*(?:pub\s+)?trait\s+(\w+)", re.MULTILINE)),
+        (
+            "function",
+            re.compile(
+                r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)", re.MULTILINE
+            ),
+        ),
+    ],
+    "c": [
+        ("class", re.compile(r"^\s*struct\s+(\w+)", re.MULTILINE)),
+        (
+            "function",
+            re.compile(
+                r"^[A-Za-z_][\w\s\*]*?\b(\w+)\s*\([^;{]*\)\s*\{", re.MULTILINE
+            ),
+        ),
+    ],
+    "cpp": [
+        ("class", re.compile(r"^\s*(?:class|struct)\s+(\w+)", re.MULTILINE)),
+        (
+            "function",
+            re.compile(
+                r"^[A-Za-z_][\w\s\*:<>,]*?\b(\w+)\s*\([^;{]*\)\s*\{",
+                re.MULTILINE,
+            ),
+        ),
+    ],
+    "csharp": [
+        (
+            "class",
+            re.compile(
+                r"^\s*(?:public|private|protected|internal)?\s*(?:abstract|sealed|static)?\s*class\s+(\w+)",
+                re.MULTILINE,
+            ),
+        ),
+        (
+            "interface",
+            re.compile(
+                r"^\s*(?:public|private|protected|internal)?\s*interface\s+(\w+)",
+                re.MULTILINE,
+            ),
+        ),
+        (
+            "method",
+            re.compile(
+                r"^\s+(?:public|private|protected|internal)\s+(?:static\s+|virtual\s+|override\s+|async\s+)*[\w<>\[\],\s]+?\s+(\w+)\s*\([^)]*\)\s*\{",
+                re.MULTILINE,
+            ),
+        ),
+    ],
+    "ruby": [
+        ("class", re.compile(r"^\s*class\s+(\w+)", re.MULTILINE)),
+        ("interface", re.compile(r"^\s*module\s+(\w+)", re.MULTILINE)),
+        ("function", re.compile(r"^\s*def\s+(\w+)", re.MULTILINE)),
+    ],
 }
 
 _IMPORT_REGEX: dict[str, re.Pattern[str]] = {
@@ -374,6 +436,16 @@ _EXT_TO_LANG: dict[str, str] = {
     ".jsx": "javascript",
     ".mjs": "javascript",
     ".cjs": "javascript",
+    ".rs": "rust",
+    ".c": "c",
+    ".h": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".cs": "csharp",
+    ".rb": "ruby",
 }
 
 

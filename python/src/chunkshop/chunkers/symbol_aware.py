@@ -53,6 +53,11 @@ _LANG_TO_EXT: dict[str, str] = {
     "go": ".go",
     "typescript": ".ts",
     "javascript": ".js",
+    "rust": ".rs",
+    "c": ".c",
+    "cpp": ".cpp",
+    "csharp": ".cs",
+    "ruby": ".rb",
 }
 
 
