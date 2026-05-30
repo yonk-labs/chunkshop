@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.8.1 — 2026-05-30
+
+### Added
+
+- **Opt-in remote embedder (`type: openai`).** A second embedder type that calls any OpenAI-compatible `/v1/embeddings` endpoint instead of running locally — covers OpenAI, Azure, Voyage (Anthropic's recommended provider), Mistral, Together, and local servers (TEI / vLLM / Ollama) via `base_url` + `model` + optional `api_key_env` (bearer token read from an env var; keyless for local). `fastembed` remains the default — select the remote one per cell with `embedder.type: openai`. Uses stdlib HTTP only — **no new runtime dependency**. Batches by `batch_size`, reorders the response by `index`, retries on 429/5xx with exponential backoff, and validates the returned dim against config. Anthropic has no embeddings API (its ecosystem answer is Voyage); Cohere's distinct `/v1/embed` shape is not supported. See `docs/reference/embedder-openai.md` + `docs/samples/sample-openai-embedder.yaml`.
+
 ## 0.8.0 — 2026-05-30
 
 Code intelligence goes wide and precise. The `codeparse` layer grows from 5 to
