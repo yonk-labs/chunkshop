@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.8.0 — 2026-05-30
+
+Code intelligence goes wide and precise. The `codeparse` layer grows from 5 to
+**10 tree-sitter languages** (adds Rust, C, C++, C#, Ruby); cross-file edges get
+**import-aware resolution** (ambiguous name matches narrow to the module the
+caller actually imports); and the code graph is **hardened** — an orphan-edge
+bug is fixed and locked down by corpus-scale invariants validated against real
+codebases (chunkshop's own Rust tree + Postgres 16.3, 250k call sites, zero
+orphans). Also lands typed `edge_kind`, `provenance` tagging, and `scope_chain`
+display metadata on the `code_edges`/symbol path.
+
 ### Added
 
 - **`code_relationships`: import-aware narrowing of ambiguous cross-file edges.** When a callee/base name matches symbols in more than one file, the resolver previously fanned out one `CALLS`/`INHERITS`/`IMPLEMENTS` edge per candidate (`resolution='ambiguous_name'`). It now consults the caller file's imports (already parsed but previously discarded) and, when exactly one candidate's module is imported, emits a single precise edge tagged `resolution='import_resolved'` at the unique-match confidence band. The narrowing is conservative and language-agnostic — it matches a candidate file's *stem* against the caller's import tokens (works for Python `from a import x`, Rust `use crate::a::x`, C `#include "a.h"`, etc.); zero or multiple import-supported candidates keep the existing fan-out, so no edge is ever dropped. `provenance` stays `'heuristic'` (an import-narrowed edge is a stronger heuristic, not AST/SCIP truth) — consumers that want to rank it higher key on `evidence.resolution`. This is the Python-path read of #42; SCIP/stack-graphs resolution remains a Rust follow-up.
@@ -32,6 +43,7 @@
 - **`codeparse`: calls inside nested functions now attribute to the outermost emitted symbol (Risk 1).** Previously `_enclosing_function` returned the innermost function, so a call inside a nested function produced a `CALLS` edge whose `caller_node_id` referenced a symbol that was never emitted (an orphan edge source). Fixed for Python and the ECMAScript family (TypeScript + JavaScript, which share the walker). Go/Java were already structurally safe (no nested function *declarations*).
 - **`codeparse`: Python symbol spans now include decorator lines (Risk 2).** A decorated `def`/`class` previously began at the `def`/`class` line, dropping `@decorator` lines from the symbol's `original_content` and `start_line` metadata. The span now starts at the first decorator (the `decorated_definition` node).
 - Added a corpus-scale invariant test (no orphan callers, in-bounds spans, no parse crashes, deterministic node_ids) over chunkshop's own source tree, plus realistic per-language fixtures exercising nesting + decorators. This is the regression net that hardens the extractor pattern before it is replicated across new languages (sub-project A).
+- Real-code validation for the new extractors: `test_rust_corpus.py` parses chunkshop's own `rust/` tree (~120 files, ~1.3k symbols, ~9.4k calls) in CI; env-gated `test_c_corpus.py` validated against **Postgres 16.3** `src/` (1,269 `.c` files, 25,431 symbols, 250,000 call sites) — **0 orphans, 0 out-of-bounds, 0 crashes, 0 regex fallback**. Go/Java closure/lambda orphan-safety and Rust `use`-based import narrowing also get dedicated tests.
 
 ## 0.7.0 — 2026-05-27
 
