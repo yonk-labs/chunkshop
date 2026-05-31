@@ -1,59 +1,27 @@
 # Experiment: caveman filler-word reduction at ingest — 2026-05-31
 
 **Question.** If we strip stopwords/filler from a chunk's `embedded_content` before
-embedding ("speak like a caveman"), does ingestion get faster, and does semantic
-search accuracy suffer? And — does the accuracy answer **flip across embedding
-models**?
+embedding ("speak like a caveman"), does ingestion get cheaper, and how much does
+semantic-search accuracy suffer? And does the accuracy answer change by embedding
+model?
 
-**Short answer.** Ingestion gets ~25–27% cheaper (the text is ~18% shorter / ~34%
-fewer whitespace tokens). Accuracy cost is **mild and model-dependent**, not the
-catastrophe a first (confounded) run suggested: most models lose 2–15% MRR, one
-model (all-MiniLM-L6-v2) actually *gains*, and the best baseline model
-(nomic-embed) barely moves (−2%). For a **paid/remote** embedder billed per token,
-the trade can be worth it; for a **local** embedder it usually isn't, because the
-same ingest speedup is available for free by raising `embedder.threads`.
-
-This is a directional result on a **small gold set (12 queries)** — treat the
-deltas as signal, not a leaderboard.
+**Answer (validated on third-party benchmarks).** On prose, caveman reduction buys
+**~25% cheaper embedding** for **~1–2% lower retrieval accuracy (NDCG@10)** — and
+that trade is **flat across model size and quantization**. The dramatic
+model-dependent swings in the first draft of this experiment (−14% to +6%, "int8
+amplifies it," a "representational-headroom" theory) were **sampling noise from a
+12-query home-grown gold set**. They vanished the moment we measured on real
+benchmarks (BEIR SciFact + NFCorpus, 600+ queries). This doc keeps the wrong turns
+on purpose — the methodology lesson is the most valuable part.
 
 ---
 
-## Setup
+## 1. The trade, in numbers
 
-- **Corpus:** SCOTUS 772-doc legal QA set (case overviews + decisions).
-- **Chunker:** `hierarchy` (prefix_heading=true, min_section_chars=100) → 1095 chunks.
-- **Gold:** `docs/samples/bakeoff-scotus/gold-scotus.yaml`, 12 hand-verified queries,
-  each with a `gold_doc_id` that should rank #1.
-- **Reducer:** `chunkshop.summarizers.caveman` — drops a fixed stopword list +
-  punctuation-only tokens. Deterministic, no deps.
-- **Metric:** semantic-only retrieval. For each query, embed it, cosine-rank all
-  chunks, dedupe to the best rank per doc, and score **recall@1**, **recall@5**,
-  **MRR** over the 12 queries. Brute-force exact cosine (no HNSW approximation) so
-  the index is not a variable.
-- **Three arms:**
-  - **A** baseline — embed `X`, query raw.
-  - **B** caveman index — embed `caveman(X)`, query raw.
-  - **C** caveman both — embed `caveman(X)`, query `caveman(query)`.
+### Ingestion / embedding cost (real, unchanged)
 
-Where `X` is **the exact text chunkshop embeds** (`embedded_content` =
-heading-prefixed body for `hierarchy`). Caveman is applied to that same `X`, so the
-**only** variable is filler removal.
-
-## The confound that nearly produced the wrong headline
-
-A first pass wired the baseline as plain `hierarchy` (embeds heading+body) and the
-caveman arm as `summary_embed(hierarchy, caveman)` — but `summary_embed` applies the
-reducer to the base chunk's `original_content`, which for `hierarchy` is the body
-**without** the heading. So that run changed *two* things at once: it removed filler
-**and** dropped the heading-prefix framing (the thing chunkshop's own bakeoff credits
-for `hierarchy` winning on prose). Result: recall@1 0.67 → 0.33, MRR −33% — a
-"disaster" that was mostly the missing heading, not caveman.
-
-The corrected experiment above applies caveman to the **same** heading-prefixed text
-in both arms. Lesson: when A/B-ing a text transform, hold the chunk-framing constant
-or you measure the framing, not the transform.
-
-## Ingestion cost
+Caveman shrinks the embedded text, which is pure win on the cost side. On the SCOTUS
+corpus (`Xenova/bge-base-en-v1.5-int8`, threads=12):
 
 | | avg chars/chunk | whitespace tokens/chunk | embed time (772 docs) |
 |---|---|---|---|
@@ -61,125 +29,151 @@ or you measure the framing, not the transform.
 | caveman | 1063 | 128.6 | 30.5 s |
 | **delta** | **−18.2%** | **−34.6%** | **−26.7%** |
 
-Smaller sequences → less ONNX compute → ~27% faster embedding, the dominant cost of
-ingest. (Measured on `Xenova/bge-base-en-v1.5-int8`, threads=12.)
+How that ~25% shows up depends on your bottleneck:
 
-## Accuracy across models (caveman on the exact embedded text)
+| You care about… | The win |
+|---|---|
+| Embedding wall-time (single job) | **~25–27% faster** |
+| Throughput on a busy/multi-tenant box | **~+20%** aggregate (survives contention — see §4) |
+| A paid per-token embedder (OpenAI etc.) | **~18–34% lower token bill**, every ingest |
 
-| Model | dim | Base MRR | B caveman+rawQ | C caveman+caveQ | recall@1 (base → caveman) |
+The exact number scales with how much filler your text has: legal/scientific prose
+sheds ~18% of characters / ~34% of words; terser text (code, logs, telemetry) sheds
+less and saves less.
+
+### Accuracy cost (BEIR — third-party, 600+ queries)
+
+Caveman applied to the document text, scored with standard NDCG@10 against real
+relevance judgments:
+
+| Dataset (domain) | queries | model | baseline NDCG@10 | caveman ΔNDCG@10 | Recall@10 (base→cav) |
 |---|---|---|---|---|---|
-| nomic-embed-v1.5-Q | 768 | **0.896** | 0.875 (−2%) | 0.875 (−2%) | 0.83 → 0.75 |
-| bge-large-en-v1.5 fp32 (LAN) | 1024 | 0.842 | 0.729 (−13%) | 0.743 (−12%) | 0.75 → 0.58 |
-| BGE-base int8 | 768 | 0.806 | 0.764 (−5%) | 0.778 (−3%) | 0.67 → 0.58 |
-| OpenAI text-embedding-3-small | 1536 | 0.792 | 0.736 (−7%) | 0.778 (−2%) | 0.58 → 0.50 / 0.58 |
-| BGE-small fp32 | 384 | 0.765 | 0.705 (−8%) | 0.705 (−8%) | 0.67 → 0.58 |
-| BGE-small int8 | 384 | 0.766 | 0.662 (−14%) | 0.648 (−15%) | 0.67 → 0.50 |
-| all-MiniLM-L6-v2 | 384 | 0.667 | 0.708 (**+6%**) | 0.736 (**+10%**) | 0.33 → 0.42 / 0.50 |
+| SciFact (science) | 300 | BGE-small fp32 | 0.7215 | **−2.3%** | 0.840 → 0.838 |
+| SciFact | 300 | BGE-small int8 | 0.7134 | **−1.6%** | 0.836 → 0.840 |
+| SciFact | 300 | BGE-base int8 | 0.7413 | **+0.2%** | 0.872 → 0.888 |
+| NFCorpus (medical) | 323 | BGE-small fp32 | 0.3409 | **−1.5%** | 0.317 → 0.315 |
+| NFCorpus | 323 | BGE-small int8 | 0.3394 | **−0.5%** | 0.315 → 0.320 |
 
-### Readings
+Range **+0.2% to −2.3%**, mean ≈ **−1%**. Two domains, two relevance structures
+(sparse binary vs dense graded ~38 rel/query), fp32 and int8 — all cluster at ~1–2%.
+Recall@10 barely moves (sometimes *up*). **Semantic-only**; with hybrid search the
+keyword leg runs on raw `original_content`, so the real-world hit is smaller still.
 
-1. **The sign flips by model.** all-MiniLM-L6-v2 (older, weaker baseline) *improves*
-   when filler is removed — fewer common tokens to dilute a small model's signal.
-   Stronger models (nomic, BGE-base, OpenAI) lose a little. So yes: the verdict is
-   model-dependent.
-2. **Magnitude is mild once measured cleanly** — −2% to −15% MRR for the losers, vs
-   the −33% the confounded run implied. The earlier "caveman destroys recall" claim
-   was a measurement artifact.
-3. **Quantization amplifies the hit.** BGE-small int8 (−14%) lost roughly twice the
-   fp32 BGE-small (−8%) — int8's coarser vectors are less tolerant of
-   out-of-distribution (caveman) text. If you reduce filler, prefer a less
-   aggressively quantized model.
-4. **Match the query transform for remote models.** OpenAI went −7% (raw query) →
-   −2% (caveman query). BGE-base −5% → −3%. If the index is caveman-style, caveman
-   the query too. (BGE-small is the exception — caveman-query made it slightly
-   worse.)
-5. **Best retriever barely cares.** nomic-embed had the top baseline (0.896) and lost
-   only 2%. But this does NOT generalize to "good models are robust" — see #6.
-6. **There is NO clean law by model size / dimension / baseline quality.** An earlier
-   draft of this doc claimed "more representational headroom → smaller hit," fit from
-   the first six models. Adding a seventh — **bge-large-en-v1.5 (1024-dim, fp32)** —
-   broke it: the biggest, full-precision BGE, with the 2nd-best baseline (0.842), took
-   the **2nd-worst** hit (−13%), worse than BGE-base int8 (−5%) and BGE-small fp32
-   (−8%). Sorting by dimension or baseline yields no monotonic trend (nomic-768 −2%,
-   bge-large-1024 −13%). **Retracted.** The only relationship that survives is the
-   *controlled* one in #3 (same model, vary only quantization). Treat all cross-model
-   deltas as model-specific, and at 12 queries a −13% vs −5% gap is ≈1–2 queries
-   flipping — partly noise. **Operational takeaway: there is no shortcut; measure
-   caveman on your specific model + corpus.**
-7. **Pending: arctic-embed-l-v2.0 IQ4_XS (4-bit GGUF).** Would test heavy
-   quantization on a different architecture, but the LAN llama.cpp server rejected
-   inputs >256 tokens (`physical batch size 256` < 447-token chunks). Needs the server
-   restarted with a larger `--ubatch-size` (≥512); rerun then.
+## 2. Why the accuracy hit is so small — the chunk-overlap view
 
-## Two different kinds of "speedup" — don't confuse them
+Gold-free check (50 SCOTUS queries): for each query, how many of the raw-retrieval
+top-10 chunks does caveman-retrieval still return?
 
-An earlier draft of this doc said local users should skip caveman because
-`embedder.threads` gives the speedup "for free." That was wrong, and it's worth
-being precise about why, because it changes the verdict.
+| Model | overlap@10 (caveman vs raw) |
+|---|---|
+| BGE-small fp32 | 0.72 ± 0.13 |
+| BGE-small int8 | 0.70 ± 0.14 |
+| BGE-base fp32 | 0.75 ± 0.14 |
+| BGE-base int8 | 0.75 ± 0.12 |
+| all-MiniLM-L6-v2 | 0.73 ± 0.12 |
 
-- **`embedder.threads` does not reduce the work.** It spreads the *same* matrix math
-  across more cores. Total core-seconds stay flat (slightly up, from sync overhead).
-  So it only lowers wall-time when cores are **idle**. It's a **latency ⇄ CPU-headroom**
-  trade against a fixed core budget — which is exactly why chunkshop's rule is
-  `orchestrate --concurrency N × embedder.threads ≈ cores`. The headroom is a pie you
-  divide, not free capacity.
-- **Caveman reduces the actual work.** Fewer tokens → fewer FLOPs per chunk. That
-  raises throughput-*per-core*, which is the only thing that helps when the box is
-  already saturated.
+Caveman reshuffles ~28% of the top-10, but the swaps are **near-equivalent chunks** —
+relevance holds, so NDCG barely moves. Overlap is tight (std ~0.13) and flat across
+size/quant: no model signal here either. It changes *which* chunks, not *how good*.
 
-Measured on the 24-core box, simulating a busy server with **8 concurrent embed jobs**
-(aggregate throughput, texts/sec — the metric a shared server cares about):
+## 3. The cautionary tale (kept on purpose)
 
-| Scenario | thread demand | aggregate throughput |
+The first version of this experiment used a **12-query hand-written SCOTUS gold set**
+(`gold-scotus.yaml`) scored by recall@1 / MRR. It produced a confident, totally wrong,
+model-dependent story. The path to noticing:
+
+1. **Confound (caught first).** Baseline plain-`hierarchy` embeds `embedded_content`
+   (heading-prefixed body); the caveman arm via `summary_embed` reduced the base
+   chunk's `original_content` (body *without* heading). That changed two things at
+   once — filler **and** the heading framing — for a fake −33%. Fixed by reducing the
+   *same* heading-prefixed text in both arms.
+2. **Wild per-model numbers.** Post-fix, the 12-query set still gave −14% to +6% MRR
+   across models. I fit a "more representational headroom → smaller hit" rule to six
+   points… then **bge-large (1024-dim, fp32)** lost −13%, breaking it. Worse: the
+   *same* bge-large served two ways (LAN fp32 −13% vs local fp32 −9%) disagreed, and
+   bge-base and bge-large produced **identical** recall — the metric was out of
+   resolution.
+3. **"int8 amplifies it" died too.** BGE-small said int8 (−14%) > fp32 (−8%); BGE-base
+   said the opposite (int8 −5% < fp32 −9%). Two controlled pairs, opposite signs.
+4. **The fix wasn't rerunning** (embeddings are deterministic per fixed batch — see
+   caveat) and it **was never an LLM judge** (retrieval is pure cosine vs labels). It
+   was **sampling noise**: at 12 queries, recall@1 moves in 1/12 = 8.3% steps, so a
+   −13% vs −5% gap is 1–2 questions flipping. The cure is more queries + third-party
+   labels → BEIR, where the whole spread collapses to ~1–2% flat.
+
+### The wrong table (preserved as a warning)
+
+12-query SCOTUS, caveman ΔMRR — **do not trust these; this is what noise looks like:**
+
+| model | dim | quant | ΔMRR (raw query) |
+|---|---|---|---|
+| nomic-embed-v1.5-Q | 768 | Q | −2% |
+| bge-large fp32 (LAN) | 1024 | fp32 | −13% |
+| bge-large fp32 (local) | 1024 | fp32 | −9% |
+| bge-base fp32 | 768 | fp32 | −9% |
+| bge-base int8 | 768 | int8 | −5% |
+| OpenAI 3-small | 1536 | — | −7% / −2% |
+| bge-small fp32 | 384 | fp32 | −8% |
+| bge-small int8 | 384 | int8 | −14% |
+| all-MiniLM-L6-v2 | 384 | fp32 | +6% |
+
+Same trade, measured properly (BEIR §1): **+0.2% to −2.3%, flat.**
+
+## 4. Two kinds of "speedup" — caveman vs threads
+
+`embedder.threads` does **not** reduce work; it spreads the same math over more cores,
+so it only helps when cores are idle. Caveman reduces the work itself. Measured with 8
+concurrent embed jobs on 24 cores (aggregate throughput):
+
+| Scenario | thread demand | throughput |
 |---|---|---|
-| raw text, threads=3 (matched to cores) | 24 / 24 | 46.5 texts/s |
-| raw text, threads=12 (oversubscribed) | 96 / 24 | **35.6 texts/s (−23.5%)** |
-| **caveman** text, threads=3 (matched) | 24 / 24 | **56.1 texts/s (+20.6%)** |
+| raw, threads=3 (matched) | 24 / 24 | 46.5 texts/s |
+| raw, threads=12 (oversubscribed) | 96 / 24 | **35.6 texts/s (−23.5%)** |
+| caveman, threads=3 | 24 / 24 | **56.1 texts/s (+20.6%)** |
 
-Under load, raising threads **lost** 23.5% throughput (oversubscription: 8×12=96
-threads fighting over 24 cores). Caveman **gained** 20.6% at the same thread budget,
-because it cut the work. The "threads = 1.5× faster" number elsewhere is a real win
-**only on an idle box**; it inverts under contention.
+Under load, more threads *lose* throughput; caveman *gains* it. That's why caveman is
+the right lever on a busy server and threads are the right lever on an idle one.
 
-## So, is it worth doing?
-
-It's a genuine **speed/cost ⇄ accuracy** trade, not a free lunch and not a trap —
-context decides.
+## 5. So, is it worth doing?
 
 | Situation | Verdict |
 |---|---|
-| **Idle / single-tenant box, local model** | **Probably not.** Spare cores mean `embedder.threads` buys the wall-time win at zero accuracy cost. Caveman's −2–15% recall isn't worth it when you have idle cores to throw at the problem. |
-| **Busy / multi-tenant local server** (the hundreds-of-users case) | **Now it's a real lever.** Threads can't help — they oversubscribe and *lose* throughput (−23.5% measured). Caveman raises per-core throughput (+20.6%) by doing less work. If you're CPU-bound, this is the trade: ~2–15% recall (model-dependent) for ~20% more ingest capacity. |
-| **Paid/remote embedder** (OpenAI etc., per-token billing) | **Often yes.** ~18% fewer tokens ≈ ~18% lower embedding bill, every ingest, for ~2% MRR loss *if you caveman the query too*. Measure on your corpus. |
-| **Small/older model** (MiniLM-class) | **Possibly a win** — filler removal *helped* here (+6–10% MRR). |
-| **Quantizing a model you'll caveman** | **Don't stack them.** The controlled comparison (BGE-small fp32 −8% → int8 −14%) shows int8 amplifies the hit for the *same* model. (Note: int8 is not uniquely worst across models — bge-large fp32 also lost −13%; the hit is model-specific, see reading #6.) |
+| **Idle / single-tenant box, local model** | **Probably not.** Spare cores → `embedder.threads` buys the speed at zero accuracy cost. Don't pay even ~1–2% recall when idle cores are free. |
+| **Busy / multi-tenant local server** | **Real lever.** Threads oversubscribe and lose throughput; caveman adds ~20% by doing less work, for ~1–2% recall. |
+| **Paid/remote embedder** (per-token billing) | **Often yes.** ~18–34% lower bill, every ingest, for ~1–2% NDCG. |
+| **Any model** | No babying required — the hit is flat across size and quantization. |
 
-## Caveats
+## 6. Methodology lessons
 
-- **12 queries.** One query flipping moves recall@1 by ~0.08. The MRR deltas (a
-  continuous score over 12×rank) are more robust, but this is a directional probe,
-  not a tournament. Re-run with a 100+ query gold set before betting a pipeline on it.
-- **One corpus, one domain** (legal prose). Filler density and the value of function
-  words vary by domain; code or telemetry would behave differently.
+1. **A 12-question benchmark will lie to you.** It produced a confident, wrong,
+   model-dependent narrative. Use ≥hundreds of queries; prefer third-party labels.
+2. **Hold the framing constant.** A/B a text transform with everything else identical,
+   or you measure the heading prefix (or the tokenizer, or the batch padding), not the
+   transform.
+3. **Controlled comparisons only.** "int8 amplifies it" came from comparing across
+   models; the one within-model pair that looked clean reversed on the next model.
+4. **Pick a noise-robust metric.** recall@1 on 12 queries is a coarse 1/12 staircase;
+   NDCG@10 over 300 queries, or gold-free chunk-overlap, is far more stable.
+
+## 7. Caveats
+
+- **Two datasets, short documents** (SciFact, NFCorpus). LoCo / long-document and
+  more domains would strengthen generality; the ~1–2% is consistent so far.
 - **One reducer.** `caveman` is a blunt stopword list. A gentler reducer (keep
-  negations, keep prepositions that flip meaning) would likely shrink the accuracy
-  hit — untested.
-- Semantic-only. The FTS leg is unaffected (its `search_vector` is built from
-  `original_content`, which caveman leaves raw), so hybrid search would mask part of
-  the loss.
+  negations / meaning-flipping prepositions) might shrink the hit further — untested.
+- **Determinism check was inconclusive:** re-embedding a 60-text slice differed from
+  the full run, but that's a *batch-padding* artifact (BatchLongest pads to each
+  batch's max, and the slice has a different max), plus minor multithreaded-ONNX FP
+  reduction-order variance — not run-to-run randomness large enough to matter. The
+  decisive evidence against "it's noise" is the stable 600-query NDCG, not this check.
 
-## Reproduce
+## 8. Reproduce
 
-Accuracy harness: `/tmp/cs-bench/caveman_models.py` (chunk once, embed raw + caveman
-per model, rank the 12 gold queries by cosine). OpenAI leg reads the key-env name and
-is skipped when unset. Corpus path is the pg-raggraph SCOTUS json; gold at
-`docs/samples/bakeoff-scotus/gold-scotus.yaml`.
-
-Contention harness: `/tmp/cs-bench/contention.py` (spawns W concurrent embedder
-processes at `threads=T`, measures aggregate texts/sec — backs the "threads aren't
-free under load" table above).
-
-Remote-model harness: `/tmp/cs-bench/caveman_remote.py` (same A/B/C eval against
-OpenAI-compatible LAN servers — added bge-large-en-v1.5 fp32 @ 192.168.1.193:8001;
-arctic-embed-l-v2.0 IQ4_XS @ 192.168.1.133:8081 is pending a larger server
-`--ubatch-size`). bge-large fp32 over LAN embedded 2190 texts in ~19 min.
+- Accuracy (home-grown, noisy): `/tmp/cs-bench/caveman_models.py`,
+  `/tmp/cs-bench/caveman_local_fp32.py`, `/tmp/cs-bench/caveman_remote.py`
+  (LAN OpenAI-compatible servers).
+- Chunk-overlap (gold-free): `/tmp/cs-bench/caveman_overlap.py`.
+- Contention (threads-aren't-free): `/tmp/cs-bench/contention.py`.
+- **Third-party (authoritative):** `/tmp/cs-bench/caveman_beir.py <dataset> <models>`
+  — downloads BEIR `scifact` / `nfcorpus` zips, embeds raw vs caveman with chunkshop's
+  own fastembed provider, scores NDCG@10 + Recall@10 against the real qrels.

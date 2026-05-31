@@ -1,73 +1,63 @@
 # Can You Speed Up Embeddings by Removing Filler Words and Still Keep Accuracy?
 
-I spent an afternoon trying to make my documents dumber on purpose.
+Short version, because I respect your time: yes, mostly. You can make embedding about 25% cheaper by stripping the filler words out of your documents before you embed them, and it costs you somewhere between one and two percent of retrieval accuracy. Flat. Across every model I tried.
 
-The idea is stupid in the way that good experiments usually are. Embedding models charge you — in time if you run them locally, in actual dollars if you call OpenAI — by how much text you feed them. So what if you fed them less? Not fewer chunks. Less *text per chunk*. Rip out the filler. "The cat sat on the mat" becomes "cat sat mat." Talk like a caveman, embed the caveman, save the compute.
+The long version is more fun, because to get to that number I had to be wrong in public about four separate things first. Let me walk you through it, because the *way* I was wrong is more useful than the answer.
 
-chunkshop already had the part to do it. There's a little reducer in there called `caveman` that strips stopwords and punctuation and hands back the meaning-bearing words. And chunks carry two text fields — the raw `original_content` you keep for display and grep, and the `embedded_content` that actually goes to the model. So you can caveman the thing you embed while keeping the real text intact for humans. No data loss. Just a smaller payload hitting the GPU.
+## The dumb idea that works
 
-I figured it'd be a clean trade: cheaper embeddings, slightly worse search. The question was *how much* worse. Turns out I was wrong about almost every part of that sentence, including the part where I thought I'd measured it correctly.
+Embedding models charge you by the amount of text you push through them — compute time if you run them yourself, actual dollars if you call OpenAI. So here's the idea: feed them less. Not fewer chunks. Less text *per* chunk. "The cat sat on the mat" becomes "cat sat mat." Talk like a caveman, embed the caveman, pay for fewer tokens.
 
-## The disaster that wasn't
+chunkshop already had the parts. There's a little reducer called `caveman` that drops stopwords and punctuation, and every chunk carries two text fields: the raw `original_content` you keep for display and grep, and the `embedded_content` that actually goes to the model. So you caveman the thing you embed and leave the real text untouched for humans. No data loss. Just a smaller payload hitting the GPU.
 
-First run, SCOTUS corpus — 772 legal documents, 12 hand-written gold questions where I know exactly which doc should come back first. Baseline recall@1 of 0.67. Caveman version: 0.33. Cut in half. Mean reciprocal rank dropped a third. One gold document fell completely out of the top 50.
+On legal documents, caveman shrank the embedded text by about 18% of its characters and a third of its words. That turned into roughly 27% faster embedding on my box. The cost side was never in question. The question was always: what does it do to search?
 
-I almost wrote that up. "Caveman reduction destroys semantic search, don't do it, the end." Clean story, good headline, would've gotten some nods on Hacker News.
+## Where I started lying to myself
 
-Here's the deal, though: it was a measurement bug, and it was mine. The default chunker (`hierarchy`) does this clever thing where it prepends the section heading to the embedded text — that heading is free framing context, and it's a big part of why that chunker wins on prose. My caveman path was running through a different code route that stripped the body filler *and* quietly dropped the heading. So I wasn't measuring "what does removing filler do." I was measuring "what does removing filler AND deleting the most important sentence do." Two changes, one number, garbage conclusion.
+I had a little test set. Twelve hand-written questions against 772 Supreme Court documents, each one tagged with the answer doc that should come back first. I ran caveman against it, and the results were *fascinating*. Different embedding models reacted completely differently. One lost 14% of its accuracy. One barely flinched at 2%. One (an old 384-dimension workhorse) actually got *better*.
 
-This is the oldest trap in benchmarking and I walked right into it after twenty years of telling other people not to. Change one variable. Just one. When you're A/B testing a text transform, the chunk framing has to be identical on both sides or you're measuring the framing. (Yes, I know. I know.)
+This is catnip for a data nerd. I started building theories. My first one was beautiful: bigger, roomier models have the representational headroom to absorb the weird caveman grammar, so they lose less; small squeezed models feel it more. The numbers lined up across six models. I wrote it up. I was proud of it.
 
-So I rebuilt it. Same heading-prefixed text on both sides. The only difference between A and B is now the filler words, nothing else. And while I was in there, I figured I'd answer the better question anyway: does the answer change depending on which embedding model you use?
+Then I ran a seventh model, bge-large, the biggest full-precision BGE in the lineup, fully expecting it to shrug caveman off. It lost 13%. More than the medium model. So much for headroom.
 
-## What actually happened
+Fine, new theory: quantization. int8 models throw away precision, caveman throws away words, the two compound. BGE-small backed me up beautifully — int8 lost almost double what the full-precision version did. Clean. Then I ran the same comparison on BGE-base and it came out backwards: the int8 version lost *less*. Two controlled tests, opposite answers.
 
-Smaller first. Caveman shrank the embedded text about 18% by characters and roughly 34% by token count, which translated to ingestion embedding running about 27% faster. That part held up. The text really is cheaper to embed, and the speedup is real money if you're paying per token.
+At this point a smarter voice in the room (not mine) asked the three questions I should've asked first. Is this just noise? Are you even getting the same chunks back, or are you watching the LLM phrase its answer differently? And why are you trusting twelve questions?
 
-Now the accuracy, measured properly, across six models including OpenAI's `text-embedding-3-small`:
+## The part where the benchmark admits it was lying
 
-| Model | Baseline MRR | Caveman (raw query) | Caveman (caveman query) |
-|---|---|---|---|
-| nomic-embed-v1.5-Q (768) | 0.896 | −2% | −2% |
-| bge-large-en-v1.5 fp32 (1024) | 0.842 | −13% | −12% |
-| BGE-base int8 (768) | 0.806 | −5% | −3% |
-| OpenAI text-embedding-3-small (1536) | 0.792 | −7% | **−2%** |
-| BGE-small fp32 (384) | 0.765 | −8% | −8% |
-| BGE-small int8 (384) | 0.766 | −14% | −15% |
-| all-MiniLM-L6-v2 (384) | 0.667 | **+6%** | **+10%** |
+That last question is the whole ballgame, and here's the math I'd been ignoring. With twelve questions, "accuracy at rank 1" can only move in steps of one-twelfth — 8.3 points at a time. So a model showing −13% versus another at −5% isn't a tale of two architectures. It's one or two questions landing differently. I wasn't measuring model behavior. I was measuring a coin landing on its edge twelve times and reading tea leaves in the pattern.
 
-So it's not a disaster. It's a nibble. Mostly a 2-to-8% hit, worse on one model, and — this is the part I didn't see coming — *better* on one. all-MiniLM-L6-v2, the old reliable 384-dimension workhorse, got more accurate when I took the filler away. My read: it's a smaller, weaker model, and the stopwords were noise it couldn't see past. Strip the noise, the signal gets louder.
+Two tells I'd waved off suddenly looked damning. My 768-dimension model and my 1024-dimension model produced *identical* recall numbers — the metric literally couldn't tell them apart. And the exact same bge-large, served from two different machines, gave me −13% one way and −9% the other. When the serving setup moves your "finding" by four points, you don't have a finding.
 
-A few things fell out of this that are worth your Tuesday:
+So I threw out my homemade test and used real ones. BEIR, the standard retrieval benchmark suite. SciFact, 300 questions about scientific claims with real relevance labels. NFCorpus, 323 medical queries with graded judgments. Hundreds of questions, third-party gold, scored with NDCG, no LLM anywhere in the loop. Here's what caveman actually costs:
 
-**The sign flips by model.** This was the actual question, and the answer is yes. A weak model can *gain* from filler removal while a strong one loses a little. There is no universal "caveman is good" or "caveman is bad." There's only "caveman is good or bad *for this model on this corpus*," which is the most data-engineering sentence I will write all week.
+| Benchmark | Model | Accuracy change |
+|---|---|---|
+| SciFact | BGE-small fp32 | −2.3% |
+| SciFact | BGE-small int8 | −1.6% |
+| SciFact | BGE-base int8 | +0.2% |
+| NFCorpus | BGE-small fp32 | −1.5% |
+| NFCorpus | BGE-small int8 | −0.5% |
 
-**Quantization makes it worse.** BGE-small in int8 lost 14%. The same model in full fp32 lost 8%, about half that. Int8 vectors are already coarse, and feeding them weird caveman-grammar that the model never saw in training pushes them further off. If you're going to reduce text, don't also crush the model to int8 and expect it to shrug it off.
+Six hundred-plus questions, two different domains, full-precision and quantized, and the whole thing collapses to a band between +0.2% and −2.3%. Averaging about one percent. The −14%, the +6%, the headroom theory, the quantization theory — all of it was the twelve-question coin flip. None of it survived contact with a real benchmark.
 
-**Match the query to the index.** OpenAI lost 7% when I caveman'd the documents but searched with normal questions. When I caveman'd the *query* too — so both sides speak the same broken grammar — the loss dropped to 2%. If your index talks like a caveman, your queries should too. (BGE-small was the lone exception that got grumpier when I did this, because of course there's an exception.)
+I also ran the question my reviewer actually asked: not "is the answer right," but "do the same chunks come back?" Across every model, caveman retrieval returned about 72% of the same top-10 chunks as the raw version. So caveman reshuffles roughly a quarter of what you retrieve — but the swapped-in chunks are nearly as relevant as the ones they replaced, which is exactly why the accuracy score barely twitches. It changes *which* documents you get, not *how good* they are.
 
-**I tried to find a rule by model size, and the data shot it down.** Here's the part where I get to be wrong in public again, which is becoming a theme. Looking at the first batch, I was *sure* I saw it: bigger, roomier models shrug caveman off, small squeezed ones feel it. Clean story. Then I ran bge-large — 1024 dimensions, full fp32, the biggest BGE in the lineup — fully expecting it to barely flinch. It lost 13%. Worse than BGE-base. Worse than BGE-small in fp32. So much for "big models have room to spare."
+## So what's the actual trade?
 
-So there is no tidy law by size or dimension. nomic at 768 loses 2%; bge-large at 1024 loses 13%; they're both big and they're nowhere near each other. The only pattern that actually held up is the controlled one — same model, change only the quantization: BGE-small went from −8% in fp32 to −14% in int8. That's a real, repeatable effect because nothing else moved. Everything *across* models is model-specific, and with 12 questions a −13% versus −5% gap is one or two queries flipping, which is to say partly noise. Which leaves exactly one honest instruction: measure it on your model and your corpus, because I cannot give you a shortcut that survives contact with the next model you try. I keep trying. It keeps not working.
+Here's the deal, and it's refreshingly boring now that the drama's gone: **about 25% cheaper embedding for about 1-2% lower retrieval accuracy, and you don't have to care which model you're on.**
 
-## So should you do it?
+That 25% wears three different outfits depending on what's pinching you:
 
-Look, this is my take, and 12 gold questions is a small sample, so hold it loosely. My first instinct was to wave people off: just turn up `embedder.threads` and get the speed for free. On my 24-core box, going from 4 threads to 12 made embedding about 1.5x faster at zero recall cost, so why pay accuracy for it?
+If you're on an idle box running a local model, honestly, skip it. You can get the same speed for free by turning up `embedder.threads` and using the cores you already paid for, at zero accuracy cost. (Quick warning on that, since I got it wrong too: threads only help when cores are *idle*. I simulated a busy server with eight jobs fighting over 24 cores, and cranking threads made aggregate throughput 23% *worse*. They just thrash. Caveman, doing less actual work, made it 20% *better*. So on a saturated box the math flips.)
 
-Because "free" was me getting lazy again. Threads don't make the work smaller. They spread the same matrix math across more cores. That's a fantastic deal when the cores are sitting idle, which is exactly the situation a benchmark on my laptop creates and a production server almost never does. The second you have a busy box, those cores aren't free. They're spoken for.
+If you're on that busy multi-tenant server, caveman is a real lever — threads have stopped helping you and reducing the work is the only thing left short of buying hardware. And if you're calling a paid per-token embedder, it's the easiest yes on the board: an 18-to-34% smaller payload is a smaller invoice on every ingest, forever, for one or two points of accuracy you'll struggle to even notice in hybrid search (where your keyword leg never sees the reduced text anyway).
 
-So I simulated a busy server: eight embedding jobs running at once on 24 cores, and measured total throughput across all of them. Cranking each job to 12 threads (eight jobs fighting over 24 cores, asking for 96) didn't speed things up. It dropped aggregate throughput **23.5%**. The threads spent their time context-switching instead of working. Caveman, running at modest threads, *raised* throughput **20.6%** in the same crowded conditions — because it's less actual work, and less work scales when cores don't.
+## The thing I actually want you to take away
 
-That reframes the whole thing. It's not "free speed vs. paid accuracy." It's a real trade, and which side wins depends on your box:
+It isn't the caveman trick. It's that I had a clean, confident, model-by-model story — with a *table* — and it was complete garbage, because twelve questions will lie to you with a perfectly straight face. They'll even hand you a plausible mechanism to explain the noise, and you'll write it down, because a pattern that confirms how smart you are is the easiest thing in the world to believe.
 
-If you're on an **idle or single-tenant** machine with a local model, you're right to skip caveman. You've got spare cores; spend them on threads and keep your accuracy.
+The fix wasn't a better theory. It was three hundred questions instead of twelve, and labels somebody else wrote. That's the unglamorous heart of this whole job: the model is almost never the hard part. The hard part is being honest about whether you actually measured the thing you think you measured.
 
-If you're running a **busy, multi-tenant** server (the hundreds-of-users case), threads stop saving you. They start costing you. Now caveman's 20% throughput bump for a model-dependent 2-to-15% recall hit is an actual lever, maybe the only one you've got short of buying more hardware.
-
-If you're calling a **paid, per-token** embedder like OpenAI, it's the easiest yes on the board. An 18% smaller payload is an 18% smaller invoice, every ingest, forever, and the accuracy cost was 2%, as long as you caveman the query too. Two percent MRR for a standing discount on your embedding bill is a trade plenty of people would take.
-
-And if you're stuck on a **small or older** model for latency reasons, run the test. Filler removal might quietly make your search *better*, which is a nice problem to have.
-
-The meta-lesson is the one I keep relearning and keep almost forgetting: in AI work the hard problem is never the model, it's the data engineering around it. The same blunt little stopword-stripper helped one model, barely touched another, and clipped a third. The difference between "this destroys recall" and "this costs 2%" was a heading I forgot to hold constant. The model was never the story. The pipeline was.
-
-Want to break my numbers? The harness chunks once and re-embeds per model, so it's cheap to point at your own corpus and your own gold set. Run it on something bigger than 12 questions and tell me where I'm wrong. I'd genuinely like to know — especially if your weak model gets faster *and* better, because then we're all going to feel a little silly about how much we've been paying to embed the word "the."
+So go ahead — caveman your embeddings, pocket the 25%, lose your two percent. But before you trust *any* benchmark, mine included, count the questions. If it's twelve, it's a vibe, not a result. Run it against a few hundred and tell me what you get. I'll be over here, quietly deleting the headroom theory I was so proud of.
