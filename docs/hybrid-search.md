@@ -632,6 +632,50 @@ indexed with a non-English config.
 
 ---
 
+## Performance (latency)
+
+The read path is tuned to keep `hybrid_search` cheap without changing what it
+returns. Two things matter (both land in v0.8.2):
+
+**Legs run concurrently (automatic).** A hybrid query's `semantic` and `fts` legs
+are independent `SELECT`s, so `hybrid_search` runs them on a small thread pool
+(one worker per extra leg) instead of one after another. psycopg releases the GIL
+while waiting on the server, so the two legs overlap and total latency drops from
+`sum(legs)` to roughly `max(legs)` — about **−24% median** on a typical 2-leg
+query. The fused, ranked output is **byte-identical** to the old sequential path;
+single-leg calls stay inline with no thread overhead. Nothing to configure.
+
+**Connection reuse for high-QPS callers (opt-in).** By default each leg opens a
+short-lived connection per call — fine for a one-shot CLI search, but the ~5–6 ms
+TCP+auth+first-query setup dominates latency when you issue many queries against
+one DSN. Set the env var:
+
+```bash
+export CHUNKSHOP_SEARCH_POOL=1
+```
+
+and the hot read legs check out from a tiny thread-safe idle-connection pool keyed
+by DSN (autocommit reads, so nothing lingers idle-in-transaction between calls).
+Measured **−66% median** hybrid latency on a warm pool. The flag is **off by
+default** — the historical per-call-connect behavior is preserved byte-for-byte
+when it's unset. A long-running process can drain the pool explicitly:
+
+```python
+from chunkshop.search import close_search_pool
+close_search_pool()   # closes idle pooled connections; idempotent
+```
+
+A pooled connection that errors is closed rather than recycled, and a stale one
+(e.g. after a server restart) surfaces as a normal `OperationalError` on next use,
+exactly as a fresh connect would.
+
+> Ingestion has a matching change in v0.8.2: `PgSink` reuses one write connection
+> across documents (still committing per document), ~−24% wall on many-small-doc
+> corpora. See `CHANGELOG.md` and `docs/perf-optimization-2026-05-31.md` for the
+> full method and A/B numbers.
+
+---
+
 ## See also
 
 - [`fast-mode-rag-benchmarks.md`](fast-mode-rag-benchmarks.md) — full numbers,

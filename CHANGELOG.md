@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## 0.8.2 — 2026-05-31
+
+Performance pass on the read and write hot paths — measured before/after, no
+change to output. Ingestion gets ~24% faster on many-small-doc corpora from sink
+connection reuse; hybrid search runs its two legs concurrently (~24% lower median
+latency) with an opt-in connection pool for high-QPS callers (~66% lower median).
+Ranking output and ingested data are byte-identical; the full test suite is green
+with no new failures. Method + A/B numbers: `docs/perf-optimization-2026-05-31.md`.
+
+### Performance
+
+- **Ingestion: `PgSink` reuses one write connection across documents** instead of opening and tearing one down per document. At ~5 ms/connect that was up to ~40% of non-embed time on many-small-doc corpora (chat, messages, records). The connection is opened lazily and **still COMMITs per document**, so the crash-safety and live-progress contracts are unchanged (a committed row stays visible to other sessions; a mid-run crash still only loses the in-flight doc). On any write error the transaction is rolled back and the connection dropped so a poisoned transaction can't leak into the next document. Measured **−24% wall** on a 200-doc / 1-chunk-per-doc corpus with `embedder.threads` held constant. Backed by `backends/postgres.py:new_connection()` (raw, caller-owned), `PgSink.close()`, and a `finally` in `runner.run_cell`. The win scales with docs ÷ chunks — largest for many small docs, smaller for few large ones.
+- **Search: `hybrid_search` runs the semantic and FTS legs concurrently.** The two legs are independent, side-effect-free `SELECT`s, so they now run on a small thread pool (one worker per extra leg) instead of sequentially; psycopg releases the GIL during server I/O, so a 2-leg hybrid drops from `sum(legs)` to ≈`max(legs)`. **−24% median latency**, transparent and default-on. Fusion consumes the same per-leg results, so the ranked output is **byte-identical** to the sequential path. Single-leg queries stay inline (no thread overhead).
+- **Search: opt-in read-connection pool (`CHUNKSHOP_SEARCH_POOL=1`).** Connection *setup* (~5–6 ms/leg), not the queries, dominates search latency. Setting this env var routes the hot read legs (`semantic_search`, `keyword_search`) through a tiny thread-safe idle-connection pool keyed by DSN (autocommit reads — nothing lingers idle-in-transaction; an errored connection is closed, never recycled; `chunkshop.search.close_search_pool()` drains it). **Default OFF** preserves the documented per-call-connect behavior byte-for-byte. Measured **−66% median hybrid latency** with the flag on. See `docs/hybrid-search.md` § Performance.
+
+### Testing
+
+- New `tests/chunkshop/test_search_pool.py` pins the pool lifecycle: reuse when enabled, a fresh connection per call when disabled, never pool a poisoned (errored) connection, and drain on `close_search_pool()`.
+- `tests/chunkshop/test_pg_document_store.py` mocks updated to the `new_connection` write path (the sink no longer connects per document); the `_FakeConnection` gained `closed` / `rollback` / `close` to exercise the reuse-and-recover path.
+
+### Notes
+
+- **No API changes and no new runtime dependencies.** The search pool is the only new knob and it is opt-in via env var; the pool is hand-rolled (stdlib + psycopg) rather than pulling in `psycopg_pool`.
+- Two research write-ups ship as docs only (no code): `embedder.threads` tuning for single-cell ingest in `docs/perf-optimization-2026-05-31.md`, and a third-party-benchmarked speed-vs-accuracy analysis of `caveman` filler-word reduction (BEIR: ~1–2% NDCG for ~25% cheaper embedding) in `docs/caveman-filler-word-reduction-2026-05-31.md`.
+- Five follow-up performance ideas are tracked as issues #64–#68 (default-on search pool, COPY bulk-insert, length-bucketed embedding batches, warm-model search daemon, HNSW `ef_search`).
+
 ## 0.8.1 — 2026-05-30
 
 ### Added
