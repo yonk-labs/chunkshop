@@ -69,6 +69,7 @@ ingest. (Measured on `Xenova/bge-base-en-v1.5-int8`, threads=12.)
 | Model | dim | Base MRR | B caveman+rawQ | C caveman+caveQ | recall@1 (base → caveman) |
 |---|---|---|---|---|---|
 | nomic-embed-v1.5-Q | 768 | **0.896** | 0.875 (−2%) | 0.875 (−2%) | 0.83 → 0.75 |
+| bge-large-en-v1.5 fp32 (LAN) | 1024 | 0.842 | 0.729 (−13%) | 0.743 (−12%) | 0.75 → 0.58 |
 | BGE-base int8 | 768 | 0.806 | 0.764 (−5%) | 0.778 (−3%) | 0.67 → 0.58 |
 | OpenAI text-embedding-3-small | 1536 | 0.792 | 0.736 (−7%) | 0.778 (−2%) | 0.58 → 0.50 / 0.58 |
 | BGE-small fp32 | 384 | 0.765 | 0.705 (−8%) | 0.705 (−8%) | 0.67 → 0.58 |
@@ -93,21 +94,22 @@ ingest. (Measured on `Xenova/bge-base-en-v1.5-int8`, threads=12.)
    the query too. (BGE-small is the exception — caveman-query made it slightly
    worse.)
 5. **Best retriever barely cares.** nomic-embed had the top baseline (0.896) and lost
-   only 2%. Caveman doesn't wreck a good model; it nibbles.
-6. **The predictor is representational headroom, not dimension count.** Sorting the
-   table, the hit tracks how much slack the model has, not its raw size:
-   - 768/1536-dim, full-precision (nomic, BGE-base, OpenAI): −2% to −5% — room to
-     absorb the out-of-distribution grammar.
-   - 384-dim fp32 (BGE-small): −8% — less room.
-   - 384-dim **+ int8** (BGE-small int8): −14% — quantization already discarded
-     precision; caveman discards more, and the two compound.
-   - 384-dim but very weak (MiniLM): **+6–10%** — so capacity-starved that filler was
-     net noise, so removing it helps.
-
-   Note the two 384-dim models (BGE-small, MiniLM) move in **opposite** directions, so
-   dimension alone is not predictive. The usable heuristic: roomy full-precision model
-   → caveman barely registers; small **and** quantized → it bites hardest; truly tiny
-   → it can be a net win.
+   only 2%. But this does NOT generalize to "good models are robust" — see #6.
+6. **There is NO clean law by model size / dimension / baseline quality.** An earlier
+   draft of this doc claimed "more representational headroom → smaller hit," fit from
+   the first six models. Adding a seventh — **bge-large-en-v1.5 (1024-dim, fp32)** —
+   broke it: the biggest, full-precision BGE, with the 2nd-best baseline (0.842), took
+   the **2nd-worst** hit (−13%), worse than BGE-base int8 (−5%) and BGE-small fp32
+   (−8%). Sorting by dimension or baseline yields no monotonic trend (nomic-768 −2%,
+   bge-large-1024 −13%). **Retracted.** The only relationship that survives is the
+   *controlled* one in #3 (same model, vary only quantization). Treat all cross-model
+   deltas as model-specific, and at 12 queries a −13% vs −5% gap is ≈1–2 queries
+   flipping — partly noise. **Operational takeaway: there is no shortcut; measure
+   caveman on your specific model + corpus.**
+7. **Pending: arctic-embed-l-v2.0 IQ4_XS (4-bit GGUF).** Would test heavy
+   quantization on a different architecture, but the LAN llama.cpp server rejected
+   inputs >256 tokens (`physical batch size 256` < 447-token chunks). Needs the server
+   restarted with a larger `--ubatch-size` (≥512); rerun then.
 
 ## Two different kinds of "speedup" — don't confuse them
 
@@ -150,7 +152,7 @@ context decides.
 | **Busy / multi-tenant local server** (the hundreds-of-users case) | **Now it's a real lever.** Threads can't help — they oversubscribe and *lose* throughput (−23.5% measured). Caveman raises per-core throughput (+20.6%) by doing less work. If you're CPU-bound, this is the trade: ~2–15% recall (model-dependent) for ~20% more ingest capacity. |
 | **Paid/remote embedder** (OpenAI etc., per-token billing) | **Often yes.** ~18% fewer tokens ≈ ~18% lower embedding bill, every ingest, for ~2% MRR loss *if you caveman the query too*. Measure on your corpus. |
 | **Small/older model** (MiniLM-class) | **Possibly a win** — filler removal *helped* here (+6–10% MRR). |
-| **Aggressively quantized model** (int8) | **Avoid** — biggest accuracy hit (−14%). |
+| **Quantizing a model you'll caveman** | **Don't stack them.** The controlled comparison (BGE-small fp32 −8% → int8 −14%) shows int8 amplifies the hit for the *same* model. (Note: int8 is not uniquely worst across models — bge-large fp32 also lost −13%; the hit is model-specific, see reading #6.) |
 
 ## Caveats
 
@@ -176,3 +178,8 @@ is skipped when unset. Corpus path is the pg-raggraph SCOTUS json; gold at
 Contention harness: `/tmp/cs-bench/contention.py` (spawns W concurrent embedder
 processes at `threads=T`, measures aggregate texts/sec — backs the "threads aren't
 free under load" table above).
+
+Remote-model harness: `/tmp/cs-bench/caveman_remote.py` (same A/B/C eval against
+OpenAI-compatible LAN servers — added bge-large-en-v1.5 fp32 @ 192.168.1.193:8001;
+arctic-embed-l-v2.0 IQ4_XS @ 192.168.1.133:8081 is pending a larger server
+`--ubatch-size`). bge-large fp32 over LAN embedded 2190 texts in ~19 min.

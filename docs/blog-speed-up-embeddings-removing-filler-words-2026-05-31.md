@@ -29,6 +29,7 @@ Now the accuracy, measured properly, across six models including OpenAI's `text-
 | Model | Baseline MRR | Caveman (raw query) | Caveman (caveman query) |
 |---|---|---|---|
 | nomic-embed-v1.5-Q (768) | 0.896 | −2% | −2% |
+| bge-large-en-v1.5 fp32 (1024) | 0.842 | −13% | −12% |
 | BGE-base int8 (768) | 0.806 | −5% | −3% |
 | OpenAI text-embedding-3-small (1536) | 0.792 | −7% | **−2%** |
 | BGE-small fp32 (384) | 0.765 | −8% | −8% |
@@ -45,7 +46,9 @@ A few things fell out of this that are worth your Tuesday:
 
 **Match the query to the index.** OpenAI lost 7% when I caveman'd the documents but searched with normal questions. When I caveman'd the *query* too — so both sides speak the same broken grammar — the loss dropped to 2%. If your index talks like a caveman, your queries should too. (BGE-small was the lone exception that got grumpier when I did this, because of course there's an exception.)
 
-**Size and squeeze decide how much it stings.** Line the models up and a pattern shows, but it's not the one you'd guess. It's not raw dimensions — a 384-dim MiniLM and a 384-dim BGE-small went opposite directions, so "small model" isn't the predictor. It's how much representational slack the model has left. The roomy 768 and 1536-dim models (nomic, BGE-base, OpenAI) had space to absorb the broken grammar and barely moved, 2 to 5%. Take the same BGE-small and crush it from fp32 to int8 and the hit doubled, 8% to 14%, because int8 already threw away precision and caveman threw away more. Then there's MiniLM at the bottom, so capacity-starved that the filler was actively crowding its signal, so cutting it *helped*. So the rule of thumb: a big roomy model shrugs caveman off, a small *and* quantized one feels it most, and a truly tiny model can come out ahead. Headroom, not parameter count.
+**I tried to find a rule by model size, and the data shot it down.** Here's the part where I get to be wrong in public again, which is becoming a theme. Looking at the first batch, I was *sure* I saw it: bigger, roomier models shrug caveman off, small squeezed ones feel it. Clean story. Then I ran bge-large — 1024 dimensions, full fp32, the biggest BGE in the lineup — fully expecting it to barely flinch. It lost 13%. Worse than BGE-base. Worse than BGE-small in fp32. So much for "big models have room to spare."
+
+So there is no tidy law by size or dimension. nomic at 768 loses 2%; bge-large at 1024 loses 13%; they're both big and they're nowhere near each other. The only pattern that actually held up is the controlled one — same model, change only the quantization: BGE-small went from −8% in fp32 to −14% in int8. That's a real, repeatable effect because nothing else moved. Everything *across* models is model-specific, and with 12 questions a −13% versus −5% gap is one or two queries flipping, which is to say partly noise. Which leaves exactly one honest instruction: measure it on your model and your corpus, because I cannot give you a shortcut that survives contact with the next model you try. I keep trying. It keeps not working.
 
 ## So should you do it?
 
