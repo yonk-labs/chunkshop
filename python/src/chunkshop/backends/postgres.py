@@ -35,6 +35,17 @@ class PostgresBackend:
         with psycopg.connect(dsn) as conn:
             yield conn
 
+    def new_connection(self) -> Any:
+        """Open a raw, caller-owned psycopg connection (NOT a context manager).
+
+        The caller is responsible for commit/rollback and close(). Used by the
+        sink's hot write path to reuse one connection across many per-document
+        writes instead of paying a ~5ms connect/teardown per document, while
+        still committing per document (crash-safety + live-progress preserved).
+        """
+        dsn = os.environ[self._dsn_env] if self._dsn_env is not None else self._dsn
+        return psycopg.connect(dsn)
+
     def quote_ident(self, name: str) -> str:
         return '"' + name.replace('"', '""') + '"'
 

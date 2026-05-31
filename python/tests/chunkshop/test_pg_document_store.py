@@ -37,6 +37,8 @@ class _FakeConnection:
     def __init__(self):
         self.cursor_obj = _FakeCursor()
         self.commits = 0
+        self.closed = False
+        self.rollbacks = 0
 
     def __enter__(self):
         return self
@@ -49,6 +51,12 @@ class _FakeConnection:
 
     def commit(self):
         self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
 
 
 def test_write_document_record_upserts_document_metadata(monkeypatch):
@@ -71,7 +79,7 @@ def test_write_document_record_upserts_document_metadata(monkeypatch):
     )
     backend = PostgresBackend(dsn="postgresql://unused")
     conn = _FakeConnection()
-    monkeypatch.setattr(backend, "connect", lambda: conn)
+    monkeypatch.setattr(backend, "new_connection", lambda: conn)
 
     sink = PgSink(cfg, backend, embed_dim=3)
     sink.write_document_record(
@@ -147,7 +155,7 @@ def test_write_document_record_can_omit_full_content_and_lede_report(monkeypatch
     )
     backend = PostgresBackend(dsn="postgresql://unused")
     conn = _FakeConnection()
-    monkeypatch.setattr(backend, "connect", lambda: conn)
+    monkeypatch.setattr(backend, "new_connection", lambda: conn)
 
     sink = PgSink(cfg, backend, embed_dim=3)
     sink.write_document_record(
@@ -178,8 +186,8 @@ def test_pending_document_record_restored_if_chunk_write_fails(monkeypatch):
 
     class FailingConnection(_FakeConnection):
         def __init__(self):
+            super().__init__()
             self.cursor_obj = FailingCursor()
-            self.commits = 0
 
     cfg = TargetConfig(
         type="postgres",
@@ -190,7 +198,7 @@ def test_pending_document_record_restored_if_chunk_write_fails(monkeypatch):
     )
     backend = PostgresBackend(dsn="postgresql://unused")
     conn = FailingConnection()
-    monkeypatch.setattr(backend, "connect", lambda: conn)
+    monkeypatch.setattr(backend, "new_connection", lambda: conn)
 
     sink = PgSink(cfg, backend, embed_dim=3)
     sink.write_document_record(

@@ -119,6 +119,25 @@ class PgSink:
         self.embed_dim = embed_dim
         self._dsn = cfg.resolve_dsn()
         self._pending_document_records: dict[str, dict[str, Any]] = {}
+        # Persistent write connection, lazily opened on first write_document and
+        # reused across documents. Per-document COMMIT is preserved (crash-safety
+        # + live-progress query), but the ~5ms connect/teardown per doc is paid
+        # once instead of N times. Closed via close() at end of the run.
+        self._write_conn = None
+
+    def _get_write_conn(self):
+        conn = self._write_conn
+        if conn is None or conn.closed:
+            conn = self.backend.new_connection()
+            self._write_conn = conn
+        return conn
+
+    def close(self) -> None:
+        """Close the persistent write connection if open. Idempotent."""
+        conn = self._write_conn
+        self._write_conn = None
+        if conn is not None and not conn.closed:
+            conn.close()
 
     def _fq(self) -> str:
         return self.backend.fq_table(self.cfg.database_name, self.cfg.table)
@@ -449,8 +468,15 @@ class PgSink:
             rows.append(tuple(base_values + promote_values))
 
         pending_record = self._pending_document_records.pop(doc_id, None)
+        # Reuse one persistent connection across documents, committing per doc.
+        # On any error we roll back and drop the connection so a poisoned
+        # transaction never leaks into the next document's write; the next call
+        # transparently reopens. This keeps the original per-doc-commit semantics
+        # (a mid-run crash only loses the in-flight doc) while removing the
+        # per-document connect/teardown cost.
+        conn = self._get_write_conn()
         try:
-            with self.backend.connect() as conn, conn.cursor() as cur:
+            with conn.cursor() as cur:
                 if pending_record is not None:
                     self._execute_document_record(cur, pending_record)
                 cur.executemany(stmt, rows)
@@ -463,6 +489,11 @@ class PgSink:
         except Exception:
             if pending_record is not None:
                 self._pending_document_records[doc_id] = pending_record
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            self.close()
             raise
 
     def delete_document(self, doc_id: str) -> int:

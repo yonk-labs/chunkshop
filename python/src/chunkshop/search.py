@@ -25,7 +25,10 @@ import-boundary guard, this file pulls in no summarizer dependency at all.)
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
+from contextlib import contextmanager
 from typing import Any, Optional
 
 import numpy as np
@@ -93,6 +96,89 @@ def _backend() -> PostgresBackend:
 
 def _fq(backend: PostgresBackend, schema: str, table: str) -> str:
     return backend.fq_table(schema, table)
+
+
+# -- read-connection pooling (opt-in) ---------------------------------------
+# By default the read path opens a short-lived psycopg connection per call, as
+# documented in the module header. For high-QPS callers (a search service
+# issuing many queries against one DSN), the ~5-6ms TCP+auth+first-query setup
+# per connection dominates latency — measured ~21ms hybrid -> ~8ms with warm
+# connections. Setting CHUNKSHOP_SEARCH_POOL=1 routes the hot read legs through
+# a tiny thread-safe idle-connection pool keyed by DSN. Connections are opened
+# autocommit (reads need no transaction), so nothing lingers idle-in-transaction
+# between checkouts. A connection that errors is closed, never returned to the
+# pool; a stale/broken connection surfaces as an OperationalError on the next
+# query exactly as a fresh connect would. Ranking output is unchanged — this
+# only affects how the connection is acquired.
+_POOL_LOCK = threading.Lock()
+_POOLS: dict[str, list[Any]] = {}
+_POOL_MAX_IDLE = 8
+
+
+def _pool_enabled() -> bool:
+    return os.environ.get("CHUNKSHOP_SEARCH_POOL", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _pool_acquire(dsn: str):
+    with _POOL_LOCK:
+        idle = _POOLS.get(dsn)
+        while idle:
+            conn = idle.pop()
+            if not conn.closed:
+                return conn
+    conn = psycopg.connect(dsn)
+    conn.autocommit = True
+    return conn
+
+
+def _pool_release(dsn: str, conn, ok: bool) -> None:
+    if conn.closed:
+        return
+    if not ok:
+        conn.close()
+        return
+    with _POOL_LOCK:
+        idle = _POOLS.setdefault(dsn, [])
+        if len(idle) < _POOL_MAX_IDLE:
+            idle.append(conn)
+            return
+    conn.close()
+
+
+@contextmanager
+def _read_connection(dsn: str):
+    """Yield a psycopg connection for a read leg.
+
+    Pooled+reused when CHUNKSHOP_SEARCH_POOL is set; otherwise a plain
+    short-lived connection (the historical default), preserving the module's
+    documented per-call-connect contract byte-for-byte.
+    """
+    if not _pool_enabled():
+        with psycopg.connect(dsn) as conn:
+            yield conn
+        return
+    conn = _pool_acquire(dsn)
+    ok = True
+    try:
+        yield conn
+    except Exception:
+        ok = False
+        raise
+    finally:
+        _pool_release(dsn, conn, ok)
+
+
+def close_search_pool() -> None:
+    """Close all idle pooled read connections. Safe to call anytime; idempotent."""
+    with _POOL_LOCK:
+        pools = list(_POOLS.values())
+        _POOLS.clear()
+    for idle in pools:
+        for conn in idle:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # Allowlist regex for column identifiers spliced into ``column_in`` /
@@ -300,7 +386,7 @@ def keyword_search(
     sql += " ORDER BY score DESC LIMIT %s"
     params.append(k)
 
-    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+    with _read_connection(dsn) as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
     return [
@@ -354,7 +440,7 @@ def semantic_search(
     sql += f" ORDER BY embedding {op} %s::vector LIMIT %s"
     params.extend([vec_lit, k])
 
-    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+    with _read_connection(dsn) as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
     return [
@@ -410,16 +496,37 @@ def hybrid_search(
     # Over-fetch per leg so deep-but-dual-matched candidates survive into fusion.
     cand_k = max(k * candidate_multiplier, k)
 
-    leg_results: dict[str, list[Hit]] = {}
+    # Each leg is an independent, side-effect-free SELECT on its own short-lived
+    # connection, so the legs can run concurrently. psycopg releases the GIL
+    # while waiting on the server, so two legs on two backends overlap in real
+    # time — a 2-leg hybrid drops from sum(legs) to ~max(legs) wall time. Fusion
+    # consumes the same per-leg results regardless of execution order, so the
+    # ranked output is identical to the sequential path (no accuracy change).
+    leg_thunks: dict[str, Any] = {}
     if "semantic" in legs:
-        leg_results["semantic"] = semantic_search(
+        leg_thunks["semantic"] = lambda: semantic_search(
             dsn, schema=schema, table=table, query_vec=query_vec, k=cand_k,
             where=where, vector_metric=vector_metric,
         )
     if "fts" in legs:
-        leg_results["fts"] = keyword_search(
+        leg_thunks["fts"] = lambda: keyword_search(
             dsn, schema=schema, table=table, query=query, k=cand_k, where=where,
             language=language,
         )
+
+    leg_results: dict[str, list[Hit]] = {}
+    if len(leg_thunks) > 1:
+        # Spawn one worker per extra leg; the call thread runs none idle. Thread
+        # spawn (~0.1ms) is negligible against per-leg query latency (ms-scale).
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=len(leg_thunks)) as pool:
+            futures = {name: pool.submit(thunk) for name, thunk in leg_thunks.items()}
+            # .result() re-raises any leg exception, matching sequential behavior.
+            for name, fut in futures.items():
+                leg_results[name] = fut.result()
+    else:
+        for name, thunk in leg_thunks.items():
+            leg_results[name] = thunk()
 
     return _fuse(leg_results, k=k, fusion=fusion, weights=weights, rrf_k=rrf_k)
