@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "chunkshop-rs"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "anyhow",
  "blake2",

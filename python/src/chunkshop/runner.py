@@ -57,6 +57,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
 
     start = time.time()
     _log(f"cell {cfg.cell_name} starting", log_path)
+    sink = None
     try:
         source = load_source(cfg.source)
         framer = load_framer(cfg.framer)
@@ -234,3 +235,12 @@ def run_cell(cfg: CellConfig) -> CellResult:
             wall_seconds=wall,
             error=str(exc),
         )
+    finally:
+        # Release the sink's persistent write connection (if it opened one).
+        # Optional protocol method — older/other sinks may not define it.
+        close = getattr(sink, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
