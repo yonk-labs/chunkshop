@@ -47,11 +47,19 @@ A few things fell out of this that are worth your Tuesday:
 
 ## So should you do it?
 
-Look, this is my take, and 12 gold questions is a small sample, so hold it loosely. But the recommendation sorts cleanly by who's paying the bill.
+Look, this is my take, and 12 gold questions is a small sample, so hold it loosely. My first instinct was to wave people off: just turn up `embedder.threads` and get the speed for free. On my 24-core box, going from 4 threads to 12 made embedding about 1.5x faster at zero recall cost, so why pay accuracy for it?
 
-If you're running a **local** model, don't bother. The whole point was to make embedding cheaper, and I already wrote up a boring, accuracy-free way to do that: turn up `embedder.threads`. On a 24-core box, going from 4 threads to 12 made embedding about 1.5x faster and cost exactly zero recall, because all I did was use the cores I already paid for. Why would you trade 2-to-15% accuracy for a speedup that's sitting right there for free?
+Because "free" was me getting lazy again. Threads don't make the work smaller. They spread the same matrix math across more cores. That's a fantastic deal when the cores are sitting idle, which is exactly the situation a benchmark on my laptop creates and a production server almost never does. The second you have a busy box, those cores aren't free. They're spoken for.
 
-If you're calling a **paid, per-token** embedder like OpenAI, now it's an actual conversation. An 18% smaller payload is an 18% smaller invoice, every single ingest, forever. And on OpenAI the accuracy cost was 2% — if you remember to caveman the query. Two percent MRR for an 18% standing discount on your embedding line item is a trade a lot of people would take. Measure it on your own corpus, but don't dismiss it.
+So I simulated a busy server: eight embedding jobs running at once on 24 cores, and measured total throughput across all of them. Cranking each job to 12 threads (eight jobs fighting over 24 cores, asking for 96) didn't speed things up. It dropped aggregate throughput **23.5%**. The threads spent their time context-switching instead of working. Caveman, running at modest threads, *raised* throughput **20.6%** in the same crowded conditions — because it's less actual work, and less work scales when cores don't.
+
+That reframes the whole thing. It's not "free speed vs. paid accuracy." It's a real trade, and which side wins depends on your box:
+
+If you're on an **idle or single-tenant** machine with a local model, you're right to skip caveman. You've got spare cores; spend them on threads and keep your accuracy.
+
+If you're running a **busy, multi-tenant** server (the hundreds-of-users case), threads stop saving you. They start costing you. Now caveman's 20% throughput bump for a model-dependent 2-to-15% recall hit is an actual lever, maybe the only one you've got short of buying more hardware.
+
+If you're calling a **paid, per-token** embedder like OpenAI, it's the easiest yes on the board. An 18% smaller payload is an 18% smaller invoice, every ingest, forever, and the accuracy cost was 2%, as long as you caveman the query too. Two percent MRR for a standing discount on your embedding bill is a trade plenty of people would take.
 
 And if you're stuck on a **small or older** model for latency reasons, run the test. Filler removal might quietly make your search *better*, which is a nice problem to have.
 

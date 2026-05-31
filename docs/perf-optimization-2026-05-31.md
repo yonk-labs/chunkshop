@@ -108,6 +108,18 @@ ingest on a 24-core box, that leaves ~20 cores idle.
 `concurrency × threads ≈ cores` rule for `orchestrate`. Combined with change #1,
 this is what takes ingestion to **−45.7%** overall.
 
+> ⚠️ **Threads are NOT free capacity — they only help on an idle box.** Raising
+> threads spreads the *same* work across more cores; it does not reduce the work.
+> On a **busy multi-tenant server** the cores are already spoken for, and
+> oversubscribing makes things *worse*: with 8 concurrent embed jobs on 24 cores,
+> threads=12 (8×12=96 threads) ran **−23.5%** slower in aggregate throughput than
+> threads=3 (matched). So the `−45.7%` headline is a **single-cell / idle-box**
+> figure. The genuinely load-independent part of the ingestion win is change #1
+> (connection reuse, ~−24%), which removes redundant work rather than
+> reshuffling cores. To raise throughput on a saturated box you have to reduce
+> the work itself — see the caveman filler-reduction trade in
+> `docs/caveman-filler-word-reduction-2026-05-31.md`.
+
 ### B. Embedding batch shape — counter-intuitive finding (no change warranted)
 
 I expected batching chunks **across** documents to speed embedding. It does the

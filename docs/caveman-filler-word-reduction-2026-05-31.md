@@ -95,14 +95,48 @@ ingest. (Measured on `Xenova/bge-base-en-v1.5-int8`, threads=12.)
 5. **Best retriever barely cares.** nomic-embed had the top baseline (0.896) and lost
    only 2%. Caveman doesn't wreck a good model; it nibbles.
 
+## Two different kinds of "speedup" — don't confuse them
+
+An earlier draft of this doc said local users should skip caveman because
+`embedder.threads` gives the speedup "for free." That was wrong, and it's worth
+being precise about why, because it changes the verdict.
+
+- **`embedder.threads` does not reduce the work.** It spreads the *same* matrix math
+  across more cores. Total core-seconds stay flat (slightly up, from sync overhead).
+  So it only lowers wall-time when cores are **idle**. It's a **latency ⇄ CPU-headroom**
+  trade against a fixed core budget — which is exactly why chunkshop's rule is
+  `orchestrate --concurrency N × embedder.threads ≈ cores`. The headroom is a pie you
+  divide, not free capacity.
+- **Caveman reduces the actual work.** Fewer tokens → fewer FLOPs per chunk. That
+  raises throughput-*per-core*, which is the only thing that helps when the box is
+  already saturated.
+
+Measured on the 24-core box, simulating a busy server with **8 concurrent embed jobs**
+(aggregate throughput, texts/sec — the metric a shared server cares about):
+
+| Scenario | thread demand | aggregate throughput |
+|---|---|---|
+| raw text, threads=3 (matched to cores) | 24 / 24 | 46.5 texts/s |
+| raw text, threads=12 (oversubscribed) | 96 / 24 | **35.6 texts/s (−23.5%)** |
+| **caveman** text, threads=3 (matched) | 24 / 24 | **56.1 texts/s (+20.6%)** |
+
+Under load, raising threads **lost** 23.5% throughput (oversubscription: 8×12=96
+threads fighting over 24 cores). Caveman **gained** 20.6% at the same thread budget,
+because it cut the work. The "threads = 1.5× faster" number elsewhere is a real win
+**only on an idle box**; it inverts under contention.
+
 ## So, is it worth doing?
+
+It's a genuine **speed/cost ⇄ accuracy** trade, not a free lunch and not a trap —
+context decides.
 
 | Situation | Verdict |
 |---|---|
-| **Local fastembed** (free compute) | **No.** The ~25% ingest speedup is available for free via `embedder.threads` (see `docs/perf-optimization-2026-05-31.md`) with zero accuracy cost. Don't pay 2–15% recall for speed you already have. |
-| **Paid/remote embedder** (OpenAI etc., per-token billing) | **Maybe.** ~18% fewer tokens ≈ ~18% lower embedding bill, for ~2% MRR loss *if you caveman the query too*. A real cost/accuracy lever — measure on your corpus. |
-| **Small/older model** (MiniLM-class) | **Possibly a win** — filler removal helped here. |
-| **Aggressively quantized model** (int8) | **Avoid** — biggest accuracy hit. |
+| **Idle / single-tenant box, local model** | **Probably not.** Spare cores mean `embedder.threads` buys the wall-time win at zero accuracy cost. Caveman's −2–15% recall isn't worth it when you have idle cores to throw at the problem. |
+| **Busy / multi-tenant local server** (the hundreds-of-users case) | **Now it's a real lever.** Threads can't help — they oversubscribe and *lose* throughput (−23.5% measured). Caveman raises per-core throughput (+20.6%) by doing less work. If you're CPU-bound, this is the trade: ~2–15% recall (model-dependent) for ~20% more ingest capacity. |
+| **Paid/remote embedder** (OpenAI etc., per-token billing) | **Often yes.** ~18% fewer tokens ≈ ~18% lower embedding bill, every ingest, for ~2% MRR loss *if you caveman the query too*. Measure on your corpus. |
+| **Small/older model** (MiniLM-class) | **Possibly a win** — filler removal *helped* here (+6–10% MRR). |
+| **Aggressively quantized model** (int8) | **Avoid** — biggest accuracy hit (−14%). |
 
 ## Caveats
 
@@ -120,7 +154,11 @@ ingest. (Measured on `Xenova/bge-base-en-v1.5-int8`, threads=12.)
 
 ## Reproduce
 
-Harness: `/tmp/cs-bench/caveman_models.py` (chunk once, embed raw + caveman per
-model, rank the 12 gold queries by cosine). OpenAI leg reads the key-env name and is
-skipped when unset. Corpus path is the pg-raggraph SCOTUS json; gold at
+Accuracy harness: `/tmp/cs-bench/caveman_models.py` (chunk once, embed raw + caveman
+per model, rank the 12 gold queries by cosine). OpenAI leg reads the key-env name and
+is skipped when unset. Corpus path is the pg-raggraph SCOTUS json; gold at
 `docs/samples/bakeoff-scotus/gold-scotus.yaml`.
+
+Contention harness: `/tmp/cs-bench/contention.py` (spawns W concurrent embedder
+processes at `threads=T`, measures aggregate texts/sec — backs the "threads aren't
+free under load" table above).
