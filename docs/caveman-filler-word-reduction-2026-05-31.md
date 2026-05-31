@@ -159,6 +159,13 @@ the right lever on a busy server and threads are the right lever on an idle one.
 
 - **Two datasets, short documents** (SciFact, NFCorpus). LoCo / long-document and
   more domains would strengthen generality; the ~1–2% is consistent so far.
+- **Coverage limited to BGE fp32/int8 on the third-party side.** A 4-bit point
+  (snowflake-arctic-embed-l-v2.0 IQ4_XS, a non-BGE architecture) was attempted on
+  BEIR NFCorpus but not collected: the LAN GGUF server answered trivial pings yet
+  stalled on the real batch load (process blocked ~17 min at 0% CPU). It doesn't
+  change the conclusion — "flat across quantization" is already covered by the
+  fp32↔int8 BGE pairs on two benchmarks — but a clean 4-bit / different-architecture
+  confirmation is still open.
 - **One reducer.** `caveman` is a blunt stopword list. A gentler reducer (keep
   negations / meaning-flipping prepositions) might shrink the hit further — untested.
 - **Determinism check was inconclusive:** re-embedding a 60-text slice differed from
