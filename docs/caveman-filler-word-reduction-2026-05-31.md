@@ -94,6 +94,20 @@ ingest. (Measured on `Xenova/bge-base-en-v1.5-int8`, threads=12.)
    worse.)
 5. **Best retriever barely cares.** nomic-embed had the top baseline (0.896) and lost
    only 2%. Caveman doesn't wreck a good model; it nibbles.
+6. **The predictor is representational headroom, not dimension count.** Sorting the
+   table, the hit tracks how much slack the model has, not its raw size:
+   - 768/1536-dim, full-precision (nomic, BGE-base, OpenAI): −2% to −5% — room to
+     absorb the out-of-distribution grammar.
+   - 384-dim fp32 (BGE-small): −8% — less room.
+   - 384-dim **+ int8** (BGE-small int8): −14% — quantization already discarded
+     precision; caveman discards more, and the two compound.
+   - 384-dim but very weak (MiniLM): **+6–10%** — so capacity-starved that filler was
+     net noise, so removing it helps.
+
+   Note the two 384-dim models (BGE-small, MiniLM) move in **opposite** directions, so
+   dimension alone is not predictive. The usable heuristic: roomy full-precision model
+   → caveman barely registers; small **and** quantized → it bites hardest; truly tiny
+   → it can be a net win.
 
 ## Two different kinds of "speedup" — don't confuse them
 

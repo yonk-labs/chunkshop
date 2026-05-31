@@ -45,6 +45,8 @@ A few things fell out of this that are worth your Tuesday:
 
 **Match the query to the index.** OpenAI lost 7% when I caveman'd the documents but searched with normal questions. When I caveman'd the *query* too — so both sides speak the same broken grammar — the loss dropped to 2%. If your index talks like a caveman, your queries should too. (BGE-small was the lone exception that got grumpier when I did this, because of course there's an exception.)
 
+**Size and squeeze decide how much it stings.** Line the models up and a pattern shows, but it's not the one you'd guess. It's not raw dimensions — a 384-dim MiniLM and a 384-dim BGE-small went opposite directions, so "small model" isn't the predictor. It's how much representational slack the model has left. The roomy 768 and 1536-dim models (nomic, BGE-base, OpenAI) had space to absorb the broken grammar and barely moved, 2 to 5%. Take the same BGE-small and crush it from fp32 to int8 and the hit doubled, 8% to 14%, because int8 already threw away precision and caveman threw away more. Then there's MiniLM at the bottom, so capacity-starved that the filler was actively crowding its signal, so cutting it *helped*. So the rule of thumb: a big roomy model shrugs caveman off, a small *and* quantized one feels it most, and a truly tiny model can come out ahead. Headroom, not parameter count.
+
 ## So should you do it?
 
 Look, this is my take, and 12 gold questions is a small sample, so hold it loosely. My first instinct was to wave people off: just turn up `embedder.threads` and get the speed for free. On my 24-core box, going from 4 threads to 12 made embedding about 1.5x faster at zero recall cost, so why pay accuracy for it?
