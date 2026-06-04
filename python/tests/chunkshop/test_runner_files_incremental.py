@@ -1,6 +1,13 @@
 # python/tests/chunkshop/test_runner_files_incremental.py
 from pathlib import Path
 
+import pytest
+
+# These integration tests run a full cell against the file-backed SQLite sink,
+# which needs the `sqlite` extra (sqlite-vec). Skip cleanly when it's absent,
+# matching the repo convention (see test_source_sqlite.py / test_search_sqlite.py).
+pytest.importorskip("sqlite_vec")
+
 from chunkshop.config import load_config
 from chunkshop.runner import run_cell
 from chunkshop.incremental_cursor import load_cursor
