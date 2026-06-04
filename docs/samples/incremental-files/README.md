@@ -18,4 +18,86 @@ Point the `files` source at a directory and reprocess only what changed.
 - **Code or prose:** identical behavior — local source code ingests through this
   same source (`type: files` + a code chunker like `symbol_aware`/`code_aware`).
 
-Run `./run_demo.sh` (needs `$VECTORS_DB_DSN`) to see a 3-run delta walkthrough.
+## Quickstart (no database — SQLite)
+
+`sample.yaml` targets Postgres. To try the whole loop with **no database
+server**, use a local SQLite file instead.
+
+1. **Install** the SQLite backend (fastembed is included in the base install):
+
+   ```bash
+   pip install "chunkshop[sqlite]"     # or: uv add "chunkshop[sqlite]"
+   ```
+
+2. **Make a corpus** of a couple of files:
+
+   ```bash
+   mkdir -p corpus
+   echo "First note about cats."  > corpus/a.md
+   echo "Second note about dogs." > corpus/b.md
+   ```
+
+3. **Write `cell.yaml`** (SQLite target, incremental on):
+
+   ```yaml
+   cell_name: files_incremental
+   source:
+     type: files
+     glob: ./corpus/**/*.md
+     id_from: path                 # path or sha1 — not stem — with incremental
+     incremental:
+       cursor_path: ./.chunkshop/files-cursor.json
+       detect: hash
+   chunker:
+     type: sentence_aware
+   embedder:
+     type: fastembed
+     model_name: BAAI/bge-small-en-v1.5
+     dim: 384
+   target:
+     type: sqlite
+     dsn: ./vecs.db
+     database: main
+     table: notes_chunks
+     mode: create_if_missing
+     source_tag: files_incremental
+     hnsw: false
+   ```
+
+4. **First ingest** — both files are chunked and embedded:
+
+   ```bash
+   chunkshop ingest --config cell.yaml        # → docs_processed=2
+   ```
+
+5. **Re-run with no changes** — nothing is reprocessed:
+
+   ```bash
+   chunkshop ingest --config cell.yaml        # → docs_processed=0
+   ```
+
+6. **Edit one file, re-run** — only that file is reprocessed:
+
+   ```bash
+   echo "First note, now about elephants." > corpus/a.md
+   chunkshop ingest --config cell.yaml        # → docs_processed=1
+   ```
+
+7. **Delete one file, re-run** — its chunks are pruned from the table:
+
+   ```bash
+   rm corpus/b.md
+   chunkshop ingest --config cell.yaml        # b.md's rows removed
+   ```
+
+8. **Inspect the cursor** — one entry per current file:
+
+   ```bash
+   cat ./.chunkshop/files-cursor.json
+   ```
+
+The same `cell.yaml` works for source code — swap the glob to `**/*.py` and the
+chunker to `symbol_aware` (needs `chunkshop[code]`) or `code_aware` (stdlib).
+
+For the Postgres path, run `./run_demo.sh` (needs `$VECTORS_DB_DSN`) — the same
+3-run delta walkthrough against `sample.yaml`.
