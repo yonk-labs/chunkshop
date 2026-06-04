@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+## 0.8.3 — 2026-06-04
+
+The local `files` source learns **incremental ingest**: point it at a directory
+and re-runs reprocess only new and changed files, pruning the chunks of deleted
+ones, instead of re-embedding the whole corpus every run. Works for prose and
+local source code alike (same source, content-agnostic cursor). Python-only this
+release; the Rust crate is a lockstep version bump with no functional change.
+
+### Added
+
+- **Incremental `files` source.** `FilesSource` now implements the
+  `IncrementalSource` and `PrunableSource` protocols (joining `s3` / `http` /
+  `pg_table`). An opt-in `source.incremental` block lets `chunkshop ingest`
+  itself skip-and-prune via a JSON cursor sidecar — no external consumer loop:
+
+  ```yaml
+  source:
+    type: files
+    glob: ./corpus/**/*.md
+    id_from: path            # path or sha1 — not stem — with incremental
+    incremental:
+      cursor_path: ./.chunkshop/files-cursor.json
+      detect: hash           # sha256 of bytes (survives git checkout); or `mtime`
+  ```
+
+  - **Change detection.** `detect: hash` (default) compares a sha256 of each
+    file's bytes — reliable across `git clone` / `checkout`. `detect: mtime`
+    skips unchanged files by `(mtime, size)` without reading them (faster, but
+    unreliable on git work-trees where checkout rewrites mtimes).
+  - **Deletions.** Files removed from disk have their chunks pruned, scoped to
+    the cell's `source_tag` (`PrunableSource.iter_deleted_since`).
+  - **Crash-safe.** The cursor is written atomically (temp file + rename) and
+    only after a fully successful run; a crash leaves the prior cursor intact
+    and the next run re-upserts idempotently. A `doc_limit`-truncated run does
+    not advance the cursor.
+  - Stdlib only — **no new runtime dependency**. Library API + worked consumer
+    loop in `docs/cookbook/incremental-sources.md`; CLI setup, a full pattern
+    write-up, and a no-database quickstart in `docs/incremental.md` (Pattern G)
+    and `docs/samples/incremental-files/`.
+
+### Notes
+
+- The incremental feature is **Python-only** this release; Rust parity is a
+  separate follow-up. `chunkshop-rs` is version-bumped to 0.8.3 for a lockstep
+  release only.
+- Remote sources (`s3` / `http` / `pg_table`) already had incremental sync, and
+  the `github` connector already declares cursor sync — unchanged here.
+
 ## 0.8.2 — 2026-05-31
 
 Performance pass on the read and write hot paths — measured before/after, no
