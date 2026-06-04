@@ -17,6 +17,7 @@ from chunkshop.extractors import load_extractor
 from chunkshop.framers import load_framer
 from chunkshop.sinks import load_sink
 from chunkshop.sources import load_source
+from chunkshop.sources.base import IncrementalSource, PrunableSource
 
 
 @dataclass
@@ -60,6 +61,19 @@ def run_cell(cfg: CellConfig) -> CellResult:
     sink = None
     try:
         source = load_source(cfg.source)
+        inc = getattr(cfg.source, "incremental", None)
+        incremental = bool(inc and getattr(inc, "cursor_path", None)) and isinstance(
+            source, IncrementalSource
+        )
+        if incremental:
+            from chunkshop.incremental_cursor import load_cursor, save_cursor_atomic
+
+            cursor = load_cursor(inc.cursor_path)
+            new_cursor = dict(cursor)
+            doc_source = source.iter_changes_since(cursor)
+            _log(f"incremental: loaded cursor ({len(cursor)} entries)", log_path)
+        else:
+            doc_source = source.iter_documents()
         framer = load_framer(cfg.framer)
         embedder = load_embedder(cfg.embedder)
         # SemanticChunker(boundary_model="same") reuses the main embedder's
@@ -84,7 +98,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
         limit = cfg.runtime.doc_limit
         heartbeat = cfg.runtime.heartbeat_every
 
-        for raw in source.iter_documents():
+        for raw in doc_source:
             if limit is not None and docs_processed >= limit:
                 break
             for doc in framer.frame(raw):
@@ -152,12 +166,30 @@ def run_cell(cfg: CellConfig) -> CellResult:
                 chunks_written += len(chunks)
             # `docs_processed` counts RAW docs (what the source yielded), not framed docs.
             docs_processed += 1
+            if incremental:
+                new_cursor.update(source.cursor_from(raw))
             if docs_processed % heartbeat == 0:
                 elapsed = time.time() - start
                 _log(
                     f"heartbeat docs={docs_processed} chunks={chunks_written} elapsed={elapsed:.1f}s",
                     log_path,
                 )
+
+        if incremental:
+            if isinstance(source, PrunableSource):
+                deleted = list(source.iter_deleted_since(cursor))
+                for did in deleted:
+                    sink.delete_document(did)
+                if deleted:
+                    _log(f"incremental: pruned {len(deleted)} deleted docs", log_path)
+            # Trim the cursor to the current on-disk manifest so deleted paths
+            # drop out (current_paths is files-source-specific; guard for it).
+            current_paths = getattr(source, "current_paths", None)
+            if current_paths is not None:
+                keep = set(current_paths())
+                new_cursor = {p: e for p, e in new_cursor.items() if p in keep}
+            save_cursor_atomic(inc.cursor_path, new_cursor)
+            _log(f"incremental: saved cursor ({len(new_cursor)} entries)", log_path)
 
         # Two-phase extractors (e.g. code_relationships) expose a finalize()
         # method that walks corpus-level state collected during extract() and
