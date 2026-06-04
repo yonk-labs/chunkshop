@@ -5,7 +5,7 @@ from pathlib import Path
 
 from chunkshop.config import FilesSource as Cfg
 from chunkshop.sources.files import FilesSource
-from chunkshop.sources.base import IncrementalSource, SyncMode
+from chunkshop.sources.base import IncrementalSource, PrunableSource, SyncMode
 from chunkshop.testing import (
     assert_cursor_advances, assert_idempotent_on_re_emit, merge_cursor,
 )
@@ -73,3 +73,21 @@ def test_passes_shared_incremental_contracts(tmp_path):
     src = FilesSource(_cfg(tmp_path))
     assert_cursor_advances(src)
     assert_idempotent_on_re_emit(src)
+
+
+def test_files_is_prunable(tmp_path):
+    (tmp_path / "a.md").write_text("alpha")
+    src = FilesSource(_cfg(tmp_path))
+    assert isinstance(src, PrunableSource)
+
+
+def test_iter_deleted_since_reports_removed_doc_ids(tmp_path):
+    a = tmp_path / "a.md"; a.write_text("alpha")
+    b = tmp_path / "b.md"; b.write_text("beta")
+    src = FilesSource(_cfg(tmp_path))  # id_from="path" → doc_id == str(path)
+    cursor = merge_cursor(src, src.empty_cursor(),
+                          list(src.iter_changes_since(src.empty_cursor())))
+    assert list(src.iter_deleted_since(cursor)) == []
+    b.unlink()
+    deleted = list(src.iter_deleted_since(cursor))
+    assert deleted == [str(b)]

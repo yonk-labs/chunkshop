@@ -91,7 +91,22 @@ class FilesSource:
         st = Path(p).stat()
         return {p: {"h": last_document.fingerprint, "mt": st.st_mtime, "sz": st.st_size}}
 
-    # --- PrunableSource (added in Task 3) ---------------------------------
+    # --- PrunableSource ---------------------------------------------------
+
+    def empty_prune_cursor(self) -> dict:
+        return {}
+
+    def iter_deleted_since(self, cursor: dict) -> Iterator[str]:
+        """Yield doc_ids for files present in ``cursor`` but absent on disk.
+
+        The cursor is keyed by path; deletion IDs are the ``Document.id`` values
+        (via ``_id_for``), so the consumer can pass them straight to
+        ``sink.delete_document``.
+        """
+        current = set(self.current_paths())
+        for p in cursor:
+            if p not in current:
+                yield self._id_for(Path(p))
 
     # --- shared helpers ---------------------------------------------------
 
