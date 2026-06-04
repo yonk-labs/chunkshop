@@ -67,11 +67,27 @@ class _DsnResolvable(_Base):
         return {"dsn_env": self.dsn_env}
 
 
+class FilesIncrementalSettings(_Base):
+    """Opt-in incremental sync for the local ``files`` source.
+
+    When ``cursor_path`` is set, ``chunkshop ingest`` persists a JSON cursor at
+    that path and on each run reprocesses only new/changed files, pruning chunks
+    for files deleted from disk. Absent → full resync every run (unchanged
+    behavior). ``detect`` chooses change detection: ``hash`` (default) reads each
+    file and compares a sha256 of its bytes — reliable across ``git checkout``;
+    ``mtime`` skips unchanged files by ``(mtime, size)`` alone without reading
+    them (fast, but unreliable on git work-trees where checkout resets mtimes).
+    """
+    cursor_path: str
+    detect: Literal["hash", "mtime"] = "hash"
+
+
 class FilesSource(_Base):
     type: Literal["files"]
     glob: str
     id_from: Literal["path", "stem", "sha1"] = "stem"
     encoding: str = "utf-8"
+    incremental: Optional[FilesIncrementalSettings] = None
 
 
 class CommentExtractsSource(_Base):
