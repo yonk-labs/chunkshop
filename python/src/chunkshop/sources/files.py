@@ -59,8 +59,16 @@ class FilesSource:
     # --- IncrementalSource ------------------------------------------------
 
     def current_paths(self) -> list[str]:
-        """Sorted list of paths currently matching the glob — no file reads."""
-        return sorted(_glob.glob(self.cfg.glob, recursive=True))
+        """Sorted list of paths currently matching the glob — no file reads.
+
+        Normalized through ``Path`` so the strings here match the ``source_path``
+        stamped on each ``Document`` (and therefore the cursor keys), regardless
+        of glob form. Without this, a relative glob like ``./corpus/**/*.md``
+        yields ``./corpus/a.md`` here but ``corpus/a.md`` on the Document — the
+        cursor trim would then drop every entry and the source would silently
+        full-resync on every run.
+        """
+        return sorted(str(Path(p)) for p in _glob.glob(self.cfg.glob, recursive=True))
 
     def empty_cursor(self) -> dict:
         return {}

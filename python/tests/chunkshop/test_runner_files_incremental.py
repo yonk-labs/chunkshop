@@ -172,3 +172,31 @@ def test_doc_limit_does_not_advance_incremental_cursor(tmp_path):
     cfg2 = _write_cell(tmp_path, corpus, cursor)
     r2 = run_cell(cfg2)
     assert r2.error is None and r2.docs_processed == 2
+
+
+def test_relative_glob_cursor_round_trips(tmp_path, monkeypatch):
+    # Regression: a RELATIVE glob ("./corpus/**/*.md") makes glob.glob return
+    # "./corpus/a.md" while the Document's source_path is "corpus/a.md" (Path
+    # strips "./"). If current_paths() isn't normalized to match, the runner's
+    # cursor trim drops every entry → the saved cursor is {} → every run is a
+    # full resync and deletions never prune. The prior tests all used ABSOLUTE
+    # globs (tmp_path/**/*.md) where the two forms coincide, so they missed it.
+    # Reproduce the quickstart scenario: run from inside the dir with a rel glob.
+    corpus = tmp_path / "corpus"; corpus.mkdir()
+    (corpus / "a.md").write_text("alpha about cats")
+    (corpus / "b.md").write_text("beta about dogs")
+    cursor = tmp_path / "cur.json"
+    monkeypatch.chdir(tmp_path)
+    cfg = _write_cell(tmp_path, "./corpus", cursor)  # glob: ./corpus/**/*.md
+
+    r1 = run_cell(cfg)
+    assert r1.error is None and r1.docs_processed == 2
+    assert len(load_cursor(cursor)) == 2, "cursor must persist both files (not {})"
+
+    r2 = run_cell(cfg)  # nothing changed — relative glob must still skip
+    assert r2.error is None and r2.docs_processed == 0
+
+    (corpus / "b.md").unlink()
+    r3 = run_cell(cfg)  # deletion must prune under a relative glob too
+    assert r3.error is None
+    assert str(Path("corpus/b.md")) not in load_cursor(cursor)
