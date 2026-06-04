@@ -1,0 +1,24 @@
+# Local directory, incremental: only new/changed files are reprocessed; files
+# deleted from disk have their chunks pruned. Works for prose AND source code.
+cell_name: files_incremental
+source:
+  type: files
+  glob: ./corpus/**/*.md
+  id_from: path
+  incremental:
+    cursor_path: ./.chunkshop/files-cursor.json
+    detect: hash          # default; survives git checkout. `mtime` = stat-only fast-path.
+chunker:
+  type: hierarchy
+  max_chars: 1200
+embedder:
+  type: fastembed
+  model_name: "Xenova/bge-small-en-v1.5-int8"
+  dim: 384
+target:
+  dsn_env: VECTORS_DB_DSN
+  schema: rag
+  table: notes_chunks
+  mode: create_if_missing
+  source_tag: files_incremental
+  delete_orphans: true

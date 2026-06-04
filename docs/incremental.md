@@ -19,7 +19,9 @@ designed so you can run it as the worker behind a delta loop:
   deleted within the same write transaction.
 
 You bring the scheduler and the change-detector. chunkshop is the idempotent
-worker on the receiving end. This doc covers the five common hookup patterns,
+worker on the receiving end — though the `files` source can now self-detect
+changes via its cursor sidecar (new, changed, and deleted files) so you only
+need the scheduler. This doc covers the five common hookup patterns,
 the deletion gap, and the third-party tools people pair with chunkshop for
 each piece.
 
@@ -265,6 +267,12 @@ mv "$BATCH_DIR" /var/inbox-batches/processed/
 - ⚠️ Single-host unless you mount NFS or use object storage (then see Pattern E).
 - ⚠️ You own retention — `processed/` grows forever unless you prune it.
 
+**Note:** if your inbox is a stable directory of files that accumulate and change
+in place (rather than a rotate-and-process batch), the `files` source is now
+natively incremental via its cursor sidecar — no batch-rotation wrapper needed.
+Set `source.incremental.cursor_path` and chunkshop self-detects new, changed, and
+deleted files each run — see **Pattern G** below for the full config and trade-offs.
+
 ---
 
 ## Pattern D — Postgres CDC → staging table → chunkshop (real-time-ish)
@@ -447,6 +455,87 @@ target table, same per-step behavior.
 
 ---
 
+## Pattern G — Local files: native incremental (no wrapper)
+
+Patterns A–F treat chunkshop as the idempotent worker behind a change-detector
+you supply. The `files` source can now **be** the change-detector for a local
+directory: point it at a glob, give it a cursor file, and each `chunkshop
+ingest` reprocesses only new/changed files and prunes the chunks of deleted
+ones. No cron-side `WHERE` clause, no staging inbox, no watermark table — the
+cursor file is the only state, and chunkshop owns it.
+
+```yaml
+# docs/samples/incremental-files/sample.yaml
+cell_name: files_incremental
+source:
+  type: files
+  glob: ./corpus/**/*.md          # prose, code (*.py), anything on disk
+  id_from: path                   # use path or sha1 — NOT stem — with incremental
+  incremental:
+    cursor_path: ./.chunkshop/files-cursor.json
+    detect: hash                  # sha256 of bytes; survives `git checkout`.
+                                  # detect: mtime → skip unchanged by (mtime,size), no read
+chunker: { type: hierarchy, max_chars: 1200 }
+embedder:
+  type: fastembed
+  model_name: "Xenova/bge-small-en-v1.5-int8"
+  dim: 384
+target:
+  dsn_env: VECTORS_DB_DSN
+  schema: rag
+  table: notes_chunks
+  mode: create_if_missing
+  source_tag: files_incremental
+```
+
+Run it on a cron cadence like Pattern A — but your side is stateless; the cursor
+file carries everything:
+
+```cron
+*/15 * * * * cd /srv/kb && /usr/local/bin/chunkshop ingest \
+  --config files_incremental.yaml >> /var/log/chunkshop/files.log 2>&1
+```
+
+**How change detection works.** The cursor is a JSON map `path → {hash, mtime,
+size}`. Each run globs the directory and, per file:
+- `detect: hash` (default) reads the bytes and compares a sha256. Reliable
+  across `git clone`/`checkout`/`pull`, which reset mtimes — the right default
+  for source-code repos.
+- `detect: mtime` compares `(mtime, size)` and **skips unchanged files without
+  reading them**. Faster on huge corpora, but wrong on git work-trees where
+  checkout rewrites mtimes. Use only when you control how files land.
+
+Unchanged files are skipped before chunking/embedding — the expensive step is
+never paid for them. Deleted files (in the cursor, gone from disk) have their
+chunks removed, scoped to the cell's `source_tag`.
+
+**Crash-safety.** The cursor is written atomically (temp file + rename) and
+**only after a fully successful run**. A crash mid-run leaves the previous
+cursor intact; the next run re-detects the in-flight files and idempotently
+re-upserts them. (`runtime.doc_limit` likewise suppresses the cursor write, so a
+truncated smoke-test run never records partial progress.)
+
+**Trade-offs.**
+- ✅ Zero wrapper code — no `WHERE` window, no watermark table, no staging inbox.
+- ✅ Captures inserts, updates, AND deletes for a full-directory glob.
+- ✅ Same source for prose and source code (`symbol_aware` / `code_aware` chunkers).
+- ✅ Crash-safe + idempotent — re-running a failed run produces no duplicates.
+- ⚠️ Single-writer: don't run two ingests against the same `cursor_path`
+  concurrently (no locking — last writer wins).
+- ⚠️ Local filesystem only. For S3 / HTTP / Postgres deltas, see Patterns A–E
+  (those sources carry their own cursors); for remote git, the `github` connector.
+- ⚠️ `detect: hash` reads every file each run (to hash it) — only the chunk+embed
+  work is skipped. On trees where reads dominate, switch to `detect: mtime`.
+
+**Pattern C vs. Pattern G.** Pattern C (staging inbox) decouples a *producer*
+from chunkshop — right when files arrive via a proxy/queue and you process then
+discard them. Pattern G is right when you already have a **stable directory you
+re-scan**: a docs folder, a checked-out repo, a synced share. Runnable
+walkthrough + a no-database quickstart:
+[`docs/samples/incremental-files/`](samples/incremental-files/).
+
+---
+
 ## The deletion gap — what `delete_orphans` does and does not cover
 
 There are **two** delete cases. The flag handles one:
@@ -579,8 +668,12 @@ source:
 
 # OR
 source:
-  type: files                     # Pattern C
+  type: files                     # Pattern C, or native incremental (see below)
   glob: /var/inbox-batches/CURRENT/**/*.md
+  # opt-in to native incremental (new/changed/deleted file detection per run):
+  # incremental:
+  #   cursor_path: ./.chunkshop/files-cursor.json
+  #   detect: hash   # default (sha256, survives git checkout); or: mtime (stat-only, faster)
 
 # OR
 source:
