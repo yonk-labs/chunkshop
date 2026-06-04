@@ -192,6 +192,21 @@ python examples/crawl_url.py https://example.com 2
 
 prints one line per fetched URL with byte count.
 
+### Local files: `{path: {h, mt, sz}}` cursor + CLI sidecar (`chunkshop.sources.files.FilesSource`)
+
+`sync_mode = SyncMode.CURSOR`. The cursor maps each matched file path to a
+content hash, mtime, and size. `iter_changes_since(cursor)` yields only files
+whose hash differs (default) — or, with `detect: mtime`, whose `(mtime, size)`
+differs without reading the file. `FilesSource` also implements `PrunableSource`:
+`iter_deleted_since(cursor)` returns the doc_ids of files in the cursor that are
+gone from disk.
+
+Unlike `s3`/`http`/`pg_table`, the `files` source can be driven **by the CLI
+itself** — set `source.incremental.cursor_path` and `chunkshop ingest` loads the
+cursor, skips unchanged files, prunes deletions, and rewrites the cursor on
+success. No external consumer loop required. See
+[`docs/samples/incremental-files/`](../samples/incremental-files/).
+
 ## Stale cursors
 
 A cursor can outlive what the source can honor — an API page token expires, a

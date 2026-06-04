@@ -19,7 +19,9 @@ designed so you can run it as the worker behind a delta loop:
   deleted within the same write transaction.
 
 You bring the scheduler and the change-detector. chunkshop is the idempotent
-worker on the receiving end. This doc covers the five common hookup patterns,
+worker on the receiving end — though the `files` source can now self-detect
+changes via its cursor sidecar (new, changed, and deleted files) so you only
+need the scheduler. This doc covers the five common hookup patterns,
 the deletion gap, and the third-party tools people pair with chunkshop for
 each piece.
 
@@ -264,6 +266,12 @@ mv "$BATCH_DIR" /var/inbox-batches/processed/
 - ✅ Decouples ingest cadence from producer cadence — the proxy can fire and forget.
 - ⚠️ Single-host unless you mount NFS or use object storage (then see Pattern E).
 - ⚠️ You own retention — `processed/` grows forever unless you prune it.
+
+**Note:** if your inbox is a stable directory of files that accumulate and change
+in place (rather than a rotate-and-process batch), the `files` source is now
+natively incremental via its cursor sidecar — no batch-rotation wrapper needed.
+Set `source.incremental.cursor_path` and chunkshop self-detects new, changed, and
+deleted files each run. See [`docs/samples/incremental-files/`](samples/incremental-files/).
 
 ---
 
@@ -579,8 +587,12 @@ source:
 
 # OR
 source:
-  type: files                     # Pattern C
+  type: files                     # Pattern C, or native incremental (see below)
   glob: /var/inbox-batches/CURRENT/**/*.md
+  # opt-in to native incremental (new/changed/deleted file detection per run):
+  # incremental:
+  #   cursor_path: ./.chunkshop/files-cursor.json
+  #   detect: hash   # default (sha256, survives git checkout); or: mtime (stat-only, faster)
 
 # OR
 source:
