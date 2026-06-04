@@ -176,20 +176,28 @@ def run_cell(cfg: CellConfig) -> CellResult:
                 )
 
         if incremental:
-            if isinstance(source, PrunableSource):
-                deleted = list(source.iter_deleted_since(cursor))
-                for did in deleted:
-                    sink.delete_document(did)
-                if deleted:
-                    _log(f"incremental: pruned {len(deleted)} deleted docs", log_path)
-            # Trim the cursor to the current on-disk manifest so deleted paths
-            # drop out (current_paths is files-source-specific; guard for it).
-            current_paths = getattr(source, "current_paths", None)
-            if current_paths is not None:
-                keep = set(current_paths())
-                new_cursor = {p: e for p, e in new_cursor.items() if p in keep}
-            save_cursor_atomic(inc.cursor_path, new_cursor)
-            _log(f"incremental: saved cursor ({len(new_cursor)} entries)", log_path)
+            if limit is not None and docs_processed >= limit:
+                # doc_limit truncated the run: iter_changes_since may have flagged
+                # files as changed that we never reached, and new_cursor still holds
+                # their OLD hash (it starts as dict(cursor)). Advancing now would
+                # lock in that stale hash and silently skip them next run. Skip
+                # prune+save entirely — the next un-truncated run re-detects them.
+                _log("incremental: doc_limit reached — cursor NOT advanced (avoids stale skip)", log_path)
+            else:
+                if isinstance(source, PrunableSource):
+                    deleted = list(source.iter_deleted_since(cursor))
+                    for did in deleted:
+                        sink.delete_document(did)
+                    if deleted:
+                        _log(f"incremental: pruned {len(deleted)} deleted docs", log_path)
+                # Trim the cursor to the current on-disk manifest so deleted paths
+                # drop out (current_paths is files-source-specific; guard for it).
+                current_paths = getattr(source, "current_paths", None)
+                if current_paths is not None:
+                    keep = set(current_paths())
+                    new_cursor = {p: e for p, e in new_cursor.items() if p in keep}
+                save_cursor_atomic(inc.cursor_path, new_cursor)
+                _log(f"incremental: saved cursor ({len(new_cursor)} entries)", log_path)
 
         # Two-phase extractors (e.g. code_relationships) expose a finalize()
         # method that walks corpus-level state collected during extract() and

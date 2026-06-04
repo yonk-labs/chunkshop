@@ -7,7 +7,7 @@ from chunkshop.incremental_cursor import load_cursor
 
 
 def _write_cell(tmp_path, corpus_dir, cursor_path, *, incremental=True,
-                glob_suffix="*.md", chunker="sentence_aware"):
+                glob_suffix="*.md", chunker="sentence_aware", doc_limit=None):
     """Build a files→sqlite cell YAML. Explicit line list (NOT dedent) so the
     conditional incremental block nests correctly."""
     lines = [
@@ -40,6 +40,7 @@ def _write_cell(tmp_path, corpus_dir, cursor_path, *, incremental=True,
         "  hnsw: false",
         "runtime:",
         "  omp_num_threads: 1",
+        *( [f"  doc_limit: {doc_limit}"] if doc_limit is not None else [] ),
     ]
     yaml_path = tmp_path / "cell.yaml"
     yaml_path.write_text("\n".join(lines) + "\n")
@@ -150,3 +151,24 @@ def test_code_corpus_skips_unchanged_py_files(tmp_path):
     (corpus / "mod_a.py").write_text("def alpha():\n    return 42\n")
     r3 = run_cell(cfg)
     assert r3.error is None and r3.docs_processed == 1
+
+
+def test_doc_limit_does_not_advance_incremental_cursor(tmp_path):
+    # Regression: doc_limit truncates the run. Files iter_changes_since flagged
+    # as changed but never reached must NOT have their cursor entry advanced,
+    # or the next run would silently skip them. Safest behavior: don't persist
+    # the cursor at all when the run was truncated by doc_limit.
+    corpus = tmp_path / "corpus"; corpus.mkdir()
+    (corpus / "a.md").write_text("alpha about cats")
+    (corpus / "b.md").write_text("beta about dogs")
+    cursor = tmp_path / "cur.json"
+    cfg = _write_cell(tmp_path, corpus, cursor, doc_limit=1)
+    r = run_cell(cfg)
+    assert r.error is None and r.docs_processed == 1
+    assert not cursor.exists()  # cursor NOT advanced under truncation
+
+    # A follow-up full run (no limit) must re-detect BOTH files — proving the
+    # truncated run did not stale-skip the unreached one.
+    cfg2 = _write_cell(tmp_path, corpus, cursor)
+    r2 = run_cell(cfg2)
+    assert r2.error is None and r2.docs_processed == 2
