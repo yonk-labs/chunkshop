@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+## 0.9.1 — 2026-06-09
+
+Fixes a regression introduced by 0.9.0's path-less language detection (#69):
+generated and minified files that 0.8.3 skipped were being symbol-parsed,
+flooding downstream consumers with chunks and OOM-ing them (pg-raggraph#79,
+bento). Python-only; the Rust crate is a lockstep version bump with no
+functional change.
+
+### Fixed
+
+- **`symbol_aware` no longer over-parses generated / minified files (#71).**
+  0.9.0's content heuristic started classifying machine-emitted files as code
+  that 0.8.3 skipped. A 143 KB generated `.ts` (3,000 trivial functions) became
+  3,000 symbol chunks; consumers that embed every chunk OOM'd. Two complementary
+  guards:
+
+  - **Content-detection guard (path-less only).**
+    `detect_language_from_content` now returns `None` for files that look
+    machine-emitted — an `@generated` / `sourceMappingURL` marker, or a minified
+    (very long, >2000-char) line — so they fall back to `sentence_aware`
+    (bounded) instead of being symbol-parsed. Explicit signals (`cfg.language`,
+    `metadata['language']`, a real path) **bypass** the guard, so a caller can
+    still force such a file through.
+  - **Per-file symbol-chunk cap.** When a document would emit more than
+    `max_symbols_per_file` symbol chunks, the chunker logs a warning and falls
+    back to `sentence_aware` with `fallback_reason="too_many_symbols"`. Catches
+    pathological generated files regardless of how the language was resolved.
+
+  Under defaults, the 2,500-function generated `.ts` now yields 62 bounded
+  chunks (was 2,500) and a 46 KB minified one-liner yields 23; normal code is
+  untouched.
+
+### Added
+
+- **`SymbolAwareChunker.max_symbols_per_file`** (default `2000`, `null` to
+  disable, must be `>= 1`) — caps symbol chunks per document. The default
+  catches generated files while leaving even very large hand-written sources
+  alone (real code rarely exceeds a few hundred top-level symbols).
+
 ## 0.9.0 — 2026-06-09
 
 Two correctness/perf fixes. The minor bump is for the **search-pool default flip**
