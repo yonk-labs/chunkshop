@@ -61,27 +61,65 @@ _LANG_TO_EXT: dict[str, str] = {
 }
 
 
-def _detect_language_from_meta(doc: Document) -> Optional[str]:
-    """Best-effort language detection from doc metadata or id.
+# Metadata keys, in priority order, that may carry a path we can extension-match
+# to a language. Broadened beyond ``path``/``source_path`` because callers label
+# the source file under many names (chunkshop#69).
+_PATH_META_KEYS: tuple[str, ...] = (
+    "path",
+    "source_path",
+    "file_path",
+    "filepath",
+    "filename",
+    "rel_path",
+    "relative_path",
+    "uri",
+    "url",
+    "location",
+    "name",
+)
 
-    Mirrors ``code_aware._is_python_doc``'s posture: look at common metadata
-    keys (``path``, ``source_path``) plus the doc id when it's path-shaped.
-    Returns None if no path-like value can be extension-matched to a known
-    language.
+
+def _resolve_language(doc: Document, cfg: Cfg) -> Optional[str]:
+    """Resolve the codeparse language for ``doc``, layered most- to least-explicit.
+
+    Priority: (1) an explicit ``cfg.language`` override, (2) a
+    ``doc.metadata['language']`` hint (tag or extension alias), (3) a path-like
+    metadata value extension-matched to a language, (4) a path-shaped
+    ``doc.id``, (5) a conservative content heuristic. Returns None only when the
+    document carries no usable language signal at all — the caller then falls
+    back to sentence_aware with ``fallback_reason='unsupported_language'``.
     """
+    # 1. Operator-forced language for the whole cell (validated at config-load).
+    if cfg.language:
+        return cfg.language
+
     meta = doc.metadata or {}
-    for key in ("path", "source_path"):
+
+    # 2. Per-document explicit hint. A junk value normalises to None and falls
+    # through rather than forcing a wrong language.
+    hint = meta.get("language")
+    if isinstance(hint, str) and hint:
+        lang = regex_fallback.normalize_language_tag(hint)
+        if lang is not None:
+            return lang
+
+    # 3. Any path-like metadata value with a known extension.
+    for key in _PATH_META_KEYS:
         val = meta.get(key)
         if isinstance(val, str) and val:
             lang = regex_fallback.detect_language(Path(val))
             if lang is not None:
                 return lang
+
+    # 4. A path-shaped doc id.
     doc_id = doc.id or ""
     if os.sep in doc_id or "/" in doc_id or "." in doc_id:
         lang = regex_fallback.detect_language(Path(doc_id))
         if lang is not None:
             return lang
-    return None
+
+    # 5. Last resort: guess from the source body.
+    return regex_fallback.detect_language_from_content(doc.content or "")
 
 
 def _slice_lines(content: str, start: int, end: int) -> str:
@@ -153,7 +191,7 @@ class SymbolAwareChunker:
             return []
 
         # 1. Language detection: respect the explicit allowlist if set.
-        language = _detect_language_from_meta(doc)
+        language = _resolve_language(doc, self.cfg)
         if language is None:
             return self._fallback_chunks(doc, reason="unsupported_language")
         if self.cfg.languages is not None and language not in self.cfg.languages:
