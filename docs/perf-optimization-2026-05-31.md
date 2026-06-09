@@ -86,6 +86,11 @@ byte-for-byte when the flag is unset.
 top-k. New tests in `tests/chunkshop/test_search_pool.py` pin the lifecycle
 (reuse-when-on, fresh-when-off, never-pool-a-poisoned-conn, drain-on-close).
 
+> **Update (chunkshop#64):** the pool is now **on by default** — `CHUNKSHOP_SEARCH_POOL`
+> opts *out* (`0`/`false`/`no`/`off`). Made safe with a retry-once-on-broken-connection
+> guard (a reused dead connection self-heals on a fresh retry), an `os.register_at_fork`
+> child reset, and a max-idle-age recycle. See `docs/hybrid-search.md`.
+
 ---
 
 ## Config-tuning levers (no code; "flip this and you get X")
@@ -136,12 +141,10 @@ reclaim this for multi-chunk-doc corpora — see below.)
 These need design review / cross-backend parity / a contract decision, so per the
 brief I'm flagging rather than implementing them.
 
-1. **Make the search pool default-on (transparent).** Biggest single search win
-   (−66%) is currently behind an opt-in flag to respect the module's "short-lived
-   connection" contract and avoid surprising stateful behavior. Making it default
-   needs a *retry-once-on-broken-connection* guard (so a server restart doesn't
-   surface a stale pooled connection as a user-visible error) and a decision on
-   pool lifecycle for the fork-based orchestrator. ~½ day with tests.
+1. ~~**Make the search pool default-on (transparent).**~~ **SHIPPED (chunkshop#64).**
+   The −66% pool is now on by default with `CHUNKSHOP_SEARCH_POOL` as an opt-out.
+   Done with the retry-once-on-broken-connection guard, an `os.register_at_fork`
+   child reset, and a max-idle-age recycle. See section 3 above + `docs/hybrid-search.md`.
 
 2. **COPY-based bulk insert for ingestion.** Per-doc `executemany` is fine for the
    crash-safety contract but is not the fastest bulk path. A staging-table +
