@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+## 0.9.0 — 2026-06-09
+
+Two correctness/perf fixes. The minor bump is for the **search-pool default flip**
+(#64): read pooling is now on by default, so search callers that previously opened
+a fresh connection per call now reuse warm connections — a transparent, opt-out
+behavioral change worth a version signal. Also fixes `symbol_aware` silently
+dropping symbols for path-less documents (#69). Python-only this release; the Rust
+crate is a lockstep version bump with no functional change.
+
+### Fixed
+
+- **`symbol_aware` no longer mislabels path-less code as `unsupported_language`
+  (#69).** The chunker resolved language *only* from a file extension in
+  `doc.metadata.path` / `source_path` or a path-shaped `doc.id`. Callers passing a
+  synthetic id / `stele://` URI with no path (e.g. pg-raggraph / bento) got
+  `fallback_reason="unsupported_language"` and **zero symbols** for ordinary
+  sources — ~45% of `.py` and ~90% of `.ts`/`.tsx` files in a real repo. Language
+  is now resolved in layers, most- to least-explicit:
+
+  1. a new `SymbolAwareChunker.language` config override (validated against the
+     known language tags),
+  2. a `doc.metadata['language']` hint (exact tag or an extension alias like
+     `"tsx"` / `".ts"` / `"py"`),
+  3. a broadened set of path-like metadata keys (`file_path`, `filename`, `uri`,
+     `url`, `rel_path`, … in addition to `path` / `source_path`),
+  4. a path-shaped `doc.id` (unchanged), then
+  5. a conservative **content heuristic covering all ten supported languages**
+     (python, java, go, typescript, javascript, rust, c, cpp, csharp, ruby).
+
+  The content heuristic scores language-distinctive markers and returns a result
+  only on a clear, unambiguous winner — prose and near-ties return nothing and
+  fall back as before, so `symbol_aware_fallback` now fires only for genuinely
+  unsupported input. A wrong guess can never do worse than the prior
+  unknown-language fallback.
+
+### Changed
+
+- **Read-connection pool is on by default (#64).** The opt-in
+  `CHUNKSHOP_SEARCH_POOL` pool — the biggest single search win (hybrid median
+  30.8 ms → 10.5 ms, **−66%**, byte-identical ranking) — now ships **on** and is
+  transparent. Set `CHUNKSHOP_SEARCH_POOL=0` (also `false`/`no`/`off`) to restore
+  the historical per-call connect. Made safe with three guards:
+
+  - **Retry-once on a broken connection.** A *reused* idle connection that turns
+    out dead (server restart / idle timeout) is discarded and the query retried
+    once on a fresh connection, so a restart self-heals instead of surfacing an
+    `OperationalError`. A *fresh* connection that fails is a real error and is not
+    retried. Validated against real Postgres by terminating a pooled backend.
+  - **Fork reset.** An `os.register_at_fork` child handler drops inherited
+    connections (psycopg sockets do not survive `os.fork`). The subprocess
+    orchestrator spawns via exec and never inherits the pool.
+  - **Max-idle-age recycle.** A connection idle past 300 s is recycled on acquire
+    rather than handed out stale.
+
+### Added
+
+- **`SymbolAwareChunker.language`** — force one language for every document in a
+  cell, bypassing per-document detection. Must be a known codeparse language tag;
+  rejected at config-load otherwise.
+
 ## 0.8.3 — 2026-06-04
 
 The local `files` source learns **incremental ingest**: point it at a directory
