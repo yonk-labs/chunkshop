@@ -253,6 +253,25 @@ class SymbolAwareChunker:
         if not chunks:
             return self._fallback_chunks(doc, reason="no_symbols")
 
+        # 5a. Per-file symbol-chunk cap (chunkshop#71). A pathological file —
+        # typically generated or minified source — can yield thousands of tiny
+        # symbol chunks; a downstream consumer that embeds every chunk then OOMs.
+        # When the per-file count exceeds the cap, fall back to sentence_aware so
+        # the doc is still searchable but bounded by max_chars instead of symbol
+        # count. None disables the cap.
+        cap = self.cfg.max_symbols_per_file
+        if cap is not None and len(chunks) > cap:
+            log.warning(
+                "symbol_aware: doc %s produced %d symbol chunks "
+                "(> max_symbols_per_file=%d); falling back to sentence_aware "
+                "(likely generated/minified source). Raise max_symbols_per_file "
+                "or set it null to disable this cap.",
+                doc.id,
+                len(chunks),
+                cap,
+            )
+            return self._fallback_chunks(doc, reason="too_many_symbols")
+
         # 5. Oversize handling — delegates to apply_if_oversize so the chain
         # matches the rest of the chunker zoo (same warning, same recursion
         # guard, same metadata propagation).

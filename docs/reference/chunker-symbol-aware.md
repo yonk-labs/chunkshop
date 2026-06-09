@@ -40,6 +40,7 @@ caller passing a synthetic id / URI with no path still gets symbols.
 | `max_chars`       | `int`                                                  | `8000`       | Soft cap before `if_oversize` triggers. |
 | `languages`       | `list[str]?`                                           | `None`       | Allowlist by codeparse language tag. None = auto. |
 | `language`        | `str?`                                                 | `None`       | Force ONE language for every doc, bypassing detection. Must be a known tag; rejected at config-load otherwise. |
+| `max_symbols_per_file` | `int?`                                            | `2000`       | Cap on symbol chunks per document; over it the doc falls back to `sentence_aware` (`too_many_symbols`) so a generated/minified file can't explode the chunk count. `null` disables; must be `>= 1`. |
 | `if_oversize`     | `ChunkerConfig?`                                       | `None`       | Fallback when a chunk exceeds `max_chars`. |
 
 ### Granularity
@@ -108,7 +109,13 @@ Construct via `chunkshop.chunkers.load_chunker(cfg)`.
    {**chunker_metadata, "strategy": "symbol_aware_fallback",
     "fallback_reason": "<reason>"}
    ```
-   `reason` is one of: `"unsupported_language"`, `"parse_error"`, `"no_symbols"`.
+   `reason` is one of: `"unsupported_language"`, `"parse_error"`, `"no_symbols"`,
+   `"too_many_symbols"` (exceeded `max_symbols_per_file` — see #71). Two safety
+   guards feed `"unsupported_language"` / `"too_many_symbols"` for generated or
+   minified sources: the path-less content heuristic skips files with a
+   `@generated` / `sourceMappingURL` marker or a minified (very long) line, and
+   the `max_symbols_per_file` cap bounds the per-file chunk count regardless of
+   how the language was resolved.
 8. **Oversize handling** routes through
    `chunkshop.chunkers._oversize.apply_if_oversize` — same warning,
    same recursion guard, same metadata propagation as other chunkers.
