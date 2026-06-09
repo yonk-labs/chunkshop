@@ -426,6 +426,182 @@ def detect_language(path: Path) -> Optional[str]:
     return _EXT_TO_LANG.get(suffix)
 
 
+# --- content-based detection (last resort) ---------------------------------
+# When a document arrives without a usable path or explicit language hint (a
+# caller passing a synthetic id / stele:// URI — see chunkshop#69), guessing
+# the language from the source body keeps symbol extraction working instead of
+# silently falling back. Covers all ten codeparse languages.
+#
+# Each language has a set of (pattern, weight) markers chosen to be *distinctive*
+# — markers shared across languages (``class``, ``import``, bare ``def``) carry
+# low weight or are omitted, so the score reflects evidence FOR a specific
+# language rather than generic code-ness. The highest-scoring language wins, but
+# only if it clears ``_CONTENT_MIN_SCORE`` AND beats the runner-up by
+# ``_CONTENT_MARGIN`` — a near-tie is "ambiguous" and returns None. Conservative
+# by design: a doc that doesn't clearly read as one language falls back exactly
+# as before, so a wrong guess can never do worse than today's behaviour.
+_CONTENT_MIN_SCORE = 3
+_CONTENT_MARGIN = 2
+
+_CONTENT_MARKERS: dict[str, list[tuple[re.Pattern[str], int]]] = {
+    lang: [(re.compile(p), w) for p, w in markers]
+    for lang, markers in {
+        "python": [
+            # def ...(): — tolerates an async prefix and a -> return annotation
+            (r"(?m)^[ \t]*(?:async[ \t]+)?def[ \t]+\w+\s*\([^)]*\)\s*(?:->[^:\n]+)?:", 3),
+            (r"(?m)^[ \t]*from[ \t]+[\w.]+[ \t]+import\b", 3),
+            (r"(?m)^[ \t]*elif\b", 3),
+            (r"(?m)^[ \t]*class[ \t]+\w+[^\n]*:\s*$", 2),     # class ...:
+            (r"(?m)\b(?:__name__|__init__|self)\b", 1),
+            (r"(?m)^[ \t]*@\w+[ \t]*$", 1),                   # decorator line
+            (r"(?m)^[ \t]*def[ \t]+\w+", 1),                  # shared w/ ruby
+        ],
+        "ruby": [
+            (r"(?m)^[ \t]*end[ \t]*$", 3),                    # block terminator
+            (r"(?m)^[ \t]*elsif\b", 3),
+            (r"(?m)\battr_(?:accessor|reader|writer)\b", 3),
+            (r"(?m)\bputs\b", 2),
+            (r"(?m)^[ \t]*require(?:_relative)?[ \t]+['\"]", 2),
+            (r"(?m)\bdo[ \t]*\|", 2),                         # do |x|
+            (r"(?m)^[ \t]*module[ \t]+\w+", 1),
+            (r"(?m)^[ \t]*def[ \t]+\w+", 1),                  # shared w/ python
+        ],
+        "go": [
+            (r"(?m)^package[ \t]+\w+[ \t]*$", 3),             # no semicolon
+            (r"(?m)\bfunc[ \t]+(?:\([^)]*\)[ \t]*)?\w+[ \t]*\(", 3),
+            (r"(?m):=", 2),
+            (r"(?m)^[ \t]*type[ \t]+\w+[ \t]+struct\b", 2),
+            (r"(?m)\b(?:fmt|errors|strings)\.\w+", 1),
+        ],
+        "rust": [
+            (r"(?m)^[ \t]*(?:pub[ \t]+)?fn[ \t]+\w+", 3),
+            (r"(?m)^[ \t]*impl\b", 3),
+            (r"(?m)\blet[ \t]+mut\b", 2),
+            (r"(?m)^[ \t]*use[ \t]+[\w:]+::", 2),
+            (r"(?m)^[ \t]*(?:pub[ \t]+)?(?:struct|enum|trait)[ \t]+\w+", 1),
+            (r"(?m)\b\w+!\s*[\(\[]", 1),                      # macro!(
+            (r"(?m)&(?:self|mut)\b", 1),
+        ],
+        "c": [
+            (r"(?m)^[ \t]*#include\b", 2),
+            (r"(?m)\b(?:printf|malloc|free|sizeof)\b", 1),
+            (r"(?m)\btypedef\b", 1),
+            (r"(?m)^[A-Za-z_][\w \t\*]*\b\w+\s*\([^;{]*\)\s*\{", 1),
+            (r"(?m)^[ \t]*struct[ \t]+\w+", 1),
+        ],
+        "cpp": [
+            (r"(?m)\bstd::", 3),
+            (r"(?m)\btemplate[ \t]*<", 3),
+            (r"(?m)\busing[ \t]+namespace\b", 2),
+            (r"(?m)\b(?:cout|cin|endl)\b", 2),
+            (r"(?m)^[ \t]*(?:public|private|protected):", 2),  # access labels
+            (r"(?m)^[ \t]*namespace[ \t]+\w+", 2),
+            (r"(?m)^[ \t]*#include\b", 1),                    # shared w/ c
+        ],
+        "csharp": [
+            (r"(?m)^[ \t]*using[ \t]+System", 3),
+            (r"(?m)\bConsole[ \t]*\.", 3),
+            (r"(?m)\bget;[ \t]*set;", 2),
+            (r"(?m)^[ \t]*namespace[ \t]+[\w.]+\s*$", 2),     # Allman namespace
+            (r"(?m)\bstring\[\]", 1),
+            (r"(?m)\b(?:public|private|protected|internal)[ \t]+(?:class|interface|struct|enum)\b", 1),
+            (r"(?m)\b(?:public|private|protected|internal)[ \t]+\w+[ \t]+\w+\s*\(", 1),
+        ],
+        "java": [
+            (r"(?m)^[ \t]*package[ \t]+[\w.]+[ \t]*;", 3),    # semicolon (vs go)
+            (r"(?m)\bSystem[ \t]*\.\s*(?:out|err|in)\b", 3),
+            (r"(?m)\bjava\.\w+", 2),
+            (r"(?m)^[ \t]*import[ \t]+[\w.]+[ \t]*;", 2),
+            (r"(?m)@Override\b", 2),
+            (r"(?m)\b(?:public|private|protected)[ \t]+(?:static[ \t]+)?(?:void|int|boolean|long|double|float|char|String)\b", 1),
+            (r"(?m)\b(?:public|private|protected)[ \t]+(?:class|interface)\b", 1),
+        ],
+    }.items()
+}
+
+# JS/TS share a base; ``_TS_MARKERS`` are TypeScript-only and decide the split.
+# A file scoring on either becomes the "javascript family" candidate, resolved
+# to typescript when any TS-only marker fires, else javascript.
+_JS_FAMILY_MARKERS: list[tuple[re.Pattern[str], int]] = [
+    (re.compile(p), w)
+    for p, w in [
+        (r"(?m)\bfunction[ \t*(]", 2),
+        (r"(?m)=>", 1),
+        (r"(?m)^[ \t]*(?:export|const|let)[ \t]", 1),
+        (r"(?m)\b(?:console\.log|require\(|module\.exports)\b", 2),
+        (r"(?m);[ \t]*$", 1),
+    ]
+]
+_TS_MARKERS: list[tuple[re.Pattern[str], int]] = [
+    (re.compile(p), w)
+    for p, w in [
+        (r"(?m)^[ \t]*import[ \t].*[ \t]from[ \t]['\"]", 3),  # ES import
+        (r"(?m):[ \t]*(?:string|number|boolean|void|any|unknown|never)\b", 2),
+        (r"(?m)^[ \t]*type[ \t]+\w+[ \t]*=", 2),
+        (r"(?m)\benum[ \t]+\w+", 2),
+        (r"(?m)\breadonly\b", 2),
+        (r"(?m)\binterface[ \t]+\w+", 1),  # weak: C#/Java have it too
+        (r"(?m)\bimplements\b", 1),
+    ]
+]
+
+# Shebang interpreters that pin a language outright.
+_SHEBANG_LANGS = (("python", "python"), ("node", "javascript"), ("ruby", "ruby"))
+
+
+def detect_language_from_content(text: str) -> Optional[str]:
+    """Best-effort language guess from source content alone.
+
+    Returns a chunkshop language tag only on a clear, unambiguous signal across
+    the ten supported languages; prose, config, or a near-tie returns ``None``
+    so the caller falls back rather than mislabelling. Scans a bounded prefix so
+    very large files stay cheap.
+    """
+    if not text:
+        return None
+    head = "\n".join(text.splitlines()[:400])
+
+    stripped = head.lstrip()
+    if stripped.startswith("#!"):
+        shebang = stripped.splitlines()[0]
+        for needle, lang in _SHEBANG_LANGS:
+            if needle in shebang:
+                return lang
+
+    scores: dict[str, int] = {
+        lang: sum(w for pat, w in markers if pat.search(head))
+        for lang, markers in _CONTENT_MARKERS.items()
+    }
+    js = sum(w for pat, w in _JS_FAMILY_MARKERS if pat.search(head))
+    ts = sum(w for pat, w in _TS_MARKERS if pat.search(head))
+    if js or ts:
+        scores["typescript" if ts else "javascript"] = js + ts
+
+    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+    best, best_score = ranked[0]
+    runner_up = ranked[1][1] if len(ranked) > 1 else 0
+    if best_score >= _CONTENT_MIN_SCORE and best_score - runner_up >= _CONTENT_MARGIN:
+        return best
+    return None
+
+
+def normalize_language_tag(value: str) -> Optional[str]:
+    """Coerce a caller-supplied language hint to a canonical tag, else None.
+
+    Accepts an exact tag (``"typescript"``), or an extension-ish alias
+    (``"ts"``, ``".tsx"``, ``"py"``) which is matched through
+    :func:`detect_language`. Unknown values return ``None`` so a junk hint is
+    ignored rather than forcing a wrong language.
+    """
+    if not value:
+        return None
+    v = value.strip().lower()
+    if v in KNOWN_LANGUAGES:
+        return v
+    ext = v if v.startswith(".") else "." + v
+    return detect_language(Path("x" + ext))
+
+
 _EXT_TO_LANG: dict[str, str] = {
     ".py": "python",
     ".java": "java",
@@ -449,4 +625,16 @@ _EXT_TO_LANG: dict[str, str] = {
 }
 
 
-__all__ = ["extract_with_regex", "detect_language"]
+# Canonical set of codeparse language tags — the values of ``_EXT_TO_LANG``.
+# Exported so callers can validate an explicit ``language`` hint without
+# re-deriving the list (which would drift).
+KNOWN_LANGUAGES: frozenset[str] = frozenset(_EXT_TO_LANG.values())
+
+
+__all__ = [
+    "extract_with_regex",
+    "detect_language",
+    "detect_language_from_content",
+    "normalize_language_tag",
+    "KNOWN_LANGUAGES",
+]

@@ -645,29 +645,38 @@ while waiting on the server, so the two legs overlap and total latency drops fro
 query. The fused, ranked output is **byte-identical** to the old sequential path;
 single-leg calls stay inline with no thread overhead. Nothing to configure.
 
-**Connection reuse for high-QPS callers (opt-in).** By default each leg opens a
-short-lived connection per call — fine for a one-shot CLI search, but the ~5–6 ms
-TCP+auth+first-query setup dominates latency when you issue many queries against
-one DSN. Set the env var:
+**Connection reuse (default-on, transparent).** The hot read legs check out from
+a tiny thread-safe idle-connection pool keyed by DSN (autocommit reads, so nothing
+lingers idle-in-transaction between calls), so repeated queries against one DSN
+skip the ~5–6 ms TCP+auth+first-query setup. Measured **−66% median** hybrid
+latency on a warm pool, byte-identical ranking. This is **on by default** and
+transparent — no configuration. Opt out to restore the historical per-call connect:
 
 ```bash
-export CHUNKSHOP_SEARCH_POOL=1
+export CHUNKSHOP_SEARCH_POOL=0   # also accepts false / no / off
 ```
 
-and the hot read legs check out from a tiny thread-safe idle-connection pool keyed
-by DSN (autocommit reads, so nothing lingers idle-in-transaction between calls).
-Measured **−66% median** hybrid latency on a warm pool. The flag is **off by
-default** — the historical per-call-connect behavior is preserved byte-for-byte
-when it's unset. A long-running process can drain the pool explicitly:
+A long-running process can drain the pool explicitly:
 
 ```python
 from chunkshop.search import close_search_pool
 close_search_pool()   # closes idle pooled connections; idempotent
 ```
 
-A pooled connection that errors is closed rather than recycled, and a stale one
-(e.g. after a server restart) surfaces as a normal `OperationalError` on next use,
-exactly as a fresh connect would.
+Three guards keep default-on safe:
+
+- **Retry-once.** A *reused* idle connection that turns out dead (server restart,
+  idle timeout) is discarded and the query retried once on a fresh connection, so
+  a restart self-heals instead of surfacing an `OperationalError`. A *fresh*
+  connection that fails is a real error and is not retried.
+- **Fork reset.** A forked child drops inherited connections (psycopg sockets do
+  not survive `os.fork`) via an `os.register_at_fork` handler. The subprocess
+  orchestrator spawns via exec, so it never inherits the pool; search isn't on
+  the ingest path today regardless.
+- **Max-idle-age.** A connection idle past `_POOL_MAX_AGE_S` (default 300 s) is
+  recycled on acquire rather than handed out stale.
+
+An errored connection is always closed rather than recycled.
 
 > Ingestion has a matching change in v0.8.2: `PgSink` reuses one write connection
 > across documents (still committing per document), ~−24% wall on many-small-doc

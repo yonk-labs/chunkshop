@@ -606,10 +606,13 @@ class SymbolAwareChunker(_Base):
       very small or dotfile-style sources where per-symbol splitting is
       overkill. The chunk still carries a deterministic ``node_id``.
 
-    Falls back to :class:`SentenceAwareChunker` when codeparse can't parse the
-    document (unknown extension / no path metadata / Python syntax error /
-    zero symbols). Fallback chunks are tagged ``strategy='symbol_aware_fallback'``
-    with a ``fallback_reason`` metadata field.
+    Falls back to :class:`SentenceAwareChunker` only when codeparse can't parse
+    the document (no resolvable language / Python syntax error / zero symbols).
+    Language is resolved per-document from ``cfg.language``, a
+    ``metadata['language']`` hint, path-like metadata keys, a path-shaped
+    ``doc.id``, then a content heuristic, so a missing path no longer forces a
+    fallback (chunkshop#69). Fallback chunks are tagged
+    ``strategy='symbol_aware_fallback'`` with a ``fallback_reason`` field.
     """
     type: Literal["symbol_aware"]
     granularity: Literal["function", "class", "module"] = "function"
@@ -618,8 +621,28 @@ class SymbolAwareChunker(_Base):
     if_oversize: Optional["ChunkerConfig"] = None
     # Restrict the chunker to specific codeparse language tags
     # ({"python","java","go","typescript","javascript"}). When None (default),
-    # the chunker infers the language from doc.metadata.path / source_path.
+    # the chunker infers the language per-document.
     languages: Optional[list[str]] = None
+    # Force one language for every document in the cell, bypassing per-doc
+    # detection. Useful for single-language corpora where the caller passes a
+    # synthetic id / URI with no path to infer from (chunkshop#69). Must be a
+    # known codeparse language tag. When None (default), language is resolved
+    # per-document from a metadata['language'] hint, path-like metadata keys,
+    # a path-shaped doc.id, then a content heuristic.
+    language: Optional[str] = None
+
+    @field_validator("language")
+    @classmethod
+    def _known_language(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        from chunkshop.codeparse.langs.regex_fallback import KNOWN_LANGUAGES
+
+        if v not in KNOWN_LANGUAGES:
+            raise ValueError(
+                f"language must be one of {sorted(KNOWN_LANGUAGES)}, got {v!r}"
+            )
+        return v
 
     def effective_max_chars(self) -> Optional[int]:
         return self.max_chars

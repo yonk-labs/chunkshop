@@ -15,8 +15,10 @@ Security: every user value is a bound parameter. The only non-parameterizable
 inputs are the FTS `language` (allowlisted) and SQL identifiers (quoted via the
 backend). User query text, filter values, and limits are NEVER interpolated.
 
-Connections are short-lived (one psycopg connection opened per call), mirroring
-`PgSink`. This is a read API, so per-call connect is fine.
+Read connections are pooled by default (warm reuse keyed by DSN) for a large
+latency win on repeated queries; the pool is transparent and self-healing (see
+the pooling section below). Opt out with `CHUNKSHOP_SEARCH_POOL=0` to restore
+the historical per-call connect.
 
 This module deliberately contains no summary logic — summarization is the
 benchmark's job, wired through `chunkshop.summarizers.lede`. (Per the core
@@ -28,6 +30,7 @@ import json
 import os
 import re
 import threading
+import time
 from contextlib import contextmanager
 from typing import Any, Optional
 
@@ -98,37 +101,76 @@ def _fq(backend: PostgresBackend, schema: str, table: str) -> str:
     return backend.fq_table(schema, table)
 
 
-# -- read-connection pooling (opt-in) ---------------------------------------
-# By default the read path opens a short-lived psycopg connection per call, as
-# documented in the module header. For high-QPS callers (a search service
-# issuing many queries against one DSN), the ~5-6ms TCP+auth+first-query setup
-# per connection dominates latency — measured ~21ms hybrid -> ~8ms with warm
-# connections. Setting CHUNKSHOP_SEARCH_POOL=1 routes the hot read legs through
-# a tiny thread-safe idle-connection pool keyed by DSN. Connections are opened
-# autocommit (reads need no transaction), so nothing lingers idle-in-transaction
-# between checkouts. A connection that errors is closed, never returned to the
-# pool; a stale/broken connection surfaces as an OperationalError on the next
-# query exactly as a fresh connect would. Ranking output is unchanged — this
-# only affects how the connection is acquired.
+# -- read-connection pooling (default-on, transparent) ----------------------
+# The read legs reuse warm psycopg connections through a tiny thread-safe
+# idle-connection pool keyed by DSN. For repeated queries against one DSN the
+# ~5-6ms TCP+auth+first-query setup per connection dominates latency — measured
+# hybrid median 30.8ms -> 10.5ms (-66%) with warm connections, byte-identical
+# ranking. Connections are opened autocommit (reads need no transaction), so
+# nothing lingers idle-in-transaction between checkouts.
+#
+# The pool is ON by default and transparent (chunkshop#64). Three guards make
+# that safe:
+#   - Retry-once (see _execute_read): a *reused* idle connection that turns out
+#     dead (server restart / idle timeout) is discarded and the query retried
+#     once on a fresh connection, so a restart self-heals instead of surfacing
+#     as a user-visible OperationalError.
+#   - Fork reset (see _reset_pooled_connections_after_fork): a forked child
+#     drops inherited connections — psycopg sockets do not survive os.fork.
+#   - Max-idle-age: a connection idle longer than _POOL_MAX_AGE_S is recycled
+#     on acquire rather than handed out stale.
+# Opt out with CHUNKSHOP_SEARCH_POOL=0 (also: false/no/off) to restore the
+# historical per-call-connect behavior.
 _POOL_LOCK = threading.Lock()
-_POOLS: dict[str, list[Any]] = {}
+# dsn -> list of (conn, released_at_monotonic)
+_POOLS: dict[str, list[tuple[Any, float]]] = {}
 _POOL_MAX_IDLE = 8
+_POOL_MAX_AGE_S = 300.0
+
+_CONN_ERRORS = (psycopg.OperationalError, psycopg.InterfaceError)
 
 
 def _pool_enabled() -> bool:
-    return os.environ.get("CHUNKSHOP_SEARCH_POOL", "").strip().lower() in {"1", "true", "yes", "on"}
+    """Pooling is ON unless CHUNKSHOP_SEARCH_POOL is explicitly falsy."""
+    val = os.environ.get("CHUNKSHOP_SEARCH_POOL")
+    if val is None:
+        return True
+    return val.strip().lower() not in {"0", "false", "no", "off", ""}
 
 
-def _pool_acquire(dsn: str):
-    with _POOL_LOCK:
-        idle = _POOLS.get(dsn)
-        while idle:
-            conn = idle.pop()
-            if not conn.closed:
-                return conn
+def _close_quietly(conn) -> None:
+    try:
+        conn.close()
+    except Exception:  # pragma: no cover — best-effort cleanup
+        pass
+
+
+def _open_read_conn(dsn: str):
     conn = psycopg.connect(dsn)
     conn.autocommit = True
     return conn
+
+
+def _pool_acquire(dsn: str) -> tuple[Any, bool]:
+    """Return ``(conn, reused)``.
+
+    ``reused`` is True when the connection came from the warm idle pool (and so
+    might be silently dead), False when freshly opened. Idle connections older
+    than ``_POOL_MAX_AGE_S``, or already closed, are recycled rather than
+    handed out.
+    """
+    now = time.monotonic()
+    with _POOL_LOCK:
+        idle = _POOLS.get(dsn)
+        while idle:
+            conn, released_at = idle.pop()
+            if conn.closed:
+                continue
+            if now - released_at > _POOL_MAX_AGE_S:
+                _close_quietly(conn)
+                continue
+            return conn, True
+    return _open_read_conn(dsn), False
 
 
 def _pool_release(dsn: str, conn, ok: bool) -> None:
@@ -140,24 +182,25 @@ def _pool_release(dsn: str, conn, ok: bool) -> None:
     with _POOL_LOCK:
         idle = _POOLS.setdefault(dsn, [])
         if len(idle) < _POOL_MAX_IDLE:
-            idle.append(conn)
+            idle.append((conn, time.monotonic()))
             return
     conn.close()
 
 
 @contextmanager
 def _read_connection(dsn: str):
-    """Yield a psycopg connection for a read leg.
+    """Yield a psycopg connection for a read leg (acquire/release, no retry).
 
-    Pooled+reused when CHUNKSHOP_SEARCH_POOL is set; otherwise a plain
-    short-lived connection (the historical default), preserving the module's
-    documented per-call-connect contract byte-for-byte.
+    Pooled+reused when enabled (the default); a plain short-lived connection
+    when pooling is explicitly disabled. The search legs go through
+    :func:`_execute_read`, which adds the broken-connection retry guard on top
+    of this primitive.
     """
     if not _pool_enabled():
         with psycopg.connect(dsn) as conn:
             yield conn
         return
-    conn = _pool_acquire(dsn)
+    conn, _reused = _pool_acquire(dsn)
     ok = True
     try:
         yield conn
@@ -168,17 +211,74 @@ def _read_connection(dsn: str):
         _pool_release(dsn, conn, ok)
 
 
+def _execute_read(dsn: str, sql: str, params: list[Any]) -> list[tuple]:
+    """Run a read query and return all rows, with a one-shot retry guard.
+
+    When pooling is enabled and the acquired connection was *reused* from the
+    idle pool, a connection-level failure (server restart, idle timeout) on the
+    first query discards that connection and retries once on a guaranteed-fresh
+    one — so the pool self-heals instead of leaking a stale-connection
+    OperationalError to the caller. A *fresh* connection that fails is a real
+    error and is NOT retried (no masking of genuine outages). With pooling
+    disabled this is a plain per-call connect, matching the historical path.
+    """
+    if not _pool_enabled():
+        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+    conn, reused = _pool_acquire(dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    except _CONN_ERRORS:
+        _close_quietly(conn)
+        if not reused:
+            raise
+        conn2 = _open_read_conn(dsn)
+        try:
+            with conn2.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+        except BaseException:
+            _close_quietly(conn2)
+            raise
+        _pool_release(dsn, conn2, ok=True)
+        return rows
+    _pool_release(dsn, conn, ok=True)
+    return rows
+
+
 def close_search_pool() -> None:
     """Close all idle pooled read connections. Safe to call anytime; idempotent."""
     with _POOL_LOCK:
         pools = list(_POOLS.values())
         _POOLS.clear()
     for idle in pools:
-        for conn in idle:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        for conn, _released_at in idle:
+            _close_quietly(conn)
+
+
+def _reset_pooled_connections_after_fork() -> None:
+    """Drop inherited pooled connections in a forked child.
+
+    psycopg connections do NOT survive ``os.fork`` — the child inherits copies
+    of the parent's socket fds, so reusing a pooled connection would corrupt
+    both sides. We drop the references WITHOUT closing (closing would disturb
+    the parent's still-live socket) and reinitialise the lock (a lock held by
+    another thread at fork time stays locked forever in the child). The child
+    then opens its own fresh connections on demand. The subprocess orchestrator
+    spawns via exec — a brand-new interpreter that never inherits this pool — so
+    this guard is for in-process fork (e.g. multiprocessing's 'fork' start).
+    """
+    global _POOL_LOCK
+    _POOL_LOCK = threading.Lock()
+    _POOLS.clear()
+
+
+if hasattr(os, "register_at_fork"):  # pragma: no branch — POSIX
+    os.register_at_fork(after_in_child=_reset_pooled_connections_after_fork)
 
 
 # Allowlist regex for column identifiers spliced into ``column_in`` /
@@ -386,9 +486,7 @@ def keyword_search(
     sql += " ORDER BY score DESC LIMIT %s"
     params.append(k)
 
-    with _read_connection(dsn) as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    rows = _execute_read(dsn, sql, params)
     return [
         Hit(
             doc_id=r[0],
@@ -440,9 +538,7 @@ def semantic_search(
     sql += f" ORDER BY embedding {op} %s::vector LIMIT %s"
     params.extend([vec_lit, k])
 
-    with _read_connection(dsn) as conn, conn.cursor() as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    rows = _execute_read(dsn, sql, params)
     return [
         Hit(
             doc_id=r[0],

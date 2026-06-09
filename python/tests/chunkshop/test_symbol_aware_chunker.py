@@ -403,3 +403,174 @@ def test_dual_text_contract():
         assert isinstance(c.embedded_content, str)
         assert c.original_content  # non-empty
         assert c.embedded_content  # non-empty
+
+
+# --- 16. robust language resolution (#69) ---------------------------------
+# Regression: callers that pass a synthetic id / stele:// URI with no path
+# metadata used to get strategy='symbol_aware_fallback',
+# fallback_reason='unsupported_language' and ZERO symbols even for ordinary
+# .py/.ts/.tsx sources. Language must resolve from (in priority order) an
+# explicit cfg.language, a doc.metadata['language'] hint, a broadened set of
+# path-like metadata keys, a path-shaped doc.id, and finally a conservative
+# content heuristic.
+
+_TS_SRC = (
+    "export interface User { id: number; name: string; }\n"
+    "\n"
+    "export function greet(u: User): string {\n"
+    "  return `hi ${u.name}`;\n"
+    "}\n"
+)
+_PY_SRC = (
+    "import os\n"
+    "\n"
+    "def alpha(x):\n"
+    "    return x + 1\n"
+    "\n"
+    "class Foo:\n"
+    "    def bar(self):\n"
+    "        return 2\n"
+)
+_JS_SRC = (
+    "export const add = (a, b) => a + b;\n"
+    "\n"
+    "function mul(a, b) {\n"
+    "  return a * b;\n"
+    "}\n"
+)
+_STELE_ID = "stele://abc123def456"  # not path-shaped with a known extension
+
+
+def _non_fallback(chunks) -> bool:
+    return bool(chunks) and all(
+        c.metadata.get("strategy") == "symbol_aware" for c in chunks
+    )
+
+
+def test_metadata_language_hint_parses_without_path():
+    """doc.metadata['language'] drives detection when no path is present."""
+    doc = Document(id=_STELE_ID, content=_TS_SRC, metadata={"language": "typescript"})
+    chunks = _make().chunk(doc)
+    assert _non_fallback(chunks)
+    assert all(c.metadata.get("language") == "typescript" for c in chunks)
+
+
+def test_metadata_language_hint_accepts_extension_alias():
+    """A 'tsx' / '.ts' style hint normalises to the typescript tag."""
+    doc = Document(id=_STELE_ID, content=_TS_SRC, metadata={"language": "tsx"})
+    chunks = _make().chunk(doc)
+    assert _non_fallback(chunks)
+    assert all(c.metadata.get("language") == "typescript" for c in chunks)
+
+
+def test_cfg_language_override_forces_language():
+    """cfg.language forces the language for every doc in the cell."""
+    doc = Document(id=_STELE_ID, content=_PY_SRC, metadata={})
+    chunks = _make(language="python").chunk(doc)
+    assert _non_fallback(chunks)
+    assert any(c.metadata.get("symbol_name") == "alpha" for c in chunks)
+
+
+def test_cfg_language_rejects_unknown_tag():
+    """An unknown cfg.language is a config-load error, not a silent skip."""
+    with pytest.raises(ValidationError):
+        SymbolAwareChunker(type="symbol_aware", language="klingon")
+
+
+def test_broadened_path_key_file_path():
+    """A real path under metadata['file_path'] (not just 'path') resolves."""
+    doc = Document(
+        id=_STELE_ID, content=_TS_SRC, metadata={"file_path": "src/components/Foo.tsx"}
+    )
+    chunks = _make().chunk(doc)
+    assert _non_fallback(chunks)
+    assert all(c.metadata.get("language") == "typescript" for c in chunks)
+
+
+def test_content_detection_python_without_path_or_hint():
+    """Path-less, hint-less Python content is recovered by the heuristic."""
+    doc = Document(id=_STELE_ID, content=_PY_SRC, metadata={})
+    chunks = _make().chunk(doc)
+    assert _non_fallback(chunks)
+    assert all(c.metadata.get("language") == "python" for c in chunks)
+
+
+def test_content_detection_typescript_without_path_or_hint():
+    """TS markers (interface / type annotations) win over bare JS markers."""
+    doc = Document(id=_STELE_ID, content=_TS_SRC, metadata={})
+    chunks = _make().chunk(doc)
+    assert _non_fallback(chunks)
+    assert all(c.metadata.get("language") == "typescript" for c in chunks)
+
+
+def test_content_detection_javascript_without_path_or_hint():
+    """Plain JS (no TS-only markers) detects as javascript, not typescript."""
+    doc = Document(id=_STELE_ID, content=_JS_SRC, metadata={})
+    chunks = _make().chunk(doc)
+    assert _non_fallback(chunks)
+    assert all(c.metadata.get("language") == "javascript" for c in chunks)
+
+
+def test_alembic_migration_yields_symbols():
+    """The issue's concrete miss: a plain migration with upgrade/downgrade."""
+    src = (
+        '"""add column"""\n'
+        "from alembic import op\n"
+        "\n"
+        "def upgrade():\n"
+        "    op.add_column('t', 'c')\n"
+        "\n"
+        "def downgrade():\n"
+        "    op.drop_column('t', 'c')\n"
+    )
+    doc = Document(id=_STELE_ID, content=src, metadata={})
+    chunks = _make().chunk(doc)
+    assert _non_fallback(chunks)
+    names = {c.metadata.get("symbol_name") for c in chunks}
+    assert {"upgrade", "downgrade"} <= names
+
+
+def test_prose_still_falls_back_unsupported():
+    """A genuinely non-code doc still falls back — no false positives."""
+    prose = (
+        "Some prose. Another sentence. Yet another sentence to chunk.\n"
+        "\n"
+        "Paragraph two with more text to encourage at least one chunk.\n"
+    )
+    doc = Document(id=_STELE_ID, content=prose, metadata={})
+    chunks = _make().chunk(doc)
+    assert len(chunks) >= 1
+    for c in chunks:
+        assert c.metadata.get("strategy") == "symbol_aware_fallback"
+        assert c.metadata.get("fallback_reason") == "unsupported_language"
+
+
+def test_invalid_metadata_language_falls_through_to_content():
+    """A junk language hint is ignored, not forced — content still wins."""
+    doc = Document(id=_STELE_ID, content=_PY_SRC, metadata={"language": "klingon"})
+    chunks = _make().chunk(doc)
+    assert _non_fallback(chunks)
+    assert all(c.metadata.get("language") == "python" for c in chunks)
+
+
+@pytest.mark.parametrize(
+    "rel,language",
+    [
+        ("go/sample.go", "go"),
+        ("rust/sample.rs", "rust"),
+        ("ruby/sample.rb", "ruby"),
+        ("java/Sample.java", "java"),
+        ("c/sample.c", "c"),
+        ("cpp/sample.cpp", "cpp"),
+        ("csharp/Sample.cs", "csharp"),
+    ],
+)
+def test_content_detection_drives_symbols_all_languages(rel, language):
+    """End-to-end: a path-less, hint-less source in any of the ten languages is
+    recovered by the content heuristic and yields real symbol_aware chunks."""
+    content = (CODEPARSE_FIXTURES / rel).read_text()
+    doc = Document(id=_STELE_ID, content=content, metadata={})
+    chunks = _make().chunk(doc)
+    assert _non_fallback(chunks)
+    assert all(c.metadata.get("language") == language for c in chunks)
+    assert any(c.metadata.get("symbol_name") for c in chunks)

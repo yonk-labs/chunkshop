@@ -20,11 +20,13 @@ language, and a deterministic `node_id`. This is what makes the
 `chunkshop search --by-symbol` filter and the `chunkshop impact-of`
 subcommand work: they query on those promoted columns.
 
-Documents the chunker can't parse (unknown extension, no path metadata,
-Python with a syntax error, zero symbols found) fall back to
-`sentence_aware` so an ingest pipeline never silently drops a document
-— each fallback chunk is tagged `strategy='symbol_aware_fallback'` with
-a `fallback_reason` for forensics.
+Documents the chunker can't parse (no resolvable language, Python with a
+syntax error, zero symbols found) fall back to `sentence_aware` so an
+ingest pipeline never silently drops a document — each fallback chunk is
+tagged `strategy='symbol_aware_fallback'` with a `fallback_reason` for
+forensics. Language no longer hinges on a file extension being present:
+detection is layered (see [Behavior contract](#behavior-contract)) so a
+caller passing a synthetic id / URI with no path still gets symbols.
 
 ## Config schema
 
@@ -37,6 +39,7 @@ a `fallback_reason` for forensics.
 | `include_imports` | `bool`                                                 | `True`       | Prepend file's import block to `embedded_content`. |
 | `max_chars`       | `int`                                                  | `8000`       | Soft cap before `if_oversize` triggers. |
 | `languages`       | `list[str]?`                                           | `None`       | Allowlist by codeparse language tag. None = auto. |
+| `language`        | `str?`                                                 | `None`       | Force ONE language for every doc, bypassing detection. Must be a known tag; rejected at config-load otherwise. |
 | `if_oversize`     | `ChunkerConfig?`                                       | `None`       | Fallback when a chunk exceeds `max_chars`. |
 
 ### Granularity
@@ -70,8 +73,17 @@ Construct via `chunkshop.chunkers.load_chunker(cfg)`.
 
 ## Behavior contract
 
-1. **Language detection** from `doc.metadata.path`, `doc.metadata.source_path`,
-   or `doc.id` (if path-shaped) via `chunkshop.codeparse.langs.regex_fallback.detect_language`.
+1. **Language resolution**, layered most- to least-explicit (chunkshop#69):
+   (a) `cfg.language` override; (b) a `doc.metadata['language']` hint —
+   an exact tag or extension alias like `"tsx"`/`".ts"`; (c) a path-like
+   metadata value (`path`, `source_path`, `file_path`, `filename`, `uri`,
+   `url`, … — extension-matched via `regex_fallback.detect_language`);
+   (d) a path-shaped `doc.id`; (e) a conservative content heuristic
+   (`regex_fallback.detect_language_from_content`) that scores weighted,
+   language-distinctive markers across **all ten** supported languages and
+   returns a result only on a clear, unambiguous winner (a near-tie or
+   prose returns nothing). Only when all five yield nothing does the doc
+   fall back with `fallback_reason="unsupported_language"`.
 2. **Python syntax-error guard.** Tree-sitter is error-tolerant; the
    chunker explicitly runs `ast.parse` on Python sources first. A
    `SyntaxError` triggers fallback.
