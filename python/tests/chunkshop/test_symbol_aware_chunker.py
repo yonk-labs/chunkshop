@@ -574,3 +574,55 @@ def test_content_detection_drives_symbols_all_languages(rel, language):
     assert _non_fallback(chunks)
     assert all(c.metadata.get("language") == language for c in chunks)
     assert any(c.metadata.get("symbol_name") for c in chunks)
+
+
+# --- 17. per-file symbol-chunk cap (#71) ----------------------------------
+# A generated/minified file can explode into thousands of tiny symbol chunks
+# and OOM a consumer that embeds each one. max_symbols_per_file bounds it.
+
+def _many_python_functions(n: int) -> str:
+    return "\n\n".join(f"def f{i}():\n    return {i}" for i in range(n))
+
+
+def test_max_symbols_per_file_default():
+    """A protective default ships (catches generated files, leaves real code)."""
+    cfg = SymbolAwareChunker(type="symbol_aware")
+    assert cfg.max_symbols_per_file == 2000
+
+
+def test_cap_falls_back_when_symbol_chunks_exceed_limit():
+    """> cap symbol chunks -> sentence_aware fallback tagged too_many_symbols."""
+    content = _many_python_functions(12)
+    chunker = _make(max_symbols_per_file=5, include_imports=False)
+    chunks = chunker.chunk(_doc(content, path="generated.py"))
+    assert len(chunks) >= 1
+    for c in chunks:
+        assert c.metadata.get("strategy") == "symbol_aware_fallback"
+        assert c.metadata.get("fallback_reason") == "too_many_symbols"
+    # The whole point: the cap bounds the explosion.
+    assert len(chunks) <= 5
+
+
+def test_cap_not_tripped_under_limit():
+    """<= cap -> normal symbol_aware chunks, one per function."""
+    content = _many_python_functions(8)
+    chunker = _make(max_symbols_per_file=100, include_imports=False)
+    chunks = chunker.chunk(_doc(content, path="ok.py"))
+    assert _non_fallback(chunks)
+    fn = [c for c in chunks if c.metadata.get("symbol_type") == "function"]
+    assert len(fn) == 8
+
+
+def test_cap_none_disables_the_limit():
+    """max_symbols_per_file=None -> no cap, all symbols emitted."""
+    content = _many_python_functions(12)
+    chunker = _make(max_symbols_per_file=None, include_imports=False)
+    chunks = chunker.chunk(_doc(content, path="big.py"))
+    assert _non_fallback(chunks)
+    fn = [c for c in chunks if c.metadata.get("symbol_type") == "function"]
+    assert len(fn) == 12
+
+
+def test_cap_rejects_non_positive():
+    with pytest.raises(ValidationError):
+        SymbolAwareChunker(type="symbol_aware", max_symbols_per_file=0)

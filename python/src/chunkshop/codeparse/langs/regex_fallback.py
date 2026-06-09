@@ -548,18 +548,46 @@ _TS_MARKERS: list[tuple[re.Pattern[str], int]] = [
 # Shebang interpreters that pin a language outright.
 _SHEBANG_LANGS = (("python", "python"), ("node", "javascript"), ("ruby", "ruby"))
 
+# A line longer than this reads as machine-emitted (minified/bundled). Normal
+# hand-written source almost never exceeds it; a single huge line is the
+# signature of a minified blob. Conservative so a long string/array literal in
+# real code doesn't trip it.
+_GENERATED_MAX_LINE_LEN = 2000
+
+
+def _looks_generated_or_minified(head: str) -> bool:
+    """Heuristic: does ``head`` look machine-generated or minified?
+
+    Path-less detection (chunkshop#69) started classifying generated/minified
+    files as code that earlier was skipped; embedding the resulting flood of
+    chunks OOM'd downstream consumers (chunkshop#71). When we're *guessing* from
+    content alone, treat these as not-worth-symbol-parsing and skip them (the
+    caller falls back to sentence_aware, which is bounded by size). Explicit
+    signals — cfg.language / metadata['language'] / a real path — bypass this
+    guard, so a caller can still force such a file through if they mean to.
+    """
+    # Explicit machine-generated markers.
+    if "@generated" in head or "sourceMappingURL" in head:
+        return True
+    # Minified: at least one absurdly long line.
+    return any(len(line) > _GENERATED_MAX_LINE_LEN for line in head.splitlines())
+
 
 def detect_language_from_content(text: str) -> Optional[str]:
     """Best-effort language guess from source content alone.
 
     Returns a chunkshop language tag only on a clear, unambiguous signal across
-    the ten supported languages; prose, config, or a near-tie returns ``None``
-    so the caller falls back rather than mislabelling. Scans a bounded prefix so
-    very large files stay cheap.
+    the ten supported languages; prose, config, a near-tie, or a file that looks
+    generated/minified returns ``None`` so the caller falls back rather than
+    mislabelling or over-parsing. Scans a bounded prefix so very large files stay
+    cheap.
     """
     if not text:
         return None
     head = "\n".join(text.splitlines()[:400])
+
+    if _looks_generated_or_minified(head):
+        return None
 
     stripped = head.lstrip()
     if stripped.startswith("#!"):

@@ -630,6 +630,15 @@ class SymbolAwareChunker(_Base):
     # per-document from a metadata['language'] hint, path-like metadata keys,
     # a path-shaped doc.id, then a content heuristic.
     language: Optional[str] = None
+    # Safety valve (chunkshop#71): cap the number of symbol chunks emitted for a
+    # single document. A generated / minified source can yield thousands of tiny
+    # symbol chunks, OOM-ing a downstream consumer that embeds every chunk. When
+    # a file exceeds the cap, the chunker logs a warning and falls back to
+    # sentence_aware (bounded by max_chars). The default catches pathological
+    # generated files while leaving even very large hand-written files alone
+    # (real source rarely exceeds a few hundred top-level symbols). Raise it for
+    # genuinely huge sources, or set null to disable the cap entirely.
+    max_symbols_per_file: Optional[int] = 2000
 
     @field_validator("language")
     @classmethod
@@ -642,6 +651,13 @@ class SymbolAwareChunker(_Base):
             raise ValueError(
                 f"language must be one of {sorted(KNOWN_LANGUAGES)}, got {v!r}"
             )
+        return v
+
+    @field_validator("max_symbols_per_file")
+    @classmethod
+    def _positive_cap(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 1:
+            raise ValueError(f"max_symbols_per_file must be >= 1 or null, got {v!r}")
         return v
 
     def effective_max_chars(self) -> Optional[int]:
