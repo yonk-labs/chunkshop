@@ -105,8 +105,13 @@ urlencoding = { version = "2", optional = true }
 # --- Shared runtime (gated by source + sink) ---
 tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
 
-# --- Optional callable summarizer integration ---
-lede = { version = "0.3", optional = true }
+# --- Optional lede enrichment integration (summarizer + Tier-1 extractors) ---
+# Path deps: lede 0.5 / lede-enrich 0.1 are unpublished; the `version` is for an
+# eventual crates.io publish, `path` for local dev. `--features lede` therefore
+# requires the `lede` repo checked out as a yonk-tools/ sibling. Default builds
+# don't touch this (feature is opt-in).
+lede        = { version = "0.5", path = "../../../lede/rust",        optional = true }
+lede-enrich = { version = "0.1", path = "../../../lede/lede-enrich", optional = true }
 
 # --- `code-aware-*` features: tree-sitter parsers for SymbolAwareChunker (RM-C) ---
 # Runtime + tags lib are version-locked together (both 0.26.x). Grammar crates
@@ -216,9 +221,11 @@ pipeline = ["chunkers", "embedder", "extractor", "source", "sink"]
 # Matrix evaluator (chunkers x embedders → leaderboard).
 bakeoff = ["pipeline"]
 
-# Enables the `chunkshop.summarizers.lede` callable summarizer module by
-# pulling the `lede` crate from crates.io. Build with: cargo build --features lede
-lede = ["dep:lede"]
+# Enables the `chunkshop.summarizers.lede` callable summarizer AND the
+# lede-backed Tier-1 extractors (lede_top_terms / lede_report / lede_entities)
+# + the `lede` consolidator. Pulls lede + lede-enrich (path deps — see above).
+# Build with: cargo build --features lede
+lede = ["dep:lede", "dep:lede-enrich"]
 
 # Code-aware chunking (RM-C). Each grammar is opt-in to control binary size.
 # See README.md "Code-aware chunking" for the size delta table.
