@@ -156,12 +156,13 @@ fn split_sentences(text: &str) -> Vec<String> {
 
 // --- LedeConsolidator — salient-sentence facts (feature = "lede") -----------
 
-/// `mode: lede`. Selects salient sentences via lede 0.5 `key_facts` and emits
-/// them as facts with empty SVO fields (the lede non-spaCy path produces
-/// sentences, not triples — matching Python's `lede_facts`), `support_span` =
-/// the sentence, and rank-decay `confidence` = round(1 - i/n, 3). Facts below
-/// `confidence_floor` are dropped. `summary` is empty (Python's lede
-/// consolidator only fills it when an optional summarizer slot is configured).
+/// `mode: lede`. Mirrors Python `lede_facts.extract_facts`: summarize the
+/// episode with lede (`max_length=500`, default mode), split the summary into
+/// sentences, and emit each as a fact with empty SVO fields (the lede path
+/// produces sentences, not triples), `support_span` = the sentence, and
+/// rank-decay `confidence` = round(1 - i/n, 3). Facts below `confidence_floor`
+/// are dropped. `summary` is empty (Python's lede consolidator only fills it
+/// when an optional summarizer slot is configured).
 pub struct LedeConsolidator {
     #[allow(dead_code)] // cfg used only under feature = "lede"
     cfg: crate::config::LedeConsolidatorConfig,
@@ -177,7 +178,12 @@ impl Consolidator for LedeConsolidator {
     #[cfg(feature = "lede")]
     fn consolidate(&self, episode: &EpisodeInput<'_>) -> Result<ConsolidationOutput> {
         let cleaned = strip_role_tags(episode.text);
-        let facts_text = lede::extract::key_facts::key_facts(&cleaned, self.cfg.max_facts);
+        // Mirror Python: summarize, then split the summary into sentences.
+        let summary = lede::summarize(&cleaned, 500, lede::Mode::Default).summary;
+        let facts_text: Vec<String> = split_sentences(&summary)
+            .into_iter()
+            .take(self.cfg.max_facts)
+            .collect();
         let n = facts_text.len();
         let facts: Vec<FactTriple> = facts_text
             .into_iter()

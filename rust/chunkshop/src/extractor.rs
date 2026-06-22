@@ -562,9 +562,9 @@ impl ExtractorImpl for LedeTopTermsExtractor {
             });
         }
         let opts = lede::extract::top_terms::TopTermsOptions {
-            n: self.cfg.top_k,
-            words: self.cfg.words,
-            phrases: self.cfg.phrases,
+            n: self.cfg.n,
+            words: self.cfg.kinds.iter().any(|k| k == "words"),
+            phrases: self.cfg.kinds.iter().any(|k| k == "phrases"),
             ..Default::default()
         };
         let scored = lede::extract::top_terms::top_terms_scored(text, &opts);
@@ -851,9 +851,8 @@ mod tests {
     #[test]
     fn lede_top_terms_emits_scored_terms_and_tags() {
         let ex = LedeTopTermsExtractor::new(crate::config::LedeTopTermsExtractorConfig {
-            top_k: 5,
-            words: true,
-            phrases: true,
+            n: 5,
+            kinds: vec!["words".to_string(), "phrases".to_string()],
         });
         let r = ex
             .extract("The quick brown fox. The fox jumps. Foxes are quick animals.")
@@ -873,9 +872,8 @@ mod tests {
     #[test]
     fn lede_top_terms_empty_text_is_empty() {
         let ex = LedeTopTermsExtractor::new(crate::config::LedeTopTermsExtractorConfig {
-            top_k: 5,
-            words: true,
-            phrases: true,
+            n: 5,
+            kinds: vec!["words".to_string(), "phrases".to_string()],
         });
         let r = ex.extract("   ").unwrap();
         assert!(r
@@ -913,6 +911,7 @@ mod tests {
     fn lede_report_emits_subset_shape() {
         let ex = LedeReportExtractor::new(crate::config::LedeReportExtractorConfig {
             max_facts: 5,
+            backend: "regex".to_string(),
             tag_sources: crate::config::default_lede_report_tag_sources(),
         });
         let r = ex

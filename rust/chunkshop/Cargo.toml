@@ -38,6 +38,12 @@ required-features = ["full"]
 name = "fqn-cli"
 path = "src/bin/fqn-cli.rs"
 
+[[example]]
+# Parity harness for the lede-backed extractors + consolidator. Needs the
+# `lede` feature; diffed against scripts/lede_parity.py.
+name = "lede_parity"
+required-features = ["lede"]
+
 [dependencies]
 # --- Always-on core (small, used by the chunker module) ---
 anyhow = "1"
@@ -106,12 +112,10 @@ urlencoding = { version = "2", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
 
 # --- Optional lede enrichment integration (summarizer + Tier-1 extractors) ---
-# Path deps: lede 0.5 / lede-enrich 0.1 are unpublished; the `version` is for an
-# eventual crates.io publish, `path` for local dev. `--features lede` therefore
-# requires the `lede` repo checked out as a yonk-tools/ sibling. Default builds
-# don't touch this (feature is opt-in).
-lede        = { version = "0.5", path = "../../../lede/rust",        optional = true }
-lede-enrich = { version = "0.1", path = "../../../lede/lede-enrich", optional = true }
+# Both crates are published on crates.io (lede 0.5.0, lede-enrich 0.1.0).
+# Pulled only by the `lede` feature; default builds don't touch them.
+lede        = { version = "0.5", optional = true }
+lede-enrich = { version = "0.1", optional = true }
 
 # --- `code-aware-*` features: tree-sitter parsers for SymbolAwareChunker (RM-C) ---
 # Runtime + tags lib are version-locked together (both 0.26.x). Grammar crates

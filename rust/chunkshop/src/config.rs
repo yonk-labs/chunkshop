@@ -178,23 +178,30 @@ pub struct SpacyEntitiesExtractorConfig {
 }
 
 /// `lede_top_terms` — top-N salient words/phrases via lede 0.5 `top_terms_scored`.
+/// Config mirrors Python's `LedeTopTermsExtractor` (`n`, `kinds`) for YAML
+/// portability. `hints`/`hint_focus`/`hint_mode`/`expand` (Python advanced knobs)
+/// are not yet wired in Rust and are ignored if present.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LedeTopTermsExtractorConfig {
-    #[serde(default = "default_top_terms_k")]
-    pub top_k: usize,
-    #[serde(default = "default_true")]
-    pub words: bool,
-    #[serde(default = "default_true")]
-    pub phrases: bool,
+    #[serde(default = "default_top_terms_n")]
+    pub n: usize,
+    #[serde(default = "default_top_terms_kinds")]
+    pub kinds: Vec<String>,
 }
 
 /// `lede_report` — assembled fact/metadata report. Forward-compatible subset of
 /// Python's `readable_report().to_dict()` (no `attributes`/SVO `fact_records` —
-/// lede-rs doesn't expose them). See spec D1.
+/// lede-rs doesn't expose them). See spec D1. Config mirrors Python's
+/// `LedeReportExtractor`; `backend` other than `regex` degrades to the
+/// deterministic regex+gazetteer path in Rust (no spaCy). `max_chars` /
+/// `keep_headings` / `include_toc` (Python readable-report knobs) don't apply to
+/// the Rust subset and are ignored if present.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LedeReportExtractorConfig {
     #[serde(default = "default_lede_report_max_facts")]
     pub max_facts: usize,
+    #[serde(default = "default_lede_report_backend")]
+    pub backend: String,
     #[serde(default = "default_lede_report_tag_sources")]
     pub tag_sources: Vec<String>,
 }
@@ -205,15 +212,22 @@ pub struct LedeReportExtractorConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct LedeEntitiesExtractorConfig {}
 
-fn default_top_terms_k() -> usize {
+fn default_top_terms_n() -> usize {
     10
+}
+fn default_top_terms_kinds() -> Vec<String> {
+    vec!["words".to_string(), "phrases".to_string()]
 }
 fn default_lede_report_max_facts() -> usize {
-    10
+    40
 }
-/// Python default minus `attributes` (not producible in Rust — see spec D1).
+fn default_lede_report_backend() -> String {
+    "regex".to_string()
+}
+/// Matches Python's default verbatim. Rust skips sources it can't produce
+/// (`attributes`, `fact_records`, `spacy_*`) when building tags — see spec D1.
 pub fn default_lede_report_tag_sources() -> Vec<String> {
-    ["key_facts", "dates", "amounts", "entities"]
+    ["attributes", "key_facts", "dates", "amounts", "entities"]
         .iter()
         .map(|s| s.to_string())
         .collect()
