@@ -158,14 +158,16 @@ about.** This is a verification of *utility*, not just parity.
 
 The intended consumer is **pg-raggraph**, which builds a knowledge graph from chunk metadata. Feeding low-precision `entities` (e.g. "Our Team", "The Company", "Launch") into graph nodes is **destructively additive** — node explosion, a "hairball" with weak connectivity. The entity noise isn't just misleading; it degrades the graph.
 
-### Open decision (surfaced, not changed) — should the gazetteer field stay named `entities`?
+### Resolved (option C) — `entities` key kept + `entities_backend` provenance marker
 
-D2 reused the `entities` key for schema uniformity with Python's `spacy_entities`. ABE argues the *quality* gap is large enough that sharing the key is dangerous: a consumer reading `entities` can't tell spaCy-grade NER from gazetteer noise. Options:
-1. **Keep `entities` (current/D2)** — schema-portable; quality varies silently by impl/backend.
-2. **Rename gazetteer output** to `surface_entities` / `detected_terms` (ABE's suggestion) — active defense against misuse; breaks the shared-key portability D2 sought.
-3. **Keep `entities` + add a `entities_backend: "gazetteer"` marker** (synthesis) — portability *and* a signal consumers can branch on.
+D2 reused the `entities` key for schema uniformity with Python's `spacy_entities`. ABE flagged that the *quality* gap is large enough that sharing the key silently is dangerous (a graph builder can't tell spaCy-grade NER from gazetteer noise). **Decision: option C.** `lede_entities` keeps the portable `entities` key **and** emits a sibling marker:
 
-Recommend option 3, but this re-opens a previously-decided design point — **owner's call**.
+```jsonc
+"entities": {"unlabeled": ["Acme Corp","Berlin","CEO Bob Smith"]},
+"entities_backend": "gazetteer"
+```
+
+A consumer branches on `entities_backend`: `"gazetteer"` ⇒ low-precision, filter/down-weight before graphing; **absence ⇒ the high-precision path** (Python `spacy_entities` doesn't mark itself, so missing-marker means trust-as-NER). This preserves shared-key/YAML portability *and* gives the active misuse-defense ABE wanted, without re-opening Python. The marker is scoped to the `lede_entities` extractor (the bare `entities` key, where the collision is); `lede_report.metadata.entities` is left matching Python's report shape since the `lede_report` container is already self-identifying.
 
 ### Layer of responsibility
 

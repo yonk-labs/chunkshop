@@ -15,7 +15,7 @@ Today the Rust crate touches `lede` only through `lede::summarize(text, max_len,
 
 This slice delivers, behind the existing optional `lede` cargo feature:
 
-1. **Dependency bump** — `lede` 0.3 → 0.5 and add `lede-enrich` 0.1 (path deps; see D3).
+1. **Dependency bump** — `lede` 0.3 → 0.5 and add `lede-enrich` 0.1 (version-only registry deps; see D3).
 2. **`lede_top_terms`** extractor — top-N salient words/phrases with scores.
 3. **`lede_report`** extractor — assembled fact/metadata report (subset; see D1).
 4. **`lede_entities`** extractor — deterministic NER via lede-enrich (see D2).
@@ -59,33 +59,28 @@ lede-enrich's `extract_entities()` returns an **unlabeled** `Vec<String>`. Pytho
 **Decision:** a **new, distinct config type `lede_entities`** (opt-in; honest that the engine differs from spaCy), whose output writes the **shared `entities` metadata key** as a uniform dict with a single bucket:
 
 ```jsonc
-// config: { type: lede_entities }   ->   metadata key: "entities"
-{ "unlabeled": ["Acme Corp", "Bob Smith", "Berlin"] }   // dict[str, list[str]], schema-uniform with Python
+// config: { type: lede_entities }   ->   metadata keys:
+"entities": { "unlabeled": ["Acme Corp", "Bob Smith", "Berlin"] },  // dict[str, list[str]], schema-uniform with Python
+"entities_backend": "gazetteer"                                     // provenance marker — see addendum
 ```
+
+**Addendum (option C, after output-quality verification):** adversarial probes showed the gazetteer is low-precision (false positives on capitalized common nouns). To stop a consumer from treating it as spaCy-grade NER under the shared `entities` key, `lede_entities` also emits `entities_backend: "gazetteer"`. A consumer branches on it (`"gazetteer"` ⇒ low-precision; absence ⇒ high-precision, since Python `spacy_entities` doesn't self-mark). Scoped to `lede_entities`; `lede_report.metadata.entities` keeps the Python report shape. See `rust/docs/lede-parity-2026-06-22.md` and lede#12.
 
 Why not a flat-list `lede_entities` key (host's first instinct): the reviewer's "split-brain schema" argument — a separate flat-list key forces every downstream consumer to branch on two shapes/locations. Keeping `entities` a `dict[str, list[str]]` means one code path (`for label, mentions in entities.items()`), matching Python's *type* while diverging only on *content* (one `unlabeled` bucket vs spaCy labels) — the same documented content-divergence precedent as `rake_keywords`/`lang_detect`. Query-by-specific-label (`entities["PERSON"]`) degrades on the Rust path; that is inherent to label-free NER and is documented, not designed around. The config type stays `lede_entities` (not a silent `spacy_entities` swap) so users explicitly opt into the weaker engine.
 
-### D3 — version+path hybrid deps, feature-gated
+### D3 — version-only registry deps, feature-gated
 
-`lede` 0.5.0 and `lede-enrich` 0.1.0 are **unpublished** (crates.io serves only `lede` 0.3.0; Cargo.lock confirms the current dep resolves there). The 0.5 API is only available locally.
-
-**Decision:** version+path hybrid, both optional, folded into the existing `lede` feature:
+`lede` 0.5.0 and `lede-enrich` 0.1.0 are both **published on crates.io** (lede: 0.3.0 → 0.5.0; lede-enrich: 0.1.0). So the bump is the simplest possible thing — version-only deps, both optional, folded into the existing `lede` feature:
 
 ```toml
-lede        = { version = "0.5", path = "../../../lede/rust",        optional = true }
-lede-enrich = { version = "0.1", path = "../../../lede/lede-enrich", optional = true }
+lede        = { version = "0.5", optional = true }
+lede-enrich = { version = "0.1", optional = true }
 # feature: lede = ["dep:lede", "dep:lede-enrich"]
 ```
 
-This is exactly the pattern `lede-enrich` itself uses to consume `lede` (`version` for an eventual crates.io publish, `path` for local dev). The relative path resolves identically from the main checkout and any `yonk-tools/`-sibling worktree.
+No path deps, no sibling-checkout requirement, no CI/publish impact: registry resolution works exactly as the prior `lede = "0.3"` dep did. Default builds don't pull either crate (opt-in feature); `--features lede` downloads both from crates.io.
 
-**Consequence (corrected after empirical verification — this is a MERGE BLOCKER, not just a feature cost):** a `path` dependency must exist at **resolution** time even when it is `optional` and its feature is **off** — Cargo reads every path-dep's `Cargo.toml` to build the resolve graph. `--locked` does not change this. Verified: with the sibling `lede` repo moved aside, `cargo test --lib --locked` (default features, no `lede`) fails with `failed to read .../lede/rust/Cargo.toml`. The original `lede = "0.3"` did **not** have this problem because 0.3.0 is a *published* registry crate, resolvable from the index with no local checkout.
-
-Therefore this branch, as committed, **breaks the default CI build** (`release.yml` checks out only `chunkshop`, not the sibling). `cargo package` happens to pass (its verify build uses the version-stripped manifest with default features), but `cargo test --workspace --lib --locked` and `cargo publish` do not.
-
-**There is no committable dependency form that both compiles the `--features lede` code and passes sibling-less CI until lede 0.5 + lede-enrich 0.1 are published to crates.io.** Path form requires the sibling; version-only form (`lede = "0.5"`) fails to resolve against a registry that only has 0.3.0. The path form is correct for **local development** (a developer with the sibling gets a green `--features lede` build + 412 passing tests), and is what this branch carries so the work is reviewable and testable.
-
-**Remediation before merge:** publish `lede` 0.5 + `lede-enrich` 0.1 to crates.io, then switch the deps to **version-only** (drop `path`): `lede = { version = "0.5", optional = true }`, `lede-enrich = { version = "0.1", optional = true }`. That restores the pre-existing CI/release behavior (registry resolution, no sibling needed, publishable). Until then the branch stays a draft.
+> History note: an earlier revision of this spec wrongly recorded these crates as unpublished and proposed a version+path hybrid with a "merge blocker." That was a tooling error — the crates.io API was queried without a `User-Agent` header and returned an error that was misread as "no versions." Corrected here. The general Cargo fact that surfaced (an `optional` `path` dependency must still exist at resolution time even when its feature is off) is true but moot, since no path dep is used.
 
 ## Per-feature contracts
 
@@ -112,7 +107,7 @@ Follow the existing `summarizer.rs` lede pattern: struct + impl blocks under `#[
 
 ## Testing strategy
 
-TDD per the superpowers workflow; tests gated `#[cfg(feature = "lede")]`, run with `cargo test --features lede` (requires the sibling lede repo — D3).
+TDD per the superpowers workflow; tests gated `#[cfg(feature = "lede")]`, run with `cargo test --features lede` (downloads `lede`/`lede-enrich` from crates.io — D3).
 
 - **Per extractor:** a fixture-text unit test asserting (a) the exact metadata key, (b) value *shape* (top_terms entries have `term/score/kind`; `lede_report` has `key_facts` + nested `metadata`; `entities` is a dict with an `unlabeled` list), (c) tags, (d) empty-input → empty/typed-empty result (mirror `lang_detect`'s empty-text guard).
 - **Consolidator:** assert facts carry empty SVO strings, `support_span = Some`, descending rank-decay confidence, and `confidence_floor` filtering.

@@ -615,6 +615,16 @@ impl ExtractorImpl for LedeEntitiesExtractor {
         dict.insert("unlabeled".to_string(), Value::Array(bucket));
         let mut metadata = serde_json::Map::new();
         metadata.insert("entities".to_string(), Value::Object(dict));
+        // Provenance marker (option C): the `entities` key is shared with the
+        // Python `spacy_entities` extractor (high-precision NER), but this is
+        // lede-enrich's gazetteer (low precision — capitalized-noun-phrase
+        // recall, not trained NER). A consumer keying on entities (e.g. a graph
+        // builder) can branch on this to avoid ingesting gazetteer noise as
+        // spaCy-grade entities. Absence of the marker ⇒ the high-precision path.
+        metadata.insert(
+            "entities_backend".to_string(),
+            Value::String("gazetteer".to_string()),
+        );
         Ok(ExtractResult {
             tags: vec![],
             metadata,
@@ -895,6 +905,11 @@ mod tests {
         let bucket = ents.get("unlabeled").unwrap().as_array().unwrap();
         assert!(!bucket.is_empty());
         assert!(r.tags.is_empty());
+        // option C: provenance marker so consumers can tell gazetteer from spaCy.
+        assert_eq!(
+            r.metadata.get("entities_backend").unwrap().as_str().unwrap(),
+            "gazetteer"
+        );
     }
 
     #[cfg(feature = "lede")]
@@ -904,6 +919,11 @@ mod tests {
         let r = ex.extract("").unwrap();
         let ents = r.metadata.get("entities").unwrap().as_object().unwrap();
         assert!(ents.get("unlabeled").unwrap().as_array().unwrap().is_empty());
+        // marker present even on empty input.
+        assert_eq!(
+            r.metadata.get("entities_backend").unwrap().as_str().unwrap(),
+            "gazetteer"
+        );
     }
 
     #[cfg(feature = "lede")]
