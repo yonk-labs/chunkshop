@@ -71,6 +71,9 @@ fn extractor_type_label(e: &ExtractorConfig) -> &'static str {
         ExtractorConfig::LangDetect(_) => "lang_detect",
         ExtractorConfig::KeybertPhrases(_) => "keybert_phrases",
         ExtractorConfig::SpacyEntities(_) => "spacy_entities",
+        ExtractorConfig::LedeTopTerms(_) => "lede_top_terms",
+        ExtractorConfig::LedeReport(_) => "lede_report",
+        ExtractorConfig::LedeEntities(_) => "lede_entities",
     }
 }
 

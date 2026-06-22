@@ -58,6 +58,36 @@ pub fn build_extractor(cfg: ExtractorConfig) -> Result<Box<dyn ExtractorImpl>> {
                  in Rust). Run this YAML on Python or substitute another extractor."
             ))
         }
+        #[cfg(feature = "lede")]
+        ExtractorConfig::LedeTopTerms(c) => Ok(Box::new(LedeTopTermsExtractor::new(c))),
+        #[cfg(not(feature = "lede"))]
+        ExtractorConfig::LedeTopTerms(c) => {
+            let _ = c;
+            Err(anyhow!(
+                "lede_top_terms extractor is gated behind the `lede` cargo feature; \
+                 build with --features lede or run this YAML on Python."
+            ))
+        }
+        #[cfg(feature = "lede")]
+        ExtractorConfig::LedeReport(c) => Ok(Box::new(LedeReportExtractor::new(c))),
+        #[cfg(not(feature = "lede"))]
+        ExtractorConfig::LedeReport(c) => {
+            let _ = c;
+            Err(anyhow!(
+                "lede_report extractor is gated behind the `lede` cargo feature; \
+                 build with --features lede or run this YAML on Python."
+            ))
+        }
+        #[cfg(feature = "lede")]
+        ExtractorConfig::LedeEntities(c) => Ok(Box::new(LedeEntitiesExtractor::new(c))),
+        #[cfg(not(feature = "lede"))]
+        ExtractorConfig::LedeEntities(c) => {
+            let _ = c;
+            Err(anyhow!(
+                "lede_entities extractor is gated behind the `lede` cargo feature; \
+                 build with --features lede or run this YAML on Python."
+            ))
+        }
     }
 }
 
@@ -504,6 +534,161 @@ fn lang_to_iso639_1(lang: whatlang::Lang) -> Option<&'static str> {
     })
 }
 
+// --- lede-backed extractors (feature = "lede") ------------------------------
+
+/// `lede_top_terms` — top-N salient words/phrases with scores, via lede 0.5.
+/// Writes metadata `top_terms` = `[{term, score, kind}]`; tags = `[term]`.
+#[cfg(feature = "lede")]
+pub struct LedeTopTermsExtractor {
+    cfg: crate::config::LedeTopTermsExtractorConfig,
+}
+
+#[cfg(feature = "lede")]
+impl LedeTopTermsExtractor {
+    pub fn new(cfg: crate::config::LedeTopTermsExtractorConfig) -> Self {
+        Self { cfg }
+    }
+}
+
+#[cfg(feature = "lede")]
+impl ExtractorImpl for LedeTopTermsExtractor {
+    fn extract(&self, text: &str) -> Result<ExtractResult> {
+        let mut metadata = serde_json::Map::new();
+        if text.trim().is_empty() {
+            metadata.insert("top_terms".to_string(), Value::Array(vec![]));
+            return Ok(ExtractResult {
+                tags: vec![],
+                metadata,
+            });
+        }
+        let opts = lede::extract::top_terms::TopTermsOptions {
+            n: self.cfg.top_k,
+            words: self.cfg.words,
+            phrases: self.cfg.phrases,
+            ..Default::default()
+        };
+        let scored = lede::extract::top_terms::top_terms_scored(text, &opts);
+        let mut tags = Vec::with_capacity(scored.len());
+        let arr: Vec<Value> = scored
+            .iter()
+            .map(|t| {
+                tags.push(t.term.clone());
+                let mut o = serde_json::Map::new();
+                o.insert("term".to_string(), Value::String(t.term.clone()));
+                o.insert(
+                    "score".to_string(),
+                    serde_json::Number::from_f64(t.score)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null),
+                );
+                o.insert("kind".to_string(), Value::String(t.kind.clone()));
+                Value::Object(o)
+            })
+            .collect();
+        metadata.insert("top_terms".to_string(), Value::Array(arr));
+        Ok(ExtractResult { tags, metadata })
+    }
+}
+
+/// `lede_entities` — deterministic gazetteer NER via lede-enrich. Writes the
+/// shared `entities` key as `{"unlabeled": [surface_forms]}` (see spec D2).
+#[cfg(feature = "lede")]
+pub struct LedeEntitiesExtractor;
+
+#[cfg(feature = "lede")]
+impl LedeEntitiesExtractor {
+    pub fn new(_cfg: crate::config::LedeEntitiesExtractorConfig) -> Self {
+        Self
+    }
+}
+
+#[cfg(feature = "lede")]
+impl ExtractorImpl for LedeEntitiesExtractor {
+    fn extract(&self, text: &str) -> Result<ExtractResult> {
+        let ents = if text.trim().is_empty() {
+            vec![]
+        } else {
+            lede_enrich::extract_entities(text)
+        };
+        let bucket: Vec<Value> = ents.into_iter().map(Value::String).collect();
+        let mut dict = serde_json::Map::new();
+        dict.insert("unlabeled".to_string(), Value::Array(bucket));
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("entities".to_string(), Value::Object(dict));
+        Ok(ExtractResult {
+            tags: vec![],
+            metadata,
+        })
+    }
+}
+
+/// `lede_report` — forward-compatible subset of Python's `readable_report`.
+/// Assembles `{key_facts, metadata:{dates,amounts,urls,entities}}` from the
+/// lede pieces lede-rs exposes; omits `attributes`/SVO `fact_records` (see D1).
+#[cfg(feature = "lede")]
+pub struct LedeReportExtractor {
+    cfg: crate::config::LedeReportExtractorConfig,
+}
+
+#[cfg(feature = "lede")]
+impl LedeReportExtractor {
+    pub fn new(cfg: crate::config::LedeReportExtractorConfig) -> Self {
+        Self { cfg }
+    }
+}
+
+#[cfg(feature = "lede")]
+fn str_array(v: &[String]) -> Value {
+    Value::Array(v.iter().cloned().map(Value::String).collect())
+}
+
+#[cfg(feature = "lede")]
+impl ExtractorImpl for LedeReportExtractor {
+    fn extract(&self, text: &str) -> Result<ExtractResult> {
+        let mut report = serde_json::Map::new();
+        if text.trim().is_empty() {
+            report.insert("key_facts".to_string(), Value::Array(vec![]));
+            let mut m = serde_json::Map::new();
+            for k in ["dates", "amounts", "urls", "entities"] {
+                m.insert(k.to_string(), Value::Array(vec![]));
+            }
+            report.insert("metadata".to_string(), Value::Object(m));
+            let mut metadata = serde_json::Map::new();
+            metadata.insert("lede_report".to_string(), Value::Object(report));
+            return Ok(ExtractResult {
+                tags: vec![],
+                metadata,
+            });
+        }
+        let key_facts = lede::extract::key_facts::key_facts(text, self.cfg.max_facts);
+        let md = lede_enrich::metadata(text); // entities filled by gazetteer
+        report.insert("key_facts".to_string(), str_array(&key_facts));
+        let mut m = serde_json::Map::new();
+        m.insert("dates".to_string(), str_array(&md.dates));
+        m.insert("amounts".to_string(), str_array(&md.amounts));
+        m.insert("urls".to_string(), str_array(&md.urls));
+        m.insert("entities".to_string(), str_array(&md.entities));
+        report.insert("metadata".to_string(), Value::Object(m));
+
+        // Tags: flatten the producible sources named in tag_sources. Unknown or
+        // Python-only sources (e.g. `attributes`) are silently skipped.
+        let mut tags = Vec::new();
+        for src in &self.cfg.tag_sources {
+            match src.as_str() {
+                "key_facts" => tags.extend(key_facts.iter().cloned()),
+                "dates" => tags.extend(md.dates.iter().cloned()),
+                "amounts" => tags.extend(md.amounts.iter().cloned()),
+                "entities" => tags.extend(md.entities.iter().cloned()),
+                "urls" => tags.extend(md.urls.iter().cloned()),
+                _ => {}
+            }
+        }
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("lede_report".to_string(), Value::Object(report));
+        Ok(ExtractResult { tags, metadata })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,5 +845,85 @@ mod tests {
             Err(e) => e.to_string(),
         };
         assert!(err.contains("Python-only"));
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn lede_top_terms_emits_scored_terms_and_tags() {
+        let ex = LedeTopTermsExtractor::new(crate::config::LedeTopTermsExtractorConfig {
+            top_k: 5,
+            words: true,
+            phrases: true,
+        });
+        let r = ex
+            .extract("The quick brown fox. The fox jumps. Foxes are quick animals.")
+            .unwrap();
+        let tt = r.metadata.get("top_terms").unwrap().as_array().unwrap();
+        assert!(!tt.is_empty());
+        let first = tt[0].as_object().unwrap();
+        assert!(
+            first.contains_key("term")
+                && first.contains_key("score")
+                && first.contains_key("kind")
+        );
+        assert_eq!(r.tags.len(), tt.len()); // one tag per term, same order
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn lede_top_terms_empty_text_is_empty() {
+        let ex = LedeTopTermsExtractor::new(crate::config::LedeTopTermsExtractorConfig {
+            top_k: 5,
+            words: true,
+            phrases: true,
+        });
+        let r = ex.extract("   ").unwrap();
+        assert!(r
+            .metadata
+            .get("top_terms")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(r.tags.is_empty());
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn lede_entities_emits_unlabeled_bucket_dict() {
+        let ex = LedeEntitiesExtractor::new(crate::config::LedeEntitiesExtractorConfig {});
+        let r = ex.extract("Acme Corp hired Bob Smith in Berlin.").unwrap();
+        let ents = r.metadata.get("entities").unwrap().as_object().unwrap();
+        let bucket = ents.get("unlabeled").unwrap().as_array().unwrap();
+        assert!(!bucket.is_empty());
+        assert!(r.tags.is_empty());
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn lede_entities_empty_text_empty_dict() {
+        let ex = LedeEntitiesExtractor::new(crate::config::LedeEntitiesExtractorConfig {});
+        let r = ex.extract("").unwrap();
+        let ents = r.metadata.get("entities").unwrap().as_object().unwrap();
+        assert!(ents.get("unlabeled").unwrap().as_array().unwrap().is_empty());
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn lede_report_emits_subset_shape() {
+        let ex = LedeReportExtractor::new(crate::config::LedeReportExtractorConfig {
+            max_facts: 5,
+            tag_sources: crate::config::default_lede_report_tag_sources(),
+        });
+        let r = ex
+            .extract("Acme raised $5M on 2023-01-02. Acme grew fast. See https://acme.test.")
+            .unwrap();
+        let rep = r.metadata.get("lede_report").unwrap().as_object().unwrap();
+        assert!(rep.get("key_facts").unwrap().is_array());
+        let meta = rep.get("metadata").unwrap().as_object().unwrap();
+        for k in ["dates", "amounts", "urls", "entities"] {
+            assert!(meta.get(k).unwrap().is_array(), "missing {k}");
+        }
+        assert!(rep.get("attributes").is_none()); // omitted subset
     }
 }

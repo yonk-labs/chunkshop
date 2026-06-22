@@ -125,6 +125,9 @@ pub enum ExtractorConfig {
     LangDetect(LangDetectExtractorConfig),
     KeybertPhrases(KeybertPhrasesExtractorConfig),
     SpacyEntities(SpacyEntitiesExtractorConfig),
+    LedeTopTerms(LedeTopTermsExtractorConfig),
+    LedeReport(LedeReportExtractorConfig),
+    LedeEntities(LedeEntitiesExtractorConfig),
 }
 
 impl Default for ExtractorConfig {
@@ -172,6 +175,48 @@ pub struct SpacyEntitiesExtractorConfig {
     pub model: String,
     #[serde(default = "default_spacy_whitelist")]
     pub label_whitelist: Vec<String>,
+}
+
+/// `lede_top_terms` — top-N salient words/phrases via lede 0.5 `top_terms_scored`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LedeTopTermsExtractorConfig {
+    #[serde(default = "default_top_terms_k")]
+    pub top_k: usize,
+    #[serde(default = "default_true")]
+    pub words: bool,
+    #[serde(default = "default_true")]
+    pub phrases: bool,
+}
+
+/// `lede_report` — assembled fact/metadata report. Forward-compatible subset of
+/// Python's `readable_report().to_dict()` (no `attributes`/SVO `fact_records` —
+/// lede-rs doesn't expose them). See spec D1.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LedeReportExtractorConfig {
+    #[serde(default = "default_lede_report_max_facts")]
+    pub max_facts: usize,
+    #[serde(default = "default_lede_report_tag_sources")]
+    pub tag_sources: Vec<String>,
+}
+
+/// `lede_entities` — deterministic gazetteer NER via lede-enrich. Writes the
+/// shared `entities` key as `{"unlabeled": [...]}` (schema-uniform with Python's
+/// labeled dict, content-divergent). See spec D2.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LedeEntitiesExtractorConfig {}
+
+fn default_top_terms_k() -> usize {
+    10
+}
+fn default_lede_report_max_facts() -> usize {
+    10
+}
+/// Python default minus `attributes` (not producible in Rust — see spec D1).
+pub fn default_lede_report_tag_sources() -> Vec<String> {
+    ["key_facts", "dates", "amounts", "entities"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn default_rake_top_k() -> usize {
