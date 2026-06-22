@@ -249,7 +249,7 @@ wheels = [
 
 [[package]]
 name = "chunkshop"
-version = "0.8.1"
+version = "0.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -371,8 +371,8 @@ requires-dist = [
     { name = "keybert", marker = "extra == 'nlp'", specifier = ">=0.8" },
     { name = "langdetect", marker = "extra == 'lang'", specifier = ">=1.0.9" },
     { name = "langdetect", marker = "extra == 'nlp'", specifier = ">=1.0.9" },
-    { name = "lede", marker = "extra == 'lede'", specifier = ">=0.4.5" },
-    { name = "lede-spacy", marker = "extra == 'lede-spacy'", specifier = ">=0.4.5" },
+    { name = "lede", marker = "extra == 'lede'", specifier = ">=0.5.0" },
+    { name = "lede-spacy", marker = "extra == 'lede-spacy'", specifier = ">=0.5.0" },
     { name = "nltk", marker = "extra == 'extractors'", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "onnx", marker = "extra == 'dev'", specifier = ">=1.14" },
@@ -845,24 +845,24 @@ sdist = { url = "https://files.pythonhosted.org/packages/0e/72/a3add0e4eec4eb9e2
 
 [[package]]
 name = "lede"
-version = "0.4.5"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/69/3b/bba402ccb5ebc767e5551b7350ee7e5f35d38939ce5b1a7386f8d95e131f/lede-0.4.5.tar.gz", hash = "sha256:b2dfb93a5dd57c38cd323afb0cfc5fa99df9c0f942f46b8080caa618ecebd2f2", size = 152963, upload-time = "2026-05-23T22:01:59.413Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/d3/f7c8858f889010828b91c5b75c01d279fa8ee40a0b5591f42e61d51a8cda/lede-0.5.0.tar.gz", hash = "sha256:6f8ee3ab0d70a8eb4fcc6b98ecf38f12dc795933c853b908f81889fd2fe32c4a", size = 154461, upload-time = "2026-06-22T19:54:51.956Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/f9/688b9a7e1ba2d25fe35a14887f735452518681227eb4281207c9225277ba/lede-0.4.5-py3-none-any.whl", hash = "sha256:2ed64c7d2d1112efb9c8cd86a5702ac10e3ce9b0d48dde03c84deb5c64c59614", size = 83152, upload-time = "2026-05-23T22:01:57.813Z" },
+    { url = "https://files.pythonhosted.org/packages/36/36/af3177be8af54dc91a8731d10a4c1493c2aeb7b8759bcbe768c49e3132e0/lede-0.5.0-py3-none-any.whl", hash = "sha256:e3b71468c5cbdbc742e74fb20b706b1ef8a49304ec95b5d6e584ec372a47c478", size = 83317, upload-time = "2026-06-22T19:54:50.449Z" },
 ]
 
 [[package]]
 name = "lede-spacy"
-version = "0.4.5"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "lede" },
     { name = "spacy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/71/a8/f9b36b1c6d6c5de8abb93b12b06f606bf5a0a2cc2bb518390ac03b4e328d/lede_spacy-0.4.5.tar.gz", hash = "sha256:0126dc77782c59f0af190af40ddf8fe02465037fb6f1bdfd6958c1d69a4fe20c", size = 21915, upload-time = "2026-05-23T22:01:57.283Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/96/895588c3d973dc14e908663104335e840c86312cd75e3b35907442d67a01/lede_spacy-0.5.0.tar.gz", hash = "sha256:90a977faf5d18010be449cf40df7d1382d5f22dd4eb78ccdf6fe2b78b9de6012", size = 21922, upload-time = "2026-06-22T19:54:49.698Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/43/f917ac17320ab61fe358f6adf1f1d1bb2eb4a24c6c320e9a9e2dd7f34e76/lede_spacy-0.4.5-py3-none-any.whl", hash = "sha256:8d1d37ef8a1749f432baff0585c673ec1eaacd13ec86be03bc9751402a9c6b6a", size = 21761, upload-time = "2026-05-23T22:01:55.763Z" },
+    { url = "https://files.pythonhosted.org/packages/37/7d/47d9873ef53744fcfe069f4d731d687a22f45eb76fb4e919d5a922a3da27/lede_spacy-0.5.0-py3-none-any.whl", hash = "sha256:37a64ef87fb9d87f4e23380aec95bddb5dc7360cf5e42f7fb524d52f80b1f360", size = 21760, upload-time = "2026-06-22T19:54:48.31Z" },
 ]
 
 [[package]]
