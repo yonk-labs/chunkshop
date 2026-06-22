@@ -76,9 +76,9 @@ The first run downloads the embedder model to fastembed's cache (~500 MB for
 |-----------|----------------------------------------------------------------|
 | source    | `files`, `json_corpus`, `pg_table` (+ tuple cursor `(updated_at, id::text)` for boundary-row safety when `updated_at_column` is set — RM-B), `http` (+ `crawl_depth`, `allow_external`, `request_delay_seconds`, `respect_robots`, `max_pages`, `user_agent`; conditional GETs via `If-None-Match` / `If-Modified-Since`; cursor `{url: {etag, last_modified}}` — RM-B), `s3` (bucket + prefix + optional `endpoint_url` for minio / R2; via the `object_store` crate; standard AWS credential chain; ETag-keyed `IncrementalSource` cursor — RM-B) — **5/5 sources ship in Rust**. All cursor-capable sources implement the SP-1 `IncrementalSource` trait. |
 | framer    | `identity` (default 1-to-1 pass-through), `heading_boundary` (split markdown on a configurable heading regex with preamble + title-from-heading), `regex_boundary` (split on arbitrary regex; optional title-pattern capture), `jsonpath` (parse content as JSON, walk dotted path with `*` for list iteration; configurable body/title sub-paths) — all byte-identical to Python |
-| chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`, `summary_embed`, `hierarchical_summary` (all byte-identical to Python), `semantic` (algorithm-parity; chunks NOT byte-identical due to MB-1's ~1e-3 ORT drift) — **all 6 Python chunkers ship in Rust**. Summarizer dispatch supports `passthrough` + `external` natively; `callable` mode recognizes `chunkshop.summarizers.passthrough` always, and `chunkshop.summarizers.lede` behind the `lede` cargo feature (`cargo build --features lede` pulls `lede` from crates.io). |
+| chunker   | `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`, `summary_embed`, `hierarchical_summary` (all byte-identical to Python), `semantic` (algorithm-parity; chunks NOT byte-identical due to MB-1's ~1e-3 ORT drift) — **all 6 Python chunkers ship in Rust**. Summarizer dispatch supports `passthrough` + `external` natively; `callable` mode recognizes `chunkshop.summarizers.passthrough` always, and `chunkshop.summarizers.lede` behind the `lede` cargo feature. `--features lede` pulls `lede` 0.5 + `lede-enrich` 0.1 as **path deps** to the `yonk-tools/`-sibling `lede` repo (both crates are unpublished), so it requires that checkout; default builds are unaffected. |
 | embedder  | `fastembed` (maps model_name to fastembed-rs variant; see below) |
-| extractor | `none` (default), `composite`, `rake_keywords` (hand-rolled RAKE + 150-word EN stopword list — algorithm-only parity), `lang_detect` (via `whatlang` crate, ISO 639-3 → 639-1 conversion — algorithm-only parity), `keybert_phrases` + `spacy_entities` (Python-only stubs that error at config-load) |
+| extractor | `none` (default), `composite`, `rake_keywords` (hand-rolled RAKE + 150-word EN stopword list — algorithm-only parity), `lang_detect` (via `whatlang` crate, ISO 639-3 → 639-1 conversion — algorithm-only parity), and behind the `lede` feature: `lede_top_terms` (lede 0.5 `top_terms_scored` — byte-identical term selection; metadata `top_terms`), `lede_report` (forward-compatible **subset** of Python's `readable_report` — `key_facts` + `metadata.{dates,amounts,urls,entities}`; omits `attributes`/SVO `fact_records` which lede-rs doesn't expose), `lede_entities` (lede-enrich gazetteer NER → shared `entities` key as `{"unlabeled": [...]}` — schema-uniform with Python's labeled dict, content-divergent); `keybert_phrases` + `spacy_entities` (Python-only stubs that error at config-load) |
 | target    | Postgres, MariaDB, SQLite, and ClickHouse chunk tables; modes `overwrite` / `append` / `create_if_missing`; `force_overwrite`; `source_tag` write-once where the backend supports upsert; `promote_metadata`; HNSW/index knobs where backend-native |
 | raw_store | `local` (filesystem; SHA-256-hashed `<root>/<hash>/{blob, meta.json}` layout — path-traversal-safe; byte-identical to Python's `LocalRawStore`) and `s3` (object_store-backed, S3-compatible endpoints; fingerprint in S3 object metadata; `S3RawStore::with_store` test seam for `InMemory` injection) — RM-B Task 5 |
 
@@ -123,9 +123,11 @@ to ingest successfully while silently omitting the companion document rows.
 
 - Extractors `keybert_phrases` and `spacy_entities` — Python-only. Build-time
   error directs users back to Python or to a custom Rust binary that
-  registers their own NER / embedding-keyphrase pipeline. The other four
-  extractor variants (`none`, `composite`, `rake_keywords`, `lang_detect`)
-  ship.
+  registers their own NER / embedding-keyphrase pipeline. For NER, the
+  `lede_entities` extractor (behind `--features lede`) is the deterministic,
+  license-clean Rust alternative — gazetteer-based rather than spaCy, so it
+  writes the shared `entities` key with a single `unlabeled` bucket instead of
+  spaCy's per-label dict.
 
 YAML configs from the Python side are **accepted** (unknown fields on
 `runtime`/`framer`/`extractor` are ignored) — but obviously the ignored stages
