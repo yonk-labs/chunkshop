@@ -14,10 +14,17 @@ const TEXT: &str = "Acme Corp raised $5 million in 2023. The company hired 40 en
 and opened a Berlin office on 2024-01-15. Revenue increased 300 percent. \
 CEO Bob Smith said growth would continue.";
 
+fn input_text() -> String {
+    // Optional argv override for ad-hoc probing; defaults to TEXT for the
+    // reproducible parity run.
+    std::env::args().nth(1).unwrap_or_else(|| TEXT.to_string())
+}
+
 fn run_extractor(name: &str, cfg_json: &str) {
+    let text = input_text();
     let cfg: ExtractorConfig = serde_json::from_str(cfg_json).expect("config parse");
     let ex = build_extractor(cfg).expect("build extractor");
-    let r = ex.extract(TEXT).expect("extract");
+    let r = ex.extract(&text).expect("extract");
     let out = serde_json::json!({
         "impl": "rust",
         "feature": name,

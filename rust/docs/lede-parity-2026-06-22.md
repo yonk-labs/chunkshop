@@ -132,6 +132,49 @@ lede branch. Tracked as a follow-up.
 
 ---
 
+## Output-quality verification (adversarial probes) — are the entities/facts *real*?
+
+Ran the gazetteer NER + fact/amount extraction through deliberately hostile
+inputs (lede 0.5.0 both sides). Reviewed with ABE (`validate`, reviewer
+`gemma`). **The port is faithful — it accurately mirrors what lede-enrich
+returns — but the upstream extraction has real gotchas a consumer must know
+about.** This is a verification of *utility*, not just parity.
+
+| Probe | Rust gazetteer (`lede_entities` / report) | Python spaCy | Reading |
+|---|---|---|---|
+| "The Company released a new Product. Our Team celebrated the Launch in Spring." | `[Company, Product, Our Team, Launch, Spring]` | `{DATE:[Spring]}` | **False-positive storm.** Gazetteer tags ~any Title-Case token + captures the possessive "Our". spaCy rejects all but Spring. |
+| "Dr. Jane Doe met CEO Bob Smith and President Lincoln in Washington." | `[Jane Doe, CEO Bob Smith, Lincoln, Washington]` | `{PERSON:[Jane Doe, Bob Smith, Lincoln], GPE:[Washington]}` | **Inconsistent titles**: Dr./President stripped, "CEO" kept; no labels. |
+| "We raised $5 million, spent EUR 2.3 billion, sold 1,000 units at 3.5% on 2024-01-15." | amounts `[$5]`, entities `[EUR]` | amounts `[$5]` | **Amount truncation** (`$5 million`→`$5`), shared with Python (lede core); EUR/billion/1,000/% missed; "EUR" mis-tagged as entity (Rust). |
+| "the quick brown fox jumps over the lazy dog." | `[]` | (n/a) | Correct — but capitalization-dependent, so lowercase entities ("amazon") are **missed**. |
+| "Acme grew. Acme grew again. Acme is Acme." | `[Acme]` | (n/a) | Correct dedup + first-appearance order. |
+
+### What's trustworthy vs not
+
+- ✅ **`lede_top_terms`, consolidator facts, dedup, empty-input** — real and reliable.
+- ⚠️ **`entities` (gazetteer path, used by `lede_entities` AND `lede_report.metadata.entities`)** — low precision. It is effectively a **capitalized-noun-phrase extractor**, not spaCy-grade NER. Treating it as named entities feeds noise downstream.
+- ⚠️ **Amounts** — lossy in *both* implementations (truncated, currency-unit-dropping). Per ABE, this is a **functional deficiency** for extraction, not a low-priority cosmetic issue — "shared with Python" doesn't make it acceptable.
+
+### Downstream risk (ABE's headline)
+
+The intended consumer is **pg-raggraph**, which builds a knowledge graph from chunk metadata. Feeding low-precision `entities` (e.g. "Our Team", "The Company", "Launch") into graph nodes is **destructively additive** — node explosion, a "hairball" with weak connectivity. The entity noise isn't just misleading; it degrades the graph.
+
+### Open decision (surfaced, not changed) — should the gazetteer field stay named `entities`?
+
+D2 reused the `entities` key for schema uniformity with Python's `spacy_entities`. ABE argues the *quality* gap is large enough that sharing the key is dangerous: a consumer reading `entities` can't tell spaCy-grade NER from gazetteer noise. Options:
+1. **Keep `entities` (current/D2)** — schema-portable; quality varies silently by impl/backend.
+2. **Rename gazetteer output** to `surface_entities` / `detected_terms` (ABE's suggestion) — active defense against misuse; breaks the shared-key portability D2 sought.
+3. **Keep `entities` + add a `entities_backend: "gazetteer"` marker** (synthesis) — portability *and* a signal consumers can branch on.
+
+Recommend option 3, but this re-opens a previously-decided design point — **owner's call**.
+
+### Layer of responsibility
+
+The chunkshop Rust wrapper is correct: it faithfully passes through lede-enrich's output. The precision/truncation issues live in **lede-enrich / lede core**, not the port — so the fixes are (a) upstream tickets and (b) honest docs here, **not** patching NLP heuristics in chunkshop's wrapper. Upstream tickets filed: see lede repo (gazetteer precision; amount truncation; stats/fact_records exposure).
+
+### Caveat on coverage
+
+Probes were English short texts. Long documents, non-English, and source-code inputs were not exercised — entity/amount behavior there is unverified.
+
 ## Summary
 
 - **Works in both, identical:** `lede_top_terms`, `consolidator: mode: lede`.

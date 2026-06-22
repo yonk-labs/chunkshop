@@ -20,6 +20,13 @@ TEXT = (
 )
 
 
+import sys
+
+# Optional argv override for ad-hoc probing; defaults to TEXT.
+if len(sys.argv) > 1:
+    TEXT = sys.argv[1]
+
+
 def emit(obj: dict) -> None:
     print(json.dumps(obj, sort_keys=True))
 
