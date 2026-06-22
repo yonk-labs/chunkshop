@@ -10,9 +10,12 @@ behind the existing optional `lede` cargo feature.
 
 - **Deps:** bump the Rust `lede` crate 0.3 → 0.5 and add `lede-enrich` 0.1, both
   as **path deps** to the `yonk-tools/`-sibling `lede` repo (the 0.5 / 0.1 crates
-  are unpublished). `--features lede` now requires that checkout; default builds
-  are unaffected (feature is opt-in). The `lede` feature widened to
-  `["dep:lede", "dep:lede-enrich"]`.
+  are unpublished). The `lede` feature widened to `["dep:lede", "dep:lede-enrich"]`.
+  **Merge blocker:** Cargo reads path-dep manifests at resolve time even for
+  inactive optional deps, so this checkout is required for *all* builds — the
+  default CI build breaks without the sibling. Before merge, publish `lede` 0.5
+  + `lede-enrich` 0.1 to crates.io and switch the deps to version-only. The work
+  is complete and fully tested with the sibling present (412 Rust tests pass).
 - **`lede_top_terms` extractor** — top-N salient words/phrases via lede 0.5
   `top_terms_scored`; writes metadata `top_terms` = `[{term,score,kind}]`, tags
   = `[term]`.

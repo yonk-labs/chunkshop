@@ -77,7 +77,15 @@ lede-enrich = { version = "0.1", path = "../../../lede/lede-enrich", optional = 
 # feature: lede = ["dep:lede", "dep:lede-enrich"]
 ```
 
-This is exactly the pattern `lede-enrich` itself uses to consume `lede` (`version` for an eventual crates.io publish, `path` for local dev). The relative path resolves identically from the main checkout and any `yonk-tools/`-sibling worktree. **Consequence (documented):** building `--features lede` now requires the `lede` repo checked out as a `yonk-tools/` sibling, and breaks a pure-crates.io build of that feature until lede 0.5 is published. Blast radius is limited: the feature is opt-in and default builds are unaffected. A README/Cargo-comment note records the filesystem requirement (reviewer's condition on approving D3).
+This is exactly the pattern `lede-enrich` itself uses to consume `lede` (`version` for an eventual crates.io publish, `path` for local dev). The relative path resolves identically from the main checkout and any `yonk-tools/`-sibling worktree.
+
+**Consequence (corrected after empirical verification — this is a MERGE BLOCKER, not just a feature cost):** a `path` dependency must exist at **resolution** time even when it is `optional` and its feature is **off** — Cargo reads every path-dep's `Cargo.toml` to build the resolve graph. `--locked` does not change this. Verified: with the sibling `lede` repo moved aside, `cargo test --lib --locked` (default features, no `lede`) fails with `failed to read .../lede/rust/Cargo.toml`. The original `lede = "0.3"` did **not** have this problem because 0.3.0 is a *published* registry crate, resolvable from the index with no local checkout.
+
+Therefore this branch, as committed, **breaks the default CI build** (`release.yml` checks out only `chunkshop`, not the sibling). `cargo package` happens to pass (its verify build uses the version-stripped manifest with default features), but `cargo test --workspace --lib --locked` and `cargo publish` do not.
+
+**There is no committable dependency form that both compiles the `--features lede` code and passes sibling-less CI until lede 0.5 + lede-enrich 0.1 are published to crates.io.** Path form requires the sibling; version-only form (`lede = "0.5"`) fails to resolve against a registry that only has 0.3.0. The path form is correct for **local development** (a developer with the sibling gets a green `--features lede` build + 412 passing tests), and is what this branch carries so the work is reviewable and testable.
+
+**Remediation before merge:** publish `lede` 0.5 + `lede-enrich` 0.1 to crates.io, then switch the deps to **version-only** (drop `path`): `lede = { version = "0.5", optional = true }`, `lede-enrich = { version = "0.1", optional = true }`. That restores the pre-existing CI/release behavior (registry resolution, no sibling needed, publishable). Until then the branch stays a draft.
 
 ## Per-feature contracts
 
