@@ -833,11 +833,27 @@ fn default_fact_max_chars() -> usize {
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ConsolidatorConfig {
     Extractive(ExtractiveConsolidatorConfig),
+    Lede(LedeConsolidatorConfig),
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractiveConsolidatorConfig {}
+
+/// `mode: lede` — salient-sentence propositions via lede 0.5 `key_facts`, with
+/// rank-decay confidence. Facts below `confidence_floor` are dropped. Gated
+/// behind the `lede` cargo feature (errors at consolidate-time when absent).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LedeConsolidatorConfig {
+    #[serde(default = "default_lede_cons_max_facts")]
+    pub max_facts: usize,
+    #[serde(default)]
+    pub confidence_floor: f64,
+}
+fn default_lede_cons_max_facts() -> usize {
+    10
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SemanticChunkerConfig {
