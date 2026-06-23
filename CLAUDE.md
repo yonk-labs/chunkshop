@@ -119,6 +119,9 @@ code corpora, `symbol_aware` is the right reach — it's what unlocks
 - **Tests that use the sample corpus** use the absolute path from `test_end_to_end_samples_corpus.py::SAMPLES_GLOB` — don't hardcode relative paths from test files.
 - **All four sample YAMLs** (`sample.yaml`, `sample-sentence-aware.yaml`, `sample-neighbor-expand.yaml`, `sample-multi-source.yaml`) now use the schema-flex `mode:` shape. The legacy `overwrite: true` field is still accepted by the pydantic model (internal `factorial*/` configs and a few test fixtures still use it) but user-facing docs and samples are all on `mode: overwrite`.
 - **Worktree pattern for feature work:** `git worktree add ../chunkshop-<feature> -b feat/<feature>` from main. Each feature gets its own worktree; merge back via `superpowers:finishing-a-development-branch` when tests pass.
+- **`gh pr edit` / `gh issue view` fail with a projects-classic GraphQL error** in this repo — use the REST API instead: `gh api repos/{owner}/{repo}/issues/N --jq .body`, `gh api .../pulls/N -X PATCH -F body=@file`. `gh pr create` / `gh issue create` are fine.
+- **crates.io API needs a `User-Agent` header** — without it, it returns an error that's easy to misread as "crate unpublished." Send a UA (`curl -H "User-Agent: ..."`) or check the web page before concluding a crate isn't published.
+- **`uv run` re-syncs from `uv.lock`** and can silently revert a manual `uv pip install`. To hold a pinned dep, run `.venv/bin/python` directly or `uv run --no-sync`. For the authoritative installed version use `importlib.metadata.version('pkg')`, not a package's `__version__` (lede's `__version__` is stale — reports 0.4.5 while the dist is 0.5.0).
 
 ## Active work
 
@@ -136,7 +139,7 @@ When new work starts, run `/mission-brief` then `superpowers:writing-plans` to p
 
 ## Sibling repos this one interacts with
 
-- `../extractive_summary/` (lede) — zero-dep extractive summarizer. Brief 4 (`summary_embed` chunker wrapper) wires it via `chunkshop.summarizers.lede` as a callable summarizer.
+- `../lede/` — canonical lede: core 0.5 (`extract::{top_terms,key_facts,metadata}`, summarize) + `lede-enrich` 0.1 (deterministic gazetteer NER/facts — the spaCy-free path). Both published (crates.io + PyPI). Powers `chunkshop.summarizers.lede` and the `lede_top_terms`/`lede_report`/`lede_entities` extractors + `consolidator: lede` (Rust behind `--features lede`). Rust API: fns live in same-named submodules (`lede::extract::top_terms::top_terms_scored`), and lede/lede-enrich types have no serde derives. (Formerly `../extractive_summary/`.)
 - `../lede-neural/` — seed-state neural companion to lede. Brief 4's callable path supports it once it ships.
 - `../yonk-doctools/` — seed-state sibling repo for PDF/DOCX → markdown preprocessing with VLM image captioning. Feeds chunkshop's `files` source.
 
