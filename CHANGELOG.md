@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 1.0.0-rc — 2026-06-23
+
+First release candidate for 1.0.0. Bundles the Rust lede/lede-enrich Tier-1
+enrichment parity work, a hybrid-search fix, and dependency-advisory patches.
+Python (`chunkshop`) and Rust (`chunkshop-rs`) ship in lockstep at this version.
+
+### Search
+
+- **`hybrid_search` rejects `rrf_k < 1`** with a clear `ValueError` instead of
+  leaking a `ZeroDivisionError` from RRF fusion (#78). Adds a DB-free regression
+  test.
+
+### Security / dependencies
+
+- Patched newly-published advisories on transitive deps: `quinn-proto` 0.11.15
+  (RUSTSEC-2026-0185), `urllib3` 2.7.0, `idna` 3.18, `msgpack` 1.2.1, `pypdf`
+  6.14.2. The `rsa` / `paste` / `torch` (CVE-2025-3000) advisories have no
+  upstream fix and are CI-ignored with justification.
+
 ### Rust — lede / lede-enrich Tier-1 enrichment parity (#76)
 
 First functional Rust catch-up since the RM-A/B/C line: closes the
