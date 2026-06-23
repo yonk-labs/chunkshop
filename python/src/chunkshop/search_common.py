@@ -134,6 +134,12 @@ def fuse(
     matched it in `legs`. Returns top-k by fused score (higher = better).
     """
     if fusion == "rrf":
+        # RRF's constant must be positive: each leg contributes 1/(rrf_k + rank)
+        # with rank >= 1, so rrf_k < 1 can zero the denominator (e.g. rrf_k=-1
+        # at rank 1) and divide by zero. Reject up front with a clear error
+        # rather than leaking a ZeroDivisionError.
+        if rrf_k < 1:
+            raise ValueError(f"rrf_k must be a positive integer (>= 1), got {rrf_k}")
         fused = _fuse_rrf(leg_results, rrf_k)
     else:
         fused = _fuse_weighted(leg_results, weights or {})
