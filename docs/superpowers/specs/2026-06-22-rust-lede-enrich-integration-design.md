@@ -33,6 +33,8 @@ External second opinion (ABE `validate`, reviewer `gemma`) was consulted on D1�
 
 ### D1 — `lede_report` is a documented subset, not a 1:1 port
 
+> **Update (2026-06-23, lede 0.5.1):** lede-rs now exposes `extract::fact_records()` + `extract::stats()` (lede#11), so `lede_report` was expanded to emit `fact_records` + `stats` too — **byte-identical to Python**. The subset is now much smaller: only `attributes`, `spacy_metadata`, `spacy_phrases`, `search_text`, `promotion_candidates`, `summary` remain omitted (aggregator-only / spaCy-only; lede-rs still doesn't expose them). The decision below stands; the omission list narrowed.
+
 lede-rs 0.5 does **not** expose Python's `readable_report().to_dict()` aggregator, nor `attributes` or SVO `fact_records` builders (verified: empty grep for `readable_report`/`to_dict`/`fact_records`/`attributes` in `lede/rust/src`). It exposes the pieces only: `key_facts()`, `extract::metadata()`, `correlate_facts()`.
 
 **Decision:** assemble the report chunkshop-side, emitting **only** the keys lede-rs can produce, matching Python's nested shape exactly for those keys, and omitting the rest:

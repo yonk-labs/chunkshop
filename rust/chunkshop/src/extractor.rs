@@ -663,6 +663,8 @@ impl ExtractorImpl for LedeReportExtractor {
                 m.insert(k.to_string(), Value::Array(vec![]));
             }
             report.insert("metadata".to_string(), Value::Object(m));
+            report.insert("fact_records".to_string(), Value::Array(vec![]));
+            report.insert("stats".to_string(), Value::Array(vec![]));
             let mut metadata = serde_json::Map::new();
             metadata.insert("lede_report".to_string(), Value::Object(report));
             return Ok(ExtractResult {
@@ -679,6 +681,44 @@ impl ExtractorImpl for LedeReportExtractor {
         m.insert("urls".to_string(), str_array(&md.urls));
         m.insert("entities".to_string(), str_array(&md.entities));
         report.insert("metadata".to_string(), Value::Object(m));
+
+        // fact_records + stats (lede 0.5.1, #11) — field names match Python's
+        // readable_report().to_dict() so cross-impl wire output lines up.
+        let fact_records: Vec<Value> = lede::extract::fact_records::fact_records(text)
+            .iter()
+            .map(|fr| {
+                let mut o = serde_json::Map::new();
+                o.insert("subject".to_string(), Value::String(fr.subject.clone()));
+                o.insert("predicate".to_string(), Value::String(fr.predicate.clone()));
+                o.insert("object".to_string(), Value::String(fr.object.clone()));
+                o.insert("fact_type".to_string(), Value::String(fr.fact_type.clone()));
+                o.insert("evidence".to_string(), Value::String(fr.evidence.clone()));
+                o.insert(
+                    "confidence".to_string(),
+                    serde_json::Number::from_f64(fr.confidence)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null),
+                );
+                Value::Object(o)
+            })
+            .collect();
+        report.insert("fact_records".to_string(), Value::Array(fact_records));
+        let stats: Vec<Value> = lede::extract::stats::stats(text)
+            .iter()
+            .map(|s| {
+                let mut o = serde_json::Map::new();
+                o.insert("value".to_string(), Value::String(s.value.clone()));
+                o.insert("unit".to_string(), Value::String(s.unit.clone()));
+                o.insert("phrase".to_string(), Value::String(s.phrase.clone()));
+                o.insert(
+                    "context_sentence".to_string(),
+                    Value::String(s.context_sentence.clone()),
+                );
+                o.insert("stat_type".to_string(), Value::String(s.stat_type.clone()));
+                Value::Object(o)
+            })
+            .collect();
+        report.insert("stats".to_string(), Value::Array(stats));
 
         // Tags: flatten the producible sources named in tag_sources. Unknown or
         // Python-only sources (e.g. `attributes`) are silently skipped.
@@ -935,7 +975,7 @@ mod tests {
             tag_sources: crate::config::default_lede_report_tag_sources(),
         });
         let r = ex
-            .extract("Acme raised $5M on 2023-01-02. Acme grew fast. See https://acme.test.")
+            .extract("Acme raised $5 million in 2023. Revenue grew 300 percent. See https://acme.test.")
             .unwrap();
         let rep = r.metadata.get("lede_report").unwrap().as_object().unwrap();
         assert!(rep.get("key_facts").unwrap().is_array());
@@ -943,6 +983,21 @@ mod tests {
         for k in ["dates", "amounts", "urls", "entities"] {
             assert!(meta.get(k).unwrap().is_array(), "missing {k}");
         }
-        assert!(rep.get("attributes").is_none()); // omitted subset
+        // lede 0.5.1: fact_records + stats now emitted (#11). This numeric input
+        // produces both; assert presence + the Python-matching field shape.
+        let frs = rep.get("fact_records").unwrap().as_array().unwrap();
+        assert!(!frs.is_empty(), "fact_records empty for numeric input");
+        let fr0 = frs[0].as_object().unwrap();
+        for k in ["subject", "predicate", "object", "fact_type", "evidence", "confidence"] {
+            assert!(fr0.contains_key(k), "fact_record missing {k}");
+        }
+        let sts = rep.get("stats").unwrap().as_array().unwrap();
+        assert!(!sts.is_empty(), "stats empty for numeric input");
+        let s0 = sts[0].as_object().unwrap();
+        for k in ["value", "unit", "phrase", "context_sentence", "stat_type"] {
+            assert!(s0.contains_key(k), "stat missing {k}");
+        }
+        // attributes / spacy_* / search_text still not exposed by lede-rs.
+        assert!(rep.get("attributes").is_none());
     }
 }

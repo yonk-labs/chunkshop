@@ -5,6 +5,14 @@ Python side; the Python code is untouched. This doc records a true
 working/not-working status, then runs all four features through **both**
 implementations on one identical input and diffs the output.
 
+> **UPDATE (2026-06-23) — the gotchas below are FIXED upstream in lede 0.5.1 + lede-enrich 0.2.1.** Re-running the same probes:
+> - **Gazetteer NER false positives — gone.** "The Company released a new Product. Our Team celebrated the Launch in Spring." now yields `[]` (was `[Company, Product, Our Team, Launch, Spring]`). Title stripping is consistent: "CEO Bob Smith" → "Bob Smith" — the entity *set* now matches spaCy (minus labels). (lede#12)
+> - **Amount extraction — fixed.** "$5 million" stays `$5 million` (was truncated to `$5`); "EUR 2.3 billion" is captured and no longer mis-tagged as an entity. (lede#12)
+> - **`lede_report` now emits `fact_records` + `stats`** (lede-rs 0.5.1 `extract::{fact_records,stats}`) — **byte-identical to Python** (`fact_records[0]`/`stats[0]` match field-for-field on the same input). Still omits aggregator/spaCy-only keys (`attributes`, `spacy_*`, `search_text`, `promotion_candidates`, `summary`). (lede#11 — done)
+> - Python `lede.__version__` no longer stale.
+>
+> chunkshop now pins `lede>=0.5.1` + `lede-enrich>=0.2`. The sections below are the **historical 0.5.0/0.1.0 findings**, kept as the record of what the probes caught.
+
 ## How to reproduce
 
 ```bash
