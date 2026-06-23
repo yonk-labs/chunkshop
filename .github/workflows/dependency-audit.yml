@@ -40,7 +40,14 @@ jobs:
             -r /tmp/chunkshop-pip-audit.txt \
             --no-deps \
             --disable-pip \
-            --skip-editable
+            --skip-editable \
+            --ignore-vuln CVE-2025-3000
+          # CVE-2025-3000: torch 2.11.0 — NO fixed version published as of this
+          # release. torch is an optional/transitive dep (sentence-transformers
+          # via the [keybert]/[nlp] extras) used only for trusted HF-model
+          # inference; low exploitability for chunkshop's use. Mirrors the
+          # cargo-audit RUSTSEC-2023-0071/2024-0436 ignores (no-fix advisories).
+          # Remove once torch ships a patched release.
 
   rust:
     name: cargo audit
