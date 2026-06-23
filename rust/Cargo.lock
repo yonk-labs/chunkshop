@@ -1897,18 +1897,18 @@ checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
 name = "lede"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2b854a4880ccbe23378159bc5bc296a7b0c5b9a13a51f0d12aaac7a3507f7fb"
+checksum = "126c6bb1c4f9929c6fa0b32521e5e3e99f54a31b5634e0500818786f10dfd966"
 dependencies = [
  "regex",
 ]
 
 [[package]]
 name = "lede-enrich"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c6bf855216cfc40937aba0591c8aa74e3218703b55df907e2e8a1601dbfe3f6"
+checksum = "4135c0092399990eac847051302800f74cffbf63f4b734ab7f1f1d199176cdc5"
 dependencies = [
  "lede",
 ]
