@@ -125,6 +125,9 @@ pub enum ExtractorConfig {
     LangDetect(LangDetectExtractorConfig),
     KeybertPhrases(KeybertPhrasesExtractorConfig),
     SpacyEntities(SpacyEntitiesExtractorConfig),
+    LedeTopTerms(LedeTopTermsExtractorConfig),
+    LedeReport(LedeReportExtractorConfig),
+    LedeEntities(LedeEntitiesExtractorConfig),
 }
 
 impl Default for ExtractorConfig {
@@ -172,6 +175,62 @@ pub struct SpacyEntitiesExtractorConfig {
     pub model: String,
     #[serde(default = "default_spacy_whitelist")]
     pub label_whitelist: Vec<String>,
+}
+
+/// `lede_top_terms` — top-N salient words/phrases via lede 0.5 `top_terms_scored`.
+/// Config mirrors Python's `LedeTopTermsExtractor` (`n`, `kinds`) for YAML
+/// portability. `hints`/`hint_focus`/`hint_mode`/`expand` (Python advanced knobs)
+/// are not yet wired in Rust and are ignored if present.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LedeTopTermsExtractorConfig {
+    #[serde(default = "default_top_terms_n")]
+    pub n: usize,
+    #[serde(default = "default_top_terms_kinds")]
+    pub kinds: Vec<String>,
+}
+
+/// `lede_report` — assembled fact/metadata report. Forward-compatible subset of
+/// Python's `readable_report().to_dict()` (no `attributes`/SVO `fact_records` —
+/// lede-rs doesn't expose them). See spec D1. Config mirrors Python's
+/// `LedeReportExtractor`; `backend` other than `regex` degrades to the
+/// deterministic regex+gazetteer path in Rust (no spaCy). `max_chars` /
+/// `keep_headings` / `include_toc` (Python readable-report knobs) don't apply to
+/// the Rust subset and are ignored if present.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LedeReportExtractorConfig {
+    #[serde(default = "default_lede_report_max_facts")]
+    pub max_facts: usize,
+    #[serde(default = "default_lede_report_backend")]
+    pub backend: String,
+    #[serde(default = "default_lede_report_tag_sources")]
+    pub tag_sources: Vec<String>,
+}
+
+/// `lede_entities` — deterministic gazetteer NER via lede-enrich. Writes the
+/// shared `entities` key as `{"unlabeled": [...]}` (schema-uniform with Python's
+/// labeled dict, content-divergent). See spec D2.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LedeEntitiesExtractorConfig {}
+
+fn default_top_terms_n() -> usize {
+    10
+}
+fn default_top_terms_kinds() -> Vec<String> {
+    vec!["words".to_string(), "phrases".to_string()]
+}
+fn default_lede_report_max_facts() -> usize {
+    40
+}
+fn default_lede_report_backend() -> String {
+    "regex".to_string()
+}
+/// Matches Python's default verbatim. Rust skips sources it can't produce
+/// (`attributes`, `fact_records`, `spacy_*`) when building tags — see spec D1.
+pub fn default_lede_report_tag_sources() -> Vec<String> {
+    ["attributes", "key_facts", "dates", "amounts", "entities"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn default_rake_top_k() -> usize {
@@ -788,11 +847,27 @@ fn default_fact_max_chars() -> usize {
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ConsolidatorConfig {
     Extractive(ExtractiveConsolidatorConfig),
+    Lede(LedeConsolidatorConfig),
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractiveConsolidatorConfig {}
+
+/// `mode: lede` — salient-sentence propositions via lede 0.5 `key_facts`, with
+/// rank-decay confidence. Facts below `confidence_floor` are dropped. Gated
+/// behind the `lede` cargo feature (errors at consolidate-time when absent).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LedeConsolidatorConfig {
+    #[serde(default = "default_lede_cons_max_facts")]
+    pub max_facts: usize,
+    #[serde(default)]
+    pub confidence_floor: f64,
+}
+fn default_lede_cons_max_facts() -> usize {
+    10
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SemanticChunkerConfig {

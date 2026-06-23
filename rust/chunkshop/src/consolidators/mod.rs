@@ -154,10 +154,82 @@ fn split_sentences(text: &str) -> Vec<String> {
     out
 }
 
+// --- LedeConsolidator — salient-sentence facts (feature = "lede") -----------
+
+/// `mode: lede`. Mirrors Python `lede_facts.extract_facts`: summarize the
+/// episode with lede (`max_length=500`, default mode), split the summary into
+/// sentences, and emit each as a fact with empty SVO fields (the lede path
+/// produces sentences, not triples), `support_span` = the sentence, and
+/// rank-decay `confidence` = round(1 - i/n, 3). Facts below `confidence_floor`
+/// are dropped. `summary` is empty (Python's lede consolidator only fills it
+/// when an optional summarizer slot is configured).
+pub struct LedeConsolidator {
+    #[allow(dead_code)] // cfg used only under feature = "lede"
+    cfg: crate::config::LedeConsolidatorConfig,
+}
+
+impl LedeConsolidator {
+    pub fn new(cfg: crate::config::LedeConsolidatorConfig) -> Self {
+        Self { cfg }
+    }
+}
+
+impl Consolidator for LedeConsolidator {
+    #[cfg(feature = "lede")]
+    fn consolidate(&self, episode: &EpisodeInput<'_>) -> Result<ConsolidationOutput> {
+        let cleaned = strip_role_tags(episode.text);
+        // Mirror Python: summarize, then split the summary into sentences.
+        let summary = lede::summarize(&cleaned, 500, lede::Mode::Default).summary;
+        let facts_text: Vec<String> = split_sentences(&summary)
+            .into_iter()
+            .take(self.cfg.max_facts)
+            .collect();
+        let n = facts_text.len();
+        let facts: Vec<FactTriple> = facts_text
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, sentence)| {
+                let confidence = if n == 0 {
+                    0.0
+                } else {
+                    ((1.0 - (i as f64 / n as f64)) * 1000.0).round() / 1000.0
+                };
+                if confidence < self.cfg.confidence_floor {
+                    return None;
+                }
+                Some(FactTriple {
+                    subject: String::new(),
+                    predicate: String::new(),
+                    object: String::new(),
+                    support_span: Some(sentence),
+                    confidence: Some(confidence),
+                })
+            })
+            .collect();
+        Ok(ConsolidationOutput {
+            summary: String::new(),
+            facts,
+        })
+    }
+
+    #[cfg(not(feature = "lede"))]
+    fn consolidate(&self, _episode: &EpisodeInput<'_>) -> Result<ConsolidationOutput> {
+        anyhow::bail!(
+            "`lede` consolidator mode is gated behind the `lede` cargo feature; \
+             build with --features lede or run this YAML on Python."
+        )
+    }
+
+    fn mode(&self) -> &'static str {
+        "lede"
+    }
+}
+
 /// Factory: build the wired Consolidator from its config variant.
 pub fn build_consolidator(cfg: &ConsolidatorConfig) -> Box<dyn Consolidator> {
     match cfg {
         ConsolidatorConfig::Extractive(c) => Box::new(ExtractiveConsolidator::new(c.clone())),
+        ConsolidatorConfig::Lede(c) => Box::new(LedeConsolidator::new(c.clone())),
     }
 }
 
@@ -239,5 +311,60 @@ mod tests {
         let out = c.consolidate(&ep("[user] hi.")).unwrap();
         assert!(out.facts.is_empty());
         assert_eq!(c.mode(), "extractive");
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn lede_consolidator_rank_decay_and_empty_svo() {
+        let c = LedeConsolidator::new(crate::config::LedeConsolidatorConfig {
+            max_facts: 10,
+            confidence_floor: 0.0,
+        });
+        let out = c
+            .consolidate(&ep(
+                "[user] Acme raised $5 million in 2023. The team grew to 40 engineers. \
+                 Revenue increased 300 percent. The Berlin office opened on 2024-01-15.",
+            ))
+            .unwrap();
+        assert_eq!(c.mode(), "lede");
+        assert!(!out.facts.is_empty());
+        let f0 = &out.facts[0];
+        assert_eq!(f0.subject, "");
+        assert_eq!(f0.predicate, "");
+        assert_eq!(f0.object, "");
+        assert!(f0.support_span.is_some());
+        // rank-decay: confidence non-increasing across facts.
+        let confs: Vec<f64> = out.facts.iter().map(|f| f.confidence.unwrap()).collect();
+        assert!(confs.windows(2).all(|w| w[0] >= w[1]));
+        assert!(out.summary.is_empty());
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn lede_consolidator_floor_filters() {
+        let c = LedeConsolidator::new(crate::config::LedeConsolidatorConfig {
+            max_facts: 10,
+            confidence_floor: 0.99,
+        });
+        let out = c
+            .consolidate(&ep(
+                "[user] Q1 revenue was $10 million. Q2 revenue hit $12 million. \
+                 Headcount reached 200 people. Churn fell 5 percent.",
+            ))
+            .unwrap();
+        // Floor 0.99 keeps only the first (confidence 1.0) of the rank-decay set.
+        assert!(out.facts.iter().all(|f| f.confidence.unwrap() >= 0.99));
+        assert!(!out.facts.is_empty());
+    }
+
+    #[cfg(feature = "lede")]
+    #[test]
+    fn build_consolidator_dispatches_lede() {
+        let cfg = ConsolidatorConfig::Lede(crate::config::LedeConsolidatorConfig {
+            max_facts: 5,
+            confidence_floor: 0.0,
+        });
+        let c = build_consolidator(&cfg);
+        assert_eq!(c.mode(), "lede");
     }
 }

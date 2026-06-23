@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Rust — lede / lede-enrich Tier-1 enrichment parity (#76)
+
+First functional Rust catch-up since the RM-A/B/C line: closes the
+lede-dependent slice of the #76 Tier-1 enrichment gap. All new surface is gated
+behind the existing optional `lede` cargo feature.
+
+- **Deps:** bump the Rust `lede` crate 0.3 → **0.5.1** and add **`lede-enrich` 0.2**,
+  both from crates.io (version-only deps). Floors pin the fixes we rely on:
+  lede 0.5.1 added `extract::{fact_records,stats}` (lede#11) + amount fixes
+  (currency-prefixed money, `units`, no more `$5 million`→`$5` truncation —
+  lede#12); lede-enrich 0.2 fixed gazetteer NER precision (no more false
+  positives on capitalized common nouns; consistent title stripping — lede#12),
+  verified downstream. The `lede` feature widened to
+  `["dep:lede", "dep:lede-enrich"]`. Default builds don't pull either crate.
+- **`lede_top_terms` extractor** — top-N salient words/phrases via lede 0.5
+  `top_terms_scored`; writes metadata `top_terms` = `[{term,score,kind}]`, tags
+  = `[term]`.
+- **`lede_report` extractor** — assembles `key_facts` +
+  `metadata.{dates,amounts,urls,entities}` (entities filled by lede-enrich's
+  gazetteer) + `fact_records` + `stats` from lede 0.5.1's
+  `extract::{fact_records,stats}` — **byte-identical to Python's
+  `readable_report().to_dict()`** for those keys (verified field-for-field).
+  Still omits the aggregator-only / spaCy-only keys lede-rs doesn't expose
+  (`attributes`, `spacy_*`, `search_text`, `promotion_candidates`, `summary`);
+  a consumer reading the present keys gets parity, absent keys are missing not
+  wrong.
+- **`lede_entities` extractor** — deterministic, license-clean gazetteer NER via
+  lede-enrich. Writes the shared `entities` key as `{"unlabeled": [surface_forms]}`
+  — schema-uniform with Python's labeled `{LABEL: [...]}` dict (one code path for
+  consumers), content-divergent (no per-label classification). Distinct config
+  type from the Python-only `spacy_entities`.
+- **`consolidator: { mode: lede }`** — salient-sentence propositions via lede 0.5
+  `key_facts`, with rank-decay confidence `round(1 - i/n, 3)` and a
+  `confidence_floor`. SVO fields are empty (the lede non-spaCy path yields
+  sentences, not triples — matches Python `lede_facts`); `summary` empty.
+- Feature-off: the four new config variants still parse; `build_extractor` /
+  the consolidator return an actionable "gated behind the `lede` feature" error
+  rather than panicking.
+
+Spec: `docs/superpowers/specs/2026-06-22-rust-lede-enrich-integration-design.md`.
+
 ## 0.9.1 — 2026-06-09
 
 Fixes a regression introduced by 0.9.0's path-less language detection (#69):

@@ -414,6 +414,7 @@ dependencies = [
  "glob",
  "hf-hub",
  "lede",
+ "lede-enrich",
  "ndarray",
  "object_store",
  "ort",
@@ -1896,11 +1897,20 @@ checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
 name = "lede"
-version = "0.3.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6242efcac43d33aae834d3793002c44bcb618c16e4a89cef2e9ce2f5736ec83e"
+checksum = "126c6bb1c4f9929c6fa0b32521e5e3e99f54a31b5634e0500818786f10dfd966"
 dependencies = [
  "regex",
+]
+
+[[package]]
+name = "lede-enrich"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4135c0092399990eac847051302800f74cffbf63f4b734ab7f1f1d199176cdc5"
+dependencies = [
+ "lede",
 ]
 
 [[package]]
@@ -2743,9 +2753,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.14"
+version = "0.11.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "434b42fec591c96ef50e21e886936e66d3cc3f737104fdb9b737c40ffb94c098"
+checksum = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
 dependencies = [
  "bytes",
  "getrandom 0.3.4",
