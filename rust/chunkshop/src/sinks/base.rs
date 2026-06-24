@@ -8,9 +8,56 @@
 
 use std::future::Future;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use serde_json::{Map, Value};
 
 use crate::chunker::Chunk;
+
+/// AND-equality filter set for scoped top-k retrieval (#75).
+///
+/// Every present predicate is ANDed; an all-empty `Filters` (the `Default`)
+/// matches every row — a filtered query then behaves exactly like
+/// [`Sink::query_top_k`]. Equality match on a small key set covers the common
+/// per-tenant / per-thread / per-source scoping case; a full predicate DSL and
+/// hybrid-FTS fusion are out of scope (see #75).
+#[derive(Debug, Clone, Default)]
+pub struct Filters {
+    /// Exact match on the `source` provenance column.
+    pub source: Option<String>,
+    /// Case-insensitive overlap on the `tags` array — a row matches if it
+    /// carries ANY of these tags. (I-6: prefer structured fields for
+    /// recall-critical scoping; free-text tags diverge between query and doc
+    /// vocabularies and a hard overlap filter can silently drop the answer.)
+    pub tags: Vec<String>,
+    /// AND-containment on `metadata`: every (key, value) must match. Postgres
+    /// uses jsonb `@>`; SQLite approximates with per-key `json_extract` on
+    /// top-level keys (nested containment unsupported — same gap as Python).
+    pub metadata: Map<String, Value>,
+    /// AND-equality on promoted columns, keyed by column name (ident-validated).
+    /// Compared as text — intended for string scoping keys (tenant/thread id).
+    pub columns: Map<String, Value>,
+}
+
+impl Filters {
+    /// True when no predicate is set — a filtered query then equals `query_top_k`.
+    pub fn is_empty(&self) -> bool {
+        self.source.is_none()
+            && self.tags.is_empty()
+            && self.metadata.is_empty()
+            && self.columns.is_empty()
+    }
+}
+
+/// Render a JSON filter value to its column/text representation: strings as-is,
+/// everything else via its compact JSON form. Mirrors how promoted-column
+/// values are written (`promote_value_for`), so a `column` filter compares
+/// against the same text that was stored.
+pub(crate) fn render_filter_value(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
 
 pub trait Sink {
     fn create_table(&self) -> impl Future<Output = Result<()>> + Send;
@@ -37,4 +84,31 @@ pub trait Sink {
         query_vec: &[f32],
         k: usize,
     ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send;
+
+    /// Like [`Sink::query_top_k`] but restricted to rows matching ALL of
+    /// `filter`'s predicates (AND). `None` or an empty [`Filters`] is identical
+    /// to `query_top_k`. Additive — `query_top_k` is unchanged (#75).
+    ///
+    /// The default delegates to `query_top_k` when there is nothing to filter,
+    /// and errors otherwise. Backends that support scoped retrieval (pgvector,
+    /// sqlite-vec) override this; backends that don't inherit the honest error.
+    fn query_top_k_filtered(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+        filter: Option<&Filters>,
+    ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send
+    where
+        Self: Sync,
+    {
+        async move {
+            match filter {
+                Some(f) if !f.is_empty() => Err(anyhow!(
+                    "query_top_k_filtered: metadata-filtered retrieval is not implemented \
+                     for this sink"
+                )),
+                _ => self.query_top_k(query_vec, k).await,
+            }
+        }
+    }
 }

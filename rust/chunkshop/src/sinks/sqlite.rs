@@ -15,8 +15,8 @@ use anyhow::{anyhow, Context, Result};
 use crate::backends::base::{BackendDialect, ColSpec};
 use crate::backends::sqlite::SQLiteBackend;
 use crate::chunker::Chunk;
-use crate::config::SqliteTargetConfig;
-use crate::sinks::base::Sink;
+use crate::config::{validate_ident, SqliteTargetConfig};
+use crate::sinks::base::{render_filter_value, Filters, Sink};
 
 #[derive(Clone)]
 pub struct SqliteSink {
@@ -612,5 +612,140 @@ impl Sink for SqliteSink {
             .await
             .context("spawn_blocking query_top_k")?
         }
+    }
+
+    /// Scoped top-k (#75): sqlite-vec's `MATCH ... AND k = ?` can't take an
+    /// arbitrary WHERE inside the vec scan, so over-fetch (k*4) then apply the
+    /// AND-filter on the joined `c` alias and truncate to `k`. Mirrors Python
+    /// `search_sqlite.py::semantic_search` + `_build_where`.
+    fn query_top_k_filtered(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+        filter: Option<&Filters>,
+    ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
+        let this = self.clone();
+        let q_owned = query_vec.to_vec();
+        // Build the WHERE fragment + owned params before the blocking section.
+        let built = match filter {
+            Some(f) if !f.is_empty() => Some(sqlite_build_where(f, &this.backend)),
+            _ => None,
+        };
+        async move {
+            // None / empty filter is identical to the unfiltered path.
+            let built = match built {
+                Some(r) => r?,
+                None => return this.query_top_k(&q_owned, k).await,
+            };
+            let (where_sql, filter_params) = built;
+            // Over-fetch so post-join filtering still yields a full top-k.
+            let fetch_k = k.saturating_mul(4).max(k) as i64;
+            let conn = this.backend.connect().await?;
+            tokio::task::spawn_blocking(move || -> Result<Vec<(String, i32, f64)>> {
+                let g = conn.blocking_lock();
+                let vec_lit = this.backend.vector_literal(&q_owned);
+                let stmt = format!(
+                    "SELECT c.doc_id, c.seq_num, v.distance \
+                     FROM {vec} v JOIN {main} c ON c.id = v.id \
+                     WHERE v.embedding MATCH ? AND k = ? AND {where_sql} \
+                     ORDER BY v.distance",
+                    vec = this.fq_vec(),
+                    main = this.fq_main()
+                );
+                let mut q = g.prepare(&stmt).context("prepare top_k_filtered")?;
+                // params: vec_lit, fetch_k, then the filter params in order.
+                let mut all: Vec<&dyn rusqlite::ToSql> =
+                    Vec::with_capacity(2 + filter_params.len());
+                all.push(&vec_lit);
+                all.push(&fetch_k);
+                for b in &filter_params {
+                    all.push(b.as_ref());
+                }
+                let rows = q
+                    .query_map(all.as_slice(), |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, i32>(1)?,
+                            r.get::<_, f64>(2)?,
+                        ))
+                    })
+                    .context("query top_k_filtered")?;
+                let mut out: Vec<(String, i32, f64)> =
+                    rows.collect::<rusqlite::Result<_>>().context("collect rows")?;
+                out.truncate(k);
+                Ok(out)
+            })
+            .await
+            .context("spawn_blocking query_top_k_filtered")?
+        }
+    }
+}
+
+/// Build a parameterized WHERE conjunction (no leading WHERE) over the `c`
+/// alias from a [`Filters`]. All values are bound params; column NAMES are
+/// allowlist-validated so they can be safely quoted into the SQL.
+#[allow(clippy::type_complexity)]
+fn sqlite_build_where(
+    filter: &Filters,
+    backend: &SQLiteBackend,
+) -> Result<(String, Vec<Box<dyn rusqlite::ToSql + Send>>)> {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
+
+    if let Some(src) = &filter.source {
+        clauses.push("c.source = ?".into());
+        params.push(Box::new(src.clone()));
+    }
+
+    if !filter.tags.is_empty() {
+        // tags stored as a JSON array of lowercased strings; overlap = any
+        // query tag present, case-insensitive (query side casefolded).
+        let placeholders = vec!["?"; filter.tags.len()].join(", ");
+        clauses.push(format!(
+            "EXISTS (SELECT 1 FROM json_each(c.tags) je WHERE lower(je.value) IN ({placeholders}))"
+        ));
+        for t in &filter.tags {
+            params.push(Box::new(t.to_lowercase()));
+        }
+    }
+
+    if !filter.metadata.is_empty() {
+        // No jsonb-containment operator in SQLite: per-key equality on
+        // top-level keys (covers flat metadata; nested containment unsupported).
+        for (key, val) in &filter.metadata {
+            clauses.push("json_extract(c.metadata, '$.' || ?) = ?".into());
+            params.push(Box::new(key.clone()));
+            params.push(value_to_sql(val));
+        }
+    }
+
+    for (col, val) in &filter.columns {
+        validate_ident(col, "filter column")?;
+        clauses.push(format!("{} = ?", backend.quote_ident(col)));
+        // Promoted columns are stored as text; compare against the same text.
+        params.push(Box::new(render_filter_value(val)));
+    }
+
+    Ok((clauses.join(" AND "), params))
+}
+
+/// Bind a JSON metadata value with its native SQLite type so it compares equal
+/// to what `json_extract` returns (which is typed). Strings/numbers/bools map
+/// to their SQLite equivalents; anything else falls back to text.
+fn value_to_sql(v: &serde_json::Value) -> Box<dyn rusqlite::ToSql + Send> {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => Box::new(s.clone()),
+        Value::Bool(b) => Box::new(*b as i64),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Box::new(i)
+            } else if let Some(f) = n.as_f64() {
+                Box::new(f)
+            } else {
+                Box::new(n.to_string())
+            }
+        }
+        other => Box::new(other.to_string()),
     }
 }

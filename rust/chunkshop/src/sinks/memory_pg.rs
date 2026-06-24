@@ -217,6 +217,16 @@ impl Sink for MemorySink {
     ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
         async move { self.inner.query_top_k(query_vec, k).await }
     }
+
+    fn query_top_k_filtered(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+        filter: Option<&crate::sinks::base::Filters>,
+    ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
+        // Memory cells are pgvector-backed; scoped retrieval is the inner sink's.
+        async move { self.inner.query_top_k_filtered(query_vec, k, filter).await }
+    }
 }
 
 fn now_iso() -> String {

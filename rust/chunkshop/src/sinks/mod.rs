@@ -16,7 +16,7 @@ pub mod memory_pg;
 pub mod pg;
 pub mod sqlite;
 
-pub use base::Sink;
+pub use base::{Filters, Sink};
 pub use clickhouse::ClickhouseSink;
 pub use mariadb::MariadbSink;
 #[cfg(feature = "memory")]
@@ -124,6 +124,27 @@ impl Sink for AnySink {
                 AnySink::Clickhouse(s) => s.query_top_k(query_vec, k).await,
                 #[cfg(feature = "memory")]
                 AnySink::Memory(s) => s.query_top_k(query_vec, k).await,
+            }
+        }
+    }
+
+    fn query_top_k_filtered(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+        filter: Option<&Filters>,
+    ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
+        // Pg/Sqlite override the trait default with real filtering; the rest
+        // (Mariadb/Clickhouse/Memory) inherit it (delegate when empty, error
+        // when a filter is supplied).
+        async move {
+            match self {
+                AnySink::Pg(s) => s.query_top_k_filtered(query_vec, k, filter).await,
+                AnySink::Mariadb(s) => s.query_top_k_filtered(query_vec, k, filter).await,
+                AnySink::Sqlite(s) => s.query_top_k_filtered(query_vec, k, filter).await,
+                AnySink::Clickhouse(s) => s.query_top_k_filtered(query_vec, k, filter).await,
+                #[cfg(feature = "memory")]
+                AnySink::Memory(s) => s.query_top_k_filtered(query_vec, k, filter).await,
             }
         }
     }

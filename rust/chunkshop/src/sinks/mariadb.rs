@@ -23,8 +23,8 @@ use sqlx::{MySql, MySqlPool, Row, Transaction};
 use crate::backends::base::{BackendConn, BackendDialect, ColSpec};
 use crate::backends::mariadb::MariadbBackend;
 use crate::chunker::Chunk;
-use crate::config::{MariadbTargetConfig, PromoteColumn};
-use crate::sinks::base::Sink;
+use crate::config::{validate_ident, MariadbTargetConfig, PromoteColumn};
+use crate::sinks::base::{render_filter_value, Filters, Sink};
 
 pub struct MariadbSink {
     cfg: MariadbTargetConfig,
@@ -547,6 +547,98 @@ impl Sink for MariadbSink {
                 .collect())
         }
     }
+
+    /// Scoped top-k (#75): splice the AND-filter WHERE before ORDER BY. The
+    /// vector literal is inlined (sqlx-mysql has no VECTOR adapter), so the only
+    /// binds are the filter params followed by the LIMIT. Mirrors Python
+    /// `search_mariadb.py::semantic_search` + `_build_where`.
+    fn query_top_k_filtered(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+        filter: Option<&Filters>,
+    ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
+        async move {
+            let filter = match filter {
+                Some(f) if !f.is_empty() => f,
+                _ => return self.query_top_k(query_vec, k).await,
+            };
+            let pool = self.backend.pool().await?;
+            let vec_lit = self.backend.vector_literal(query_vec);
+            let (clauses, params) = mariadb_build_where(filter, &self.backend)?;
+            let where_sql = if clauses.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", clauses.join(" AND "))
+            };
+            let stmt = format!(
+                "SELECT doc_id, seq_num, VEC_DISTANCE_COSINE(embedding, {vec_lit}) AS distance \
+                 FROM {tbl}{where_sql} \
+                 ORDER BY VEC_DISTANCE_EUCLIDEAN(embedding, {vec_lit}) LIMIT ?",
+                tbl = self.fq()
+            );
+            let mut q = sqlx::query(&stmt);
+            for p in &params {
+                q = q.bind(p.as_str());
+            }
+            q = q.bind(k as i64);
+            let rows = q.fetch_all(pool).await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| {
+                    let doc_id: String = r.get(0);
+                    let seq_num: i32 = r.get(1);
+                    let distance: f64 = match r.try_get::<f64, _>(2) {
+                        Ok(v) => v,
+                        Err(_) => r.try_get::<f32, _>(2).map(|f| f as f64).unwrap_or(0.0),
+                    };
+                    (doc_id, seq_num, distance)
+                })
+                .collect())
+        }
+    }
+}
+
+/// Build a parameterized WHERE conjunction (no leading WHERE) from a [`Filters`]
+/// for MariaDB. All values bind as `?`; column NAMES are allowlist-validated.
+fn mariadb_build_where(
+    filter: &Filters,
+    backend: &MariadbBackend,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<String> = Vec::new();
+
+    if let Some(src) = &filter.source {
+        clauses.push("source = ?".into());
+        params.push(src.clone());
+    }
+
+    if !filter.tags.is_empty() {
+        // Stored tags are a JSON array of lowercased strings; JSON_OVERLAPS
+        // returns 1 if any element matches. Bind the query side as one JSON
+        // array param (casefolded).
+        let lowered: Vec<String> = filter.tags.iter().map(|t| t.to_lowercase()).collect();
+        clauses.push("JSON_OVERLAPS(tags, ?)".into());
+        params.push(serde_json::to_string(&lowered).unwrap_or_else(|_| "[]".into()));
+    }
+
+    if !filter.metadata.is_empty() {
+        // No jsonb containment: per-key equality on top-level keys. The key is
+        // a bound param spliced via CONCAT('$.', ?), so no injection surface.
+        for (key, val) in &filter.metadata {
+            clauses.push("JSON_UNQUOTE(JSON_EXTRACT(metadata, CONCAT('$.', ?))) = ?".into());
+            params.push(key.clone());
+            params.push(render_filter_value(val));
+        }
+    }
+
+    for (col, val) in &filter.columns {
+        validate_ident(col, "filter column")?;
+        clauses.push(format!("CAST({} AS CHAR) = ?", backend.quote_ident(col)));
+        params.push(render_filter_value(val));
+    }
+
+    Ok((clauses, params))
 }
 
 /// Project a chunk's metadata down to the right text representation for the
