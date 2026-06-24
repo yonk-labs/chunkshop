@@ -15,8 +15,8 @@ use tracing::warn;
 use crate::backends::base::{BackendDialect, ColSpec};
 use crate::backends::clickhouse::ClickhouseBackend;
 use crate::chunker::Chunk;
-use crate::config::ClickhouseTargetConfig;
-use crate::sinks::base::Sink;
+use crate::config::{validate_ident, ClickhouseTargetConfig};
+use crate::sinks::base::{render_filter_value, Filters, Sink};
 
 /// One-time-per-process warn flag for `delete_orphans: true`. CH mutations are
 /// async and don't fit chunkshop's per-document atomic write contract, so the
@@ -467,6 +467,120 @@ impl ClickhouseSink {
         }
         Ok(out)
     }
+
+    /// Scoped top-k (#75): splice the AND-filter WHERE before ORDER BY. Mirrors
+    /// Python `search_clickhouse.py::semantic_search` + `_build_where`. Scalar
+    /// predicates bind via `?`; the `tags` array can't bind in a function-arg
+    /// position (same limit as the inlined `cosineDistance` array), so it is
+    /// inlined as an escaped CH array literal.
+    pub async fn query_top_k_filtered_impl(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+        filter: Option<&Filters>,
+    ) -> Result<Vec<(String, i32, f64)>> {
+        let filter = match filter {
+            Some(f) if !f.is_empty() => f,
+            _ => return self.query_top_k_impl(query_vec, k).await,
+        };
+        #[derive(Row, serde::Deserialize)]
+        struct Hit {
+            doc_id: String,
+            seq_num: i32,
+            dist: f64,
+        }
+        let client = self.backend.client().await?;
+        let vec_lit = self.backend.vector_literal(query_vec);
+        let (clauses, binds) = ch_build_where(filter, &self.backend)?;
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", clauses.join(" AND "))
+        };
+        let q = format!(
+            "SELECT doc_id, seq_num, cosineDistance(embedding, {vec_lit}) AS dist \
+             FROM {}{where_sql} ORDER BY dist LIMIT ?",
+            self.fq()
+        );
+        let mut query = client.query(&q);
+        for b in &binds {
+            query = query.bind(b);
+        }
+        query = query.bind(k as u32);
+        let mut cur = query.fetch::<Hit>()?;
+        let mut out = Vec::with_capacity(k);
+        while let Some(h) = cur.next().await? {
+            out.push((h.doc_id, h.seq_num, h.dist));
+        }
+        Ok(out)
+    }
+}
+
+/// Build a parameterized WHERE conjunction (no leading WHERE) from a [`Filters`]
+/// for ClickHouse. Scalar values bind as `?`; `tags` is inlined as an escaped
+/// array literal; metadata keys and column names are allowlist-validated.
+fn ch_build_where(
+    filter: &Filters,
+    backend: &ClickhouseBackend,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut binds: Vec<String> = Vec::new();
+
+    if let Some(src) = &filter.source {
+        clauses.push("source = ?".into());
+        binds.push(src.clone());
+    }
+
+    if !filter.tags.is_empty() {
+        let arr: Vec<String> = filter
+            .tags
+            .iter()
+            .map(|t| format!("'{}'", ch_escape_str(&t.to_lowercase())))
+            .collect();
+        clauses.push(format!("hasAny(tags, [{}])", arr.join(", ")));
+    }
+
+    if !filter.metadata.is_empty() {
+        // metadata is stored as a JSON String; per-key equality on top-level
+        // keys. The key is a JSON path segment that CANNOT be bound, so it is
+        // allowlisted to a safe identifier charset before splicing.
+        for (key, val) in &filter.metadata {
+            let safe = ch_safe_key(key)?;
+            clauses.push(format!("JSONExtractString(metadata, '{safe}') = ?"));
+            binds.push(render_filter_value(val));
+        }
+    }
+
+    for (col, val) in &filter.columns {
+        validate_ident(col, "filter column")?;
+        clauses.push(format!("toString({}) = ?", backend.quote_ident(col)));
+        binds.push(render_filter_value(val));
+    }
+
+    Ok((clauses, binds))
+}
+
+/// Escape a string for a ClickHouse single-quoted literal: backslash then quote.
+fn ch_escape_str(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+/// Allowlist a metadata key used as a (non-bindable) JSON path segment. Mirrors
+/// Python `search_clickhouse.py::_safe_json_key` — refuse anything outside a
+/// conservative identifier charset rather than widen quoting.
+fn ch_safe_key(key: &str) -> Result<&str> {
+    let safe = !key.is_empty()
+        && key.chars().enumerate().all(|(i, c)| {
+            c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit())
+        });
+    if safe {
+        Ok(key)
+    } else {
+        Err(anyhow!(
+            "metadata filter key {key:?} is not a safe identifier \
+             (must match ^[A-Za-z_][A-Za-z0-9_]*$)"
+        ))
+    }
 }
 
 /// Canonical chunkshop columns, CH-typed. Mirrors
@@ -623,5 +737,14 @@ impl Sink for ClickhouseSink {
         k: usize,
     ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
         async move { self.query_top_k_impl(query_vec, k).await }
+    }
+
+    fn query_top_k_filtered(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+        filter: Option<&Filters>,
+    ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
+        async move { self.query_top_k_filtered_impl(query_vec, k, filter).await }
     }
 }

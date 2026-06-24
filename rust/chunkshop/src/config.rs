@@ -1400,7 +1400,7 @@ fn default_log_format() -> String {
 }
 
 /// Validate identifier against Python's regex: `^[a-z_][a-z0-9_]*$`.
-fn validate_ident(name: &str, field: &str) -> Result<()> {
+pub(crate) fn validate_ident(name: &str, field: &str) -> Result<()> {
     let re = Regex::new(r"^[a-z_][a-z0-9_]*$").unwrap();
     if !re.is_match(name) {
         return Err(anyhow!(

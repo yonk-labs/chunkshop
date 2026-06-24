@@ -14,8 +14,8 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 use crate::backends::base::{BackendConn, BackendDialect, ColSpec};
 use crate::backends::postgres::PostgresBackend;
 use crate::chunker::Chunk;
-use crate::config::{PostgresTargetConfig, PromoteColumn};
-use crate::sinks::base::Sink;
+use crate::config::{validate_ident, PostgresTargetConfig, PromoteColumn};
+use crate::sinks::base::{render_filter_value, Filters, Sink};
 
 pub struct PgSink {
     cfg: PostgresTargetConfig,
@@ -537,6 +537,110 @@ impl Sink for PgSink {
                 .collect())
         }
     }
+
+    /// Scoped top-k (#75): splice the AND-filter WHERE before ORDER BY in a
+    /// single query. Mirrors Python `search.py::semantic_search` + `_build_where`.
+    fn query_top_k_filtered(
+        &self,
+        query_vec: &[f32],
+        k: usize,
+        filter: Option<&Filters>,
+    ) -> impl Future<Output = Result<Vec<(String, i32, f64)>>> + Send {
+        async move {
+            // None / empty filter is identical to the unfiltered path.
+            let filter = match filter {
+                Some(f) if !f.is_empty() => f,
+                _ => return self.query_top_k(query_vec, k).await,
+            };
+            let pool = self.backend.pool().await?;
+            let vec_lit = self.backend.vector_literal(query_vec);
+            let (op, _opclass) = PostgresBackend::vector_metric_sql(&self.cfg.vector_metric)?;
+            // $1 is the query vector, reused in SELECT and ORDER BY. Filter
+            // params take $2.., then LIMIT gets the next index.
+            let mut next = 2i32;
+            let (clauses, params) = pg_build_where(filter, &mut next, &self.backend)?;
+            let where_sql = if clauses.is_empty() {
+                String::new()
+            } else {
+                format!(" WHERE {}", clauses.join(" AND "))
+            };
+            let stmt = format!(
+                "SELECT doc_id, seq_num, embedding {op} $1::vector AS distance \
+                 FROM {tbl}{where_sql} ORDER BY embedding {op} $1::vector LIMIT ${k_idx}",
+                tbl = self.fq(),
+                k_idx = next,
+            );
+            let mut q = sqlx::query(&stmt).bind(&vec_lit);
+            for p in &params {
+                q = q.bind(p.as_str());
+            }
+            q = q.bind(k as i64);
+            let rows = q.fetch_all(pool).await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.get::<String, _>(0),
+                        r.get::<i32, _>(1),
+                        r.get::<f64, _>(2),
+                    )
+                })
+                .collect())
+        }
+    }
+}
+
+/// Build a parameterized WHERE conjunction (no leading WHERE) from a [`Filters`].
+/// Placeholders start at `*next` and `*next` is advanced past the last one. All
+/// values are bound text params; column NAMES are allowlist-validated so they
+/// can be safely quoted into the SQL (psql cannot bind identifiers).
+fn pg_build_where(
+    filter: &Filters,
+    next: &mut i32,
+    backend: &PostgresBackend,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<String> = Vec::new();
+
+    if let Some(src) = &filter.source {
+        clauses.push(format!("source = ${next}"));
+        params.push(src.clone());
+        *next += 1;
+    }
+
+    if !filter.tags.is_empty() {
+        // Case-insensitive overlap: stored tags are lowercased at ingest, so
+        // casefolding only the query side is sufficient.
+        let placeholders: Vec<String> = filter
+            .tags
+            .iter()
+            .map(|t| {
+                let ph = format!("${next}");
+                params.push(t.to_lowercase());
+                *next += 1;
+                ph
+            })
+            .collect();
+        clauses.push(format!("tags && ARRAY[{}]::text[]", placeholders.join(", ")));
+    }
+
+    if !filter.metadata.is_empty() {
+        clauses.push(format!("metadata @> ${next}::jsonb"));
+        params.push(serde_json::Value::Object(filter.metadata.clone()).to_string());
+        *next += 1;
+    }
+
+    for (col, val) in &filter.columns {
+        validate_ident(col, "filter column")?;
+        // `::text` cast makes equality type-agnostic across promoted column
+        // types — values are written textually, so compare textually.
+        // ponytail: text equality; non-string scoping keys still match via cast.
+        clauses.push(format!("{}::text = ${next}", backend.quote_ident(col)));
+        params.push(render_filter_value(val));
+        *next += 1;
+    }
+
+    Ok((clauses, params))
 }
 
 /// Project a chunk's metadata down to the right text representation for the
