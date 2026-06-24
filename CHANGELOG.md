@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 1.0.0-rc1 — 2026-06-24
+
+Adds metadata-filtered ("scoped") top-k retrieval to the Rust `Sink` contract,
+closing the Python↔Rust parity gap (#75). Python (`chunkshop`) and Rust
+(`chunkshop-rs`) ship in lockstep at this version.
+
+### Rust — scoped top-k across all sinks (#75)
+
+- **New `Sink::query_top_k_filtered(query_vec, k, Option<&Filters>)`** — top-k
+  restricted to rows matching an AND-filter on `source`, `tags` (overlap),
+  `metadata` keys, and promoted columns. Additive: the existing `query_top_k`
+  signature and behaviour are unchanged; an empty/`None` filter delegates to it.
+- **Implemented on all five sinks** (pg, sqlite, mariadb, clickhouse, memory)
+  for cross-language parity with Python's four `_build_where` modules. Per-sink
+  SQL: pg jsonb-containment (`@>`); sqlite/mariadb/clickhouse per-key
+  `json_extract` / `JSON_EXTRACT` / `JSONExtractString` equality; tag overlap
+  via `&&` / `json_each` / `JSON_OVERLAPS` / `hasAny`. SQLite over-fetches then
+  post-filters (sqlite-vec can't `WHERE` inside the vec scan).
+- **Identifier safety:** every value binds as a parameter; column names and
+  ClickHouse metadata keys (which can't be bound) pass an allowlist before
+  splicing.
+- 10 new integration tests (sqlite 3, pg 2, mariadb 3, clickhouse 2).
+
 ## 1.0.0-rc — 2026-06-23
 
 First release candidate for 1.0.0. Bundles the Rust lede/lede-enrich Tier-1
