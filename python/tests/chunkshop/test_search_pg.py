@@ -138,6 +138,60 @@ def _embed(embedder, text: str):
     return embedder.embed([text])[0]
 
 
+def test_query_tokens_preserves_hyphen_compounds():
+    # #86: hyphen-numeric IDs must survive tokenization as one compound so the
+    # pg FTS query matches the stored lexeme. No DB needed.
+    from chunkshop.search import _query_tokens
+
+    assert _query_tokens("INC-0001") == ["inc-0001"]
+    assert _query_tokens("ST-7048 refund") == ["st-7048", "refund"]
+    assert _query_tokens("postgres tuning") == ["postgres", "tuning"]
+    # Punctuation/quotes still stripped — an injection probe stays harmless words.
+    assert _query_tokens("'; DROP TABLE users; --") == ["drop", "table", "users"]
+
+
+def test_keyword_search_retrieves_hyphen_numeric_id(corpus_dsn):
+    # #86: INC-0001 must be retrievable by its ID AND discriminate from rows that
+    # only mention "Inc" (which used to tie it once the ID token was destroyed).
+    schema = "chunkshop_search_hyphenid_test"
+    table = "chunks"
+    rows = [
+        ("gold", "Incident INC-0001 root cause: disk full on node 3."),
+        ("distractor1", "Acme Inc reported strong quarterly earnings."),
+        ("distractor2", "The Inc Corporation filed paperwork with the SEC."),
+    ]
+    with psycopg.connect(corpus_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        cur.execute(f"CREATE SCHEMA {schema}")
+        cur.execute(
+            f"CREATE TABLE {schema}.{table} ("
+            "doc_id text, seq_num int, original_content text not null, "
+            "embedded_content text not null, metadata jsonb not null default '{}'::jsonb, "
+            "PRIMARY KEY (doc_id, seq_num))"
+        )
+        for doc_id, body in rows:
+            cur.execute(
+                f"INSERT INTO {schema}.{table}"
+                "(doc_id,seq_num,original_content,embedded_content,metadata) "
+                "VALUES (%s,0,%s,%s,'{}'::jsonb)",
+                (doc_id, body, body),
+            )
+        conn.commit()
+    try:
+        search.ensure_fts(corpus_dsn, schema=schema, table=table)
+        hits = search.keyword_search(
+            corpus_dsn, schema=schema, table=table, query="INC-0001", k=10
+        )
+        ids = [h.doc_id for h in hits]
+        assert ids and ids[0] == "gold", f"gold not surfaced by its ID: {ids}"
+        # The phrase 'inc <-> -0001' excludes rows that only carry 'Inc'.
+        assert "distractor1" not in ids and "distractor2" not in ids, ids
+    finally:
+        with psycopg.connect(corpus_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+            conn.commit()
+
+
 def test_ensure_fts_idempotent(corpus_dsn):
     # Run twice — no error.
     search.ensure_fts(corpus_dsn, schema=SCHEMA, table=TABLE)

@@ -65,12 +65,17 @@ _ALLOWED_LANGUAGES = {
 }
 
 
-# Query tokenizer for the FTS leg (I-12). Alphanumeric runs only — punctuation
-# and quotes are stripped, so an injection probe like `'; DROP TABLE` tokenizes
-# to harmless words. The sanitized tokens are joined with the tsquery OR operator
-# (`|`) and bound to `to_tsquery`, so the ONLY operators in the param are the ones
-# we insert — injection-safe.
-_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+# Query tokenizer for the FTS leg (I-12). Alphanumeric runs, keeping internal
+# hyphens between runs so a hyphen-compound identifier stays whole (#86): the
+# Postgres index stores `to_tsvector('english','INC-0001')` as `'inc' '-0001'`,
+# and `to_tsquery('english','inc-0001')` produces the phrase `'inc' <-> '-0001'`
+# which matches it — whereas the bare `0001` never matches the stored `-0001`,
+# leaving hyphen-numeric IDs unretrievable. The hyphen is only allowed BETWEEN
+# alphanumeric runs (never leading/trailing), so punctuation/quotes are still
+# stripped — an injection probe like `'; DROP TABLE` tokenizes to harmless
+# words. Tokens are joined with the tsquery OR operator (`|`) and bound to
+# `to_tsquery`, so the ONLY operators in the param are the ones we insert.
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")
 
 
 def _query_tokens(query: str) -> list[str]:
