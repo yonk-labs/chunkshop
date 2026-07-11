@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 1.0.0-rc4 — 2026-07-11
+
+Two correctness fixes for the code-aware and search paths.
+
+### Fixed
+
+- **pg FTS keeps hyphen-numeric IDs retrievable (#86).** The Postgres FTS query
+  tokenizer split `INC-0001` into `inc`, `0001`, but the index stores
+  `to_tsvector('english','INC-0001')` as `'inc' '-0001'` — so the bare `0001`
+  never matched and hyphen-numeric IDs carried zero discriminating signal (gold
+  rows tied every `Inc` distractor). The tokenizer now keeps hyphenated runs
+  whole, yielding `to_tsquery('english','inc-0001')` = the phrase
+  `'inc' <-> '-0001'`, which matches the stored lexeme and excludes rows that
+  only mention `Inc`. Injection guarantees on the FTS param are unchanged.
+  SQLite (its own symmetric FTS5 tokenizer) was unaffected.
+- **Rust extractor emits trait default-method bodies as symbols (#84).** The
+  Rust codeparse walker returned early on `trait_item`, never emitting default
+  methods (a `function_item` with a body), while call attribution still charged
+  calls inside those bodies to a `function_item` caller — producing orphan
+  call-graph edges for any call in a trait default method (e.g.
+  `Sink::query_top_k_filtered`). Trait default methods are now emitted as
+  `method` symbols parented to the trait (bare signatures stay unemitted), so
+  their call edges are captured instead of dropped — richer `code_relationships`
+  output and no orphan edges.
+
 ## 1.0.0-rc3 — 2026-07-11
 
 Rust parity for the rc2 `fixed_overlap` whitespace fix, plus one small,

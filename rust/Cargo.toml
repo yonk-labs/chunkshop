@@ -3,7 +3,7 @@ resolver = "2"
 members = ["chunkshop"]
 
 [workspace.package]
-version = "1.0.0-rc3"
+version = "1.0.0-rc4"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/yonk-labs/chunkshop"
