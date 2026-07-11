@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 1.0.0-rc3 — 2026-07-11
+
+Rust parity for the rc2 `fixed_overlap` whitespace fix. No Python code changes
+(the `chunkshop` package is functionally identical to rc2); the lockstep version
+bump republishes both.
+
+### Fixed
+
+- **Rust `fixed_overlap` no longer flattens whitespace (#79, Rust half).** Ports
+  the rc2 Python span fix to `chunker.rs`: the chunker rebuilt each window as
+  `slice.join(" ")` after `split_whitespace()`, discarding newlines/indentation
+  — destructive for code, and it is the recommended `symbol_aware` `if_oversize`
+  fallback. It now records byte spans of words and slices the original text
+  (`content[first.start..last.end]`), preserving interior whitespace.
+  window/step/`max_chars` semantics unchanged. Closes the Rust half of #79
+  (tracked under #76); the parity fixture is regenerated from the fixed Python.
+
 ## 1.0.0-rc2 — 2026-07-11
 
 Two correctness bug fixes in the Python (`chunkshop`) ingest path. Rust
