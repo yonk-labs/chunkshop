@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 1.0.0-rc5 — 2026-07-11
+
+Dependency security patches — no source changes. Clears the dependency-audit
+advisories that surfaced against the current advisory DB.
+
+### Security
+
+- **Python:** `onnx` 1.21.0 → 1.22.0 (CVE-2026-44512), `nltk` 3.9.4 → 3.10.0
+  (PYSEC-2026-597), `lxml-html-clean` 0.4.4 → 0.4.5 (CVE-2026-49825). `pip-audit`
+  clean (torch CVE-2025-3000 remains waived — no fixed release).
+- **Rust:** `anyhow` 1.0.102 → 1.0.103 (RUSTSEC-2026-0190, unsoundness),
+  `crossbeam-epoch` 0.9.18 → 0.9.20 (RUSTSEC-2026-0204). `cargo audit` clean.
+- **Waived (documented in `dependency-audit.yml`):** `quick-xml`
+  RUSTSEC-2026-0194/0195 (XML DoS) — reachable only transitively via
+  `object_store` 0.11 for S3 XML; the fix needs an `object_store` 0.11 → 0.14
+  major bump, tracked as a follow-up. Operator controls the S3 endpoint, so
+  practical risk is low.
+
 ## 1.0.0-rc4 — 2026-07-11
 
 Two correctness fixes for the code-aware and search paths.
