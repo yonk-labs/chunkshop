@@ -26,8 +26,12 @@ def test_rust_symbols(fixtures_dir: Path) -> None:
 
     # 'helper' is nested inside add() and must NOT be emitted (one level deep).
     assert "helper" not in {s.name for s in result.symbols}
-    # Trait method signatures are not emitted (interface marker only).
+    # Trait method signatures (no body) are not emitted (interface marker only).
     assert "apply" not in {s.name for s in result.symbols}
+    # But a trait DEFAULT method (with a body) IS emitted, parented to the trait,
+    # so the calls inside its body have a real caller symbol (no orphan edges).
+    assert ("twice", "method") in by_name
+    assert by_name[("twice", "method")].parent_name == "Op"
 
 
 def test_rust_no_orphan_callers(fixtures_dir: Path) -> None:

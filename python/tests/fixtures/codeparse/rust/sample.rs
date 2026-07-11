@@ -11,6 +11,12 @@ pub struct Calculator {
 
 pub trait Op {
     fn apply(&self, v: i32) -> i32;
+
+    // A DEFAULT method with a body — real code with a call inside. Its call to
+    // target() must attribute to a symbol we actually emit (no orphan edge).
+    fn twice(&self, v: i32) -> i32 {
+        target(v) + target(v)
+    }
 }
 
 impl Calculator {
