@@ -1,11 +1,43 @@
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 import time
+from pathlib import Path
 
 import numpy as np
 from fastembed import TextEmbedding
 
 from chunkshop.config import FastembedEmbedder as Cfg
+
+
+def _purge_incomplete_model_cache() -> bool:
+    """Delete HF-cache model dirs that hold a ``*.incomplete`` blob.
+
+    An interrupted first download leaves a 0-byte ``*.incomplete`` blob in the
+    fastembed/HF cache; fastembed then treats the snapshot as present and skips
+    the download, and ONNX Runtime fails ``NO_SUCHFILE`` on every later init
+    until the dir is wiped by hand. Wiping only the poisoned model dir(s) lets
+    the next construction re-download cleanly. See issue #80.
+
+    Mirrors fastembed's own cache-root convention (``FASTEMBED_CACHE_PATH`` or
+    ``<tempdir>/fastembed_cache``). Returns True if anything was deleted.
+    """
+    cache_root = Path(
+        os.environ.get(
+            "FASTEMBED_CACHE_PATH",
+            os.path.join(tempfile.gettempdir(), "fastembed_cache"),
+        )
+    )
+    if not cache_root.is_dir():
+        return False
+    purged = False
+    for model_dir in cache_root.glob("models--*"):
+        if any(model_dir.rglob("*.incomplete")):
+            shutil.rmtree(model_dir, ignore_errors=True)
+            purged = True
+    return purged
 
 
 class FastembedProvider:
@@ -29,7 +61,16 @@ class FastembedProvider:
         kwargs = {"model_name": cfg.model_name}
         if cfg.threads is not None:
             kwargs["threads"] = cfg.threads
-        self._model = TextEmbedding(**kwargs)
+        try:
+            self._model = TextEmbedding(**kwargs)
+        except Exception:
+            # A download interrupted mid-fetch poisons the cache (see
+            # _purge_incomplete_model_cache). If we find such a partial blob,
+            # wipe it and retry the download once; otherwise this was a real
+            # failure, so re-raise it unchanged.
+            if not _purge_incomplete_model_cache():
+                raise
+            self._model = TextEmbedding(**kwargs)
 
         # Normalize tokenizer padding to BatchLongest. Some HF-uploaded
         # tokenizer.json files (notably the Xenova sentence-transformers

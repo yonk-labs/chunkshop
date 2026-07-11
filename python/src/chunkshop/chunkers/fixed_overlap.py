@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from chunkshop.chunkers.base import Chunk
 from chunkshop.chunkers._oversize import DedupedWarner, apply_if_oversize
 from chunkshop.config import FixedOverlapChunker as Cfg
@@ -16,24 +18,28 @@ class FixedOverlapChunker:
         self._warner = DedupedWarner("fixed_overlap", ceiling) if ceiling is not None else None
 
     def chunk(self, doc: Document) -> list[Chunk]:
-        words = doc.content.split()
+        # Word *spans* into the original text, not split-off word copies. Slicing
+        # content[first_start:last_end] preserves all original whitespace inside
+        # the window (newlines, indentation) — critical when fixed_overlap is the
+        # symbol_aware if_oversize fallback for whitespace-significant code. See #79.
+        spans = [m.span() for m in re.finditer(r"\S+", doc.content)]
         window = self.cfg.window_words
         step = self.cfg.step_words
         chunks: list[Chunk] = []
         seq = 0
         i = 0
-        while i < len(words):
-            slice_words = words[i : i + window]
-            text = " ".join(slice_words)
+        while i < len(spans):
+            slice_spans = spans[i : i + window]
+            text = doc.content[slice_spans[0][0] : slice_spans[-1][1]]
             chunks.append(Chunk(
                 doc_id=doc.id,
                 seq_num=seq,
                 original_content=text,
                 embedded_content=text,
-                metadata={"strategy": "fixed_overlap", "start_word": i, "n_words": len(slice_words)},
+                metadata={"strategy": "fixed_overlap", "start_word": i, "n_words": len(slice_spans)},
             ))
             seq += 1
-            if i + window >= len(words):
+            if i + window >= len(spans):
                 break
             i += step
         return apply_if_oversize(
