@@ -4,9 +4,18 @@
 
 ## 1.0.0-rc3 — 2026-07-11
 
-Rust parity for the rc2 `fixed_overlap` whitespace fix. No Python code changes
-(the `chunkshop` package is functionally identical to rc2); the lockstep version
-bump republishes both.
+Rust parity for the rc2 `fixed_overlap` whitespace fix, plus one small,
+additive Python search knob (#68).
+
+### Added
+
+- **`ef_search` query knob for HNSW search (#68).** pgvector's HNSW
+  recall/latency dial is now reachable per query: `chunkshop search
+  --ef-search N` (1–1000), and an `ef_search=` argument on
+  `search_common.search` / `hybrid_search` / `semantic_search`. Applied via
+  `set_config('hnsw.ef_search', N, is_local=true)` so it is transaction-scoped
+  and never leaks across pooled connections. Unset preserves the server default
+  — no behaviour change for existing callers.
 
 ### Fixed
 
