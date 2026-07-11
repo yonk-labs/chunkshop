@@ -344,6 +344,7 @@ def search(
     summary_max_length: int = 1200,
     language: str = "english",
     vector_metric: str = "cosine",
+    ef_search: Optional[int] = None,
     compress_fn: Optional[Callable[[str], str]] = None,
 ) -> SearchResult:
     """Hybrid search with optional summarization — the chunkshop read entry point.
@@ -392,6 +393,7 @@ def search(
         fusion=fusion,
         language=language,
         vector_metric=vector_metric,
+        ef_search=ef_search,
     )
 
     if return_mode == "chunks":

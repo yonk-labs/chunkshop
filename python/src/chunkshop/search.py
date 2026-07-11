@@ -211,7 +211,9 @@ def _read_connection(dsn: str):
         _pool_release(dsn, conn, ok)
 
 
-def _execute_read(dsn: str, sql: str, params: list[Any]) -> list[tuple]:
+def _execute_read(
+    dsn: str, sql: str, params: list[Any], *, ef_search: Optional[int] = None
+) -> list[tuple]:
     """Run a read query and return all rows, with a one-shot retry guard.
 
     When pooling is enabled and the acquired connection was *reused* from the
@@ -221,17 +223,25 @@ def _execute_read(dsn: str, sql: str, params: list[Any]) -> list[tuple]:
     OperationalError to the caller. A *fresh* connection that fails is a real
     error and is NOT retried (no masking of genuine outages). With pooling
     disabled this is a plain per-call connect, matching the historical path.
+
+    ``ef_search`` (#68) sets the pgvector HNSW recall/latency dial for this query
+    via ``set_config(..., is_local=true)`` — transaction-scoped, so it resets at
+    txn end and never leaks across pooled connection reuse.
     """
+    def _run(cur) -> list[tuple]:
+        if ef_search is not None:
+            cur.execute("SELECT set_config('hnsw.ef_search', %s, true)", [str(ef_search)])
+        cur.execute(sql, params)
+        return cur.fetchall()
+
     if not _pool_enabled():
         with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-            cur.execute(sql, params)
-            return cur.fetchall()
+            return _run(cur)
 
     conn, reused = _pool_acquire(dsn)
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall()
+            rows = _run(cur)
     except _CONN_ERRORS:
         _close_quietly(conn)
         if not reused:
@@ -239,8 +249,7 @@ def _execute_read(dsn: str, sql: str, params: list[Any]) -> list[tuple]:
         conn2 = _open_read_conn(dsn)
         try:
             with conn2.cursor() as cur:
-                cur.execute(sql, params)
-                rows = cur.fetchall()
+                rows = _run(cur)
         except BaseException:
             _close_quietly(conn2)
             raise
@@ -296,6 +305,19 @@ def _check_column_ident(name: str) -> None:
             f"column name must match ^[a-z_][a-z0-9_]*$, got {name!r} "
             "(allowlisted because column identifiers cannot be bound parameters)"
         )
+
+
+def _validate_ef_search(ef_search: Optional[int]) -> Optional[int]:
+    """Validate the pgvector HNSW ``ef_search`` query knob (#68).
+
+    pgvector accepts 1..1000. ``bool`` is rejected explicitly (it is an ``int``
+    subclass, so ``True`` would otherwise slip through as 1).
+    """
+    if ef_search is None:
+        return None
+    if isinstance(ef_search, bool) or not isinstance(ef_search, int) or not (1 <= ef_search <= 1000):
+        raise ValueError(f"ef_search must be an int in [1, 1000], got {ef_search!r}")
+    return ef_search
 
 
 def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
@@ -510,6 +532,7 @@ def semantic_search(
     k: int,
     where: Optional[dict] = None,
     vector_metric: str = "cosine",
+    ef_search: Optional[int] = None,
 ) -> list[Hit]:
     """pgvector top-k; score is higher-is-better. legs=('semantic',).
 
@@ -519,6 +542,7 @@ def semantic_search(
     - ``"inner_product"`` -> ``<#>`` negative inner product, score = inner product
     - ``"l2"`` -> ``<->`` Euclidean distance, score = ``-distance``
     """
+    ef_search = _validate_ef_search(ef_search)
     backend = _backend()
     op, _opclass = backend.vector_metric_sql(vector_metric)
     fq = _fq(backend, schema, table)
@@ -538,7 +562,7 @@ def semantic_search(
     sql += f" ORDER BY embedding {op} %s::vector LIMIT %s"
     params.extend([vec_lit, k])
 
-    rows = _execute_read(dsn, sql, params)
+    rows = _execute_read(dsn, sql, params, ef_search=ef_search)
     return [
         Hit(
             doc_id=r[0],
@@ -569,6 +593,7 @@ def hybrid_search(
     language: str = "english",
     candidate_multiplier: int = 3,
     vector_metric: str = "cosine",
+    ef_search: Optional[int] = None,
 ) -> list[Hit]:
     """Run the requested legs and fuse them into a single ranked list.
 
@@ -602,7 +627,7 @@ def hybrid_search(
     if "semantic" in legs:
         leg_thunks["semantic"] = lambda: semantic_search(
             dsn, schema=schema, table=table, query_vec=query_vec, k=cand_k,
-            where=where, vector_metric=vector_metric,
+            where=where, vector_metric=vector_metric, ef_search=ef_search,
         )
     if "fts" in legs:
         leg_thunks["fts"] = lambda: keyword_search(

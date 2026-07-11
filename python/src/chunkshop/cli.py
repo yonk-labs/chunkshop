@@ -653,6 +653,14 @@ def _parse_by_symbol(value: str) -> tuple[list[str], list[str]]:
     help="Postgres pgvector metric for semantic search. Defaults to target.vector_metric.",
 )
 @click.option(
+    "--ef-search", "ef_search", type=int, default=None,
+    help=(
+        "pgvector HNSW recall/latency dial for the semantic leg (1-1000). "
+        "Higher = better recall, slower. Unset uses the server default. "
+        "Applied per-query (transaction-local), so it never leaks."
+    ),
+)
+@click.option(
     "--where", "where_opts", multiple=True,
     help="Filter as KEY=VALUE (source=x, tags=a,b, metadata.k=v). Repeatable.",
 )
@@ -679,7 +687,7 @@ def _parse_by_symbol(value: str) -> tuple[list[str], list[str]]:
         "(only affects --return summary/summary+chunks)."
     ),
 )
-def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_symbol, as_json, include_facts, compress):
+def search(config, query, k, return_mode, legs, vector_metric, ef_search, where_opts, by_symbol, as_json, include_facts, compress):
     """Hybrid-search a cell's target; optionally summarize the hits.
 
     Embeds the query with the cell's configured embedder, runs a hybrid
@@ -766,6 +774,7 @@ def search(config, query, k, return_mode, legs, vector_metric, where_opts, by_sy
             summarize_fn=summarize_fn,
             language=(tgt.fts.language if tgt.fts else "english"),
             vector_metric=vector_metric or tgt.vector_metric,
+            ef_search=ef_search,
             compress_fn=compress_fn,
         )
     except click.ClickException:
