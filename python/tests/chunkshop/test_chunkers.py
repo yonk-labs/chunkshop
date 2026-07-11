@@ -32,6 +32,19 @@ def test_fixed_overlap_windows():
     assert second_words[0] == "w150"
 
 
+def test_fixed_overlap_preserves_whitespace():
+    # #79: word windows must slice the original text, not rebuild it with single
+    # spaces — newlines/indentation are load-bearing for code and must survive.
+    code = "def f(x):\n    if x:\n        return x\n    return None\n"
+    chunker = load_chunker(FixedOverlapChunker(type="fixed_overlap", window_words=100, step_words=50))
+    chunks = chunker.chunk(_doc(code))
+    assert len(chunks) == 1
+    assert "\n" in chunks[0].original_content
+    # The stored content is a verbatim slice of the source (leading/trailing
+    # window whitespace trimmed, everything between the first and last word kept).
+    assert chunks[0].original_content == code.strip("\n")
+
+
 def test_hierarchy_prefixes_heading():
     # bodies must exceed min_section_chars (default 100); keep them well over to avoid drift
     body_a = "alpha body text that is unambiguously longer than one hundred characters so the min_section_chars filter leaves it intact."

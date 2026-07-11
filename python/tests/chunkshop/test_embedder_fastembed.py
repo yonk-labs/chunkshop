@@ -1,6 +1,30 @@
 import numpy as np
 from chunkshop.config import FastembedEmbedder
 from chunkshop.embedders import load_embedder
+from chunkshop.embedders.fastembed_provider import _purge_incomplete_model_cache
+
+
+def test_purge_incomplete_model_cache_wipes_only_poisoned_dirs(tmp_path, monkeypatch):
+    # #80: an interrupted download leaves a *.incomplete blob; the self-heal must
+    # delete that model dir (so it re-downloads) and leave healthy dirs alone.
+    monkeypatch.setenv("FASTEMBED_CACHE_PATH", str(tmp_path))
+    poisoned = tmp_path / "models--qdrant--bge-base-en-v1.5-onnx-q" / "blobs"
+    poisoned.mkdir(parents=True)
+    (poisoned / "4e55.incomplete").write_bytes(b"")
+    healthy = tmp_path / "models--BAAI--bge-small-en-v1.5" / "blobs"
+    healthy.mkdir(parents=True)
+    (healthy / "abcd").write_bytes(b"real weights")
+
+    assert _purge_incomplete_model_cache() is True
+    assert not (tmp_path / "models--qdrant--bge-base-en-v1.5-onnx-q").exists()
+    assert (tmp_path / "models--BAAI--bge-small-en-v1.5").exists()
+    # Idempotent: nothing poisoned left, so a second call is a no-op.
+    assert _purge_incomplete_model_cache() is False
+
+
+def test_purge_incomplete_model_cache_missing_root_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv("FASTEMBED_CACHE_PATH", str(tmp_path / "does-not-exist"))
+    assert _purge_incomplete_model_cache() is False
 
 
 def test_bge_small_embeds_to_384_dim():
