@@ -4,8 +4,11 @@ Mirrors :mod:`chunkshop.codeparse.langs.go` in shape. Rust groups methods
 under an ``impl_item`` (``impl Calculator { fn add(...) }``): the impl's
 ``type`` is the method's ``parent_name``, the same way Go's receiver type
 groups methods. ``struct_item`` / ``enum_item`` / ``union_item`` land as
-``class``; ``trait_item`` lands as ``interface`` (its method signatures are
-not emitted — the trait is an interface marker, matching the TS/JS posture).
+``class``; ``trait_item`` lands as ``interface``. Bare method signatures
+(``function_signature_item``) are not emitted — interface marker only — but a
+default method (``function_item``, i.e. it has a body) IS emitted as a
+``method`` parented to the trait, so the calls in its body attribute to a real
+symbol instead of becoming orphan edges.
 
 Scope is one level deep: a ``fn`` nested inside another ``fn`` is NOT emitted,
 and a call inside it attributes to the OUTERMOST enclosing ``function_item``
@@ -116,19 +119,26 @@ def _walk_symbols(root: Any, file_path: str, source: bytes) -> list[Symbol]:
             return
         if ntype == "trait_item":
             name_node = node.child_by_field_name("name")
+            trait_name: Optional[str] = None
             if name_node is not None:
-                name = _text(name_node, source)
+                trait_name = _text(name_node, source)
                 symbols.append(
                     Symbol(
-                        name=name,
-                        fqn=build_fqn(file_path, name, None),
+                        name=trait_name,
+                        fqn=build_fqn(file_path, trait_name, None),
                         symbol_type="interface",
                         line_start=node.start_point[0] + 1,
                         line_end=node.end_point[0] + 1,
                         parent_name=None,
                     )
                 )
-            # Don't emit trait method signatures — interface marker only.
+            # Bare method signatures (function_signature_item) are NOT emitted —
+            # interface marker only. But a DEFAULT method (function_item, i.e. it
+            # has a body) is real code with real calls, so descend and emit it
+            # parented to the trait — keeping call attribution symmetric with
+            # _enclosing_function so its calls don't become orphan edges.
+            for child in node.children:
+                visit(child, trait_name)
             return
         if ntype == "impl_item":
             impl_type = _impl_type_name(node, source)
@@ -186,6 +196,12 @@ def _enclosing_function(
     while anc is not None:
         if anc.type == "impl_item":
             parent = _impl_type_name(anc, source)
+            break
+        if anc.type == "trait_item":
+            # Symmetric with _walk_symbols: a default method's parent is its
+            # trait, so its calls resolve to the emitted method symbol.
+            name_node = anc.child_by_field_name("name")
+            parent = _text(name_node, source) if name_node is not None else None
             break
         anc = anc.parent
     return (func_name, parent)
