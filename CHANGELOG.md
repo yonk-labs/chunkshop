@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 1.0.0-rc2 — 2026-07-11
+
+Two correctness bug fixes in the Python (`chunkshop`) ingest path. Rust
+(`chunkshop-rs`) ships in lockstep at this version (no Rust code changes; the
+`fixed_overlap` whitespace fix still needs porting — tracked under #76).
+
+### Fixed
+
+- **`fixed_overlap` no longer flattens whitespace (#79).** The chunker rebuilt
+  each window as `" ".join(words)`, discarding every newline and indent. Since
+  `fixed_overlap` is the recommended `symbol_aware` `if_oversize` fallback, this
+  silently destroyed the structure of every code symbol over `max_chars`. It now
+  slices the original text by word *spans* (`content[first_start:last_end]`), so
+  all interior whitespace is preserved; window/step/`max_chars` semantics are
+  unchanged.
+- **Interrupted first model download self-heals (#80).** A download interrupted
+  mid-fetch left a 0-byte `*.incomplete` blob in the fastembed/HF cache;
+  fastembed then treated the snapshot as present and ONNX Runtime failed
+  `NO_SUCHFILE` on every later init until the cache was wiped by hand. The
+  fastembed provider now detects a poisoned model dir on construction failure,
+  purges only that dir, and retries the download once.
+
 ## 1.0.0-rc1 — 2026-06-24
 
 Adds metadata-filtered ("scoped") top-k retrieval to the Rust `Sink` contract,
