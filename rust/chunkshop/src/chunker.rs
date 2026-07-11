@@ -698,8 +698,10 @@ impl ChunkerImpl for HierarchyChunker {
 }
 
 /// Word-level sliding-window chunker. Direct port of
-/// `python/src/chunkshop/chunkers/fixed_overlap.py`. Same `text.split()`
-/// whitespace-collapse semantics as Python (use Rust's `split_whitespace`).
+/// `python/src/chunkshop/chunkers/fixed_overlap.py`. Word boundaries follow
+/// `split_whitespace` semantics, but each window is sliced from the original
+/// text by byte span so interior whitespace (newlines, indentation) survives —
+/// critical when this is the `symbol_aware` `if_oversize` fallback for code.
 /// Each chunk carries `metadata.start_word` and `metadata.n_words`.
 pub struct FixedOverlapChunker {
     cfg: FixedOverlapChunkerConfig,
@@ -720,16 +722,32 @@ impl FixedOverlapChunker {
     }
 
     pub fn chunk(&self, doc: &Document) -> Vec<Chunk> {
-        let words: Vec<&str> = doc.content.split_whitespace().collect();
+        // Byte spans of whitespace-delimited words into the original text.
+        // Slicing content[first.start..last.end] preserves interior whitespace,
+        // mirroring the Python span fix for #79 (don't rebuild with `join`).
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        let mut start: Option<usize> = None;
+        for (idx, ch) in doc.content.char_indices() {
+            if ch.is_whitespace() {
+                if let Some(s) = start.take() {
+                    spans.push((s, idx));
+                }
+            } else if start.is_none() {
+                start = Some(idx);
+            }
+        }
+        if let Some(s) = start {
+            spans.push((s, doc.content.len()));
+        }
         let window = self.cfg.window_words;
         let step = self.cfg.step_words;
         let mut chunks: Vec<Chunk> = Vec::new();
         let mut seq = 0usize;
         let mut i = 0usize;
-        while i < words.len() {
-            let end = (i + window).min(words.len());
-            let slice = &words[i..end];
-            let text = slice.join(" ");
+        while i < spans.len() {
+            let end = (i + window).min(spans.len());
+            let slice = &spans[i..end];
+            let text = doc.content[slice[0].0..slice[slice.len() - 1].1].to_string();
             chunks.push(Chunk {
                 doc_id: doc.id.clone(),
                 seq_num: seq,
@@ -742,7 +760,7 @@ impl FixedOverlapChunker {
                 }),
             });
             seq += 1;
-            if i + window >= words.len() {
+            if i + window >= spans.len() {
                 break;
             }
             i += step;
@@ -1744,6 +1762,32 @@ mod tests {
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].original_content, "Just a short sentence.");
         assert_eq!(chunks[0].embedded_content, chunks[0].original_content);
+    }
+
+    #[test]
+    fn fixed_overlap_preserves_whitespace() {
+        // #79: word windows slice the original text, not rebuild it with single
+        // spaces — newlines/indentation must survive (load-bearing for code).
+        let code = "def f(x):\n    if x:\n        return x\n    return None\n";
+        let doc = Document {
+            id: "c".into(),
+            content: code.into(),
+            title: None,
+            metadata: json!({}),
+            fingerprint: None,
+        };
+        let chunker = FixedOverlapChunker::new(FixedOverlapChunkerConfig {
+            window_words: 100,
+            step_words: 50,
+            max_chars: None,
+            if_oversize: None,
+        })
+        .expect("valid cfg");
+        let chunks = chunker.chunk(&doc);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].original_content.contains('\n'));
+        // Verbatim slice of the source, trailing window whitespace trimmed.
+        assert_eq!(chunks[0].original_content, code.trim_end());
     }
 
     #[test]
