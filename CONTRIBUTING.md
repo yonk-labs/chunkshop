@@ -1,8 +1,8 @@
 # Contributing to chunkshop
 
-Thanks for considering a contribution. chunkshop is an active alpha project,
-so the bar for PRs is "small, explained, with tests" — not "matches a
-6-month roadmap."
+Thanks for considering a contribution. chunkshop is heading into 1.0 (the
+release-candidate series is on PyPI and crates.io), and the bar for PRs is
+"small, explained, with tests" — not "matches a 6-month roadmap."
 
 ## What to expect
 
@@ -10,11 +10,14 @@ so the bar for PRs is "small, explained, with tests" — not "matches a
   an LLM orchestrator, or an observability tool. See
   [`docs/executive-summary.md`](docs/executive-summary.md) for the
   boundary.
-- **Python only today.** Rust and Go ports are planned but the only
-  reference implementation is Python.
-- **Alpha means APIs move.** v0.2.0 semver-minor bumps can break public
-  signatures. Breaking changes go in `CHANGELOG.md` under the release
-  they land in.
+- **Two implementations.** Python (`python/`) is the reference and has the
+  full feature surface; Rust (`rust/`, published as `chunkshop-rs`) covers
+  the core pipeline, all 4 backends, and the bakeoff, with its own test
+  suite (`cargo test`). Pipeline changes usually need parity in both — see
+  the parity table in [`README.md`](README.md). Go is planned but not
+  started.
+- **Pre-1.0, APIs can still move.** Breaking changes go in `CHANGELOG.md`
+  under the release they land in.
 
 ## Setup
 

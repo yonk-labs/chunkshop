@@ -16,10 +16,10 @@ the other.
 
 ```mermaid
 flowchart LR
-    S[Source<br/>files · json_corpus · http · s3<br/>pg_table · mariadb_table<br/>sqlite_table · clickhouse_table<br/>inline] --> F[Framer<br/>identity · heading_boundary<br/>regex_boundary · jsonpath]
-    F --> C[Chunker<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand<br/>semantic · summary_embed<br/>hierarchical_summary]
-    C --> E[Embedder<br/>fastembed: ONNX · int8 or fp32]
-    E --> X[Extractor<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · composite]
+    S[Source<br/>files · json_corpus · http · s3<br/>pg_table · mariadb_table<br/>sqlite_table · clickhouse_table<br/>inline · connector<br/>session_staging · comment_extracts] --> F[Framer<br/>identity · heading_boundary<br/>regex_boundary · jsonpath<br/>session_episode]
+    F --> C[Chunker<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand<br/>semantic · summary_embed<br/>hierarchical_summary · consolidation<br/>code_aware · symbol_aware]
+    C --> E[Embedder<br/>fastembed: ONNX · int8 or fp32<br/>openai: remote endpoint]
+    E --> X[Extractor<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · cooccurrence<br/>lede_top_terms · lede_report<br/>code_summary · code_relationships · composite]
     X --> SK[Sink<br/>postgres · mariadb · sqlite · clickhouse]
     SK --> DB[(Vector table<br/>+ index)]
 ```
@@ -286,17 +286,17 @@ original_content. The sink writes both. See
 
 ## Cross-language parity
 
-Python and Rust both implement the full single-cell pipeline. The bakeoff
-ships at parity (Rust bakeoff is PG-only as of v0.4.0; multi-target Rust
-support is a v0.4.1 follow-up). The orchestrator (parallel multi-cell
-fan-out) is still Python-only.
+Python and Rust both implement the full single-cell pipeline, and the
+bakeoff ships at parity on all 4 backends. The orchestrator (parallel
+multi-cell fan-out), the connectors plugin layer, the code-aware chunkers,
+and the read-side search CLI are Python-only.
 
 | Layer | Python | Rust |
 |---|---|---|
 | Source / framer / chunker / embedder / extractor / sink | ✅ | ✅ |
 | `Pipeline` (inline / library mode) | ✅ | ✅ |
 | `chunkshop ingest` (one YAML → one cell) | ✅ | ✅ |
-| `chunkshop bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ multi-backend | ✅ PG-only |
+| `chunkshop bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ multi-backend | ✅ multi-backend |
 | `chunkshop orchestrate` (N cells as parallel subprocesses) | ✅ | ❌ |
 | Cross-backend matrix tests (16 cells: 4 sources × 4 sinks) | ✅ | ✅ |
 | Cross-language vector parity (one lang writes, other reads) | ✅ verified per-backend | ✅ verified per-backend |
@@ -337,8 +337,8 @@ X`). Subprocess isolation matters because:
 Each subprocess inherits the parent's env, so DSN env vars set once at the
 shell apply to every cell.
 
-The Rust port doesn't have an orchestrator yet — the use case is dominated
-by Python deployments today. v0.5+ scope.
+The Rust port doesn't have an orchestrator — the use case is dominated
+by Python deployments today.
 
 ## Thread discipline
 

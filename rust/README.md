@@ -34,7 +34,8 @@ and the same bakeoff YAML produces equivalent leaderboards in both languages
 > `tests/sp1_parity_python.rs`. The orchestrator port is the next major
 > piece.
 
-**Status:** v0.6.0 beta. Single-cell pipeline + bakeoff at parity with Python
+**Status:** versioned in lockstep with Python — see
+[`CHANGELOG.md`](../CHANGELOG.md). Single-cell pipeline + bakeoff at parity with Python
 for the chunk-table path (modulo two NLP-heavy extractors that need spaCy)
 plus full SP-1 incremental-sync surface (RM-B).
 The same canonical

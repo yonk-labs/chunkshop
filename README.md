@@ -17,60 +17,54 @@ as a library or driven from the command line.
 languages: Python is the reference; Rust ships to crates.io. Vectors written
 by either are interchangeable.
 
-## v0.6.0 — incremental sync primitives + RawStore (SP-1) + Rust parity (RM-B)
+Current release: the badges above track PyPI and crates.io live (the 1.0.0
+release-candidate series as of this writing). Release-by-release history
+lives in [`CHANGELOG.md`](CHANGELOG.md) — this README describes what
+chunkshop does today, version-free.
 
-- **SP-1 sync primitives** — `SyncMode` enum (`full_resync` / `cursor` /
-  `fingerprint`), `IncrementalSource` and `PrunableSource` protocols/traits,
-  `StaleCursorError`, `Document.fingerprint`. Cursor wire format is
-  byte-identical Python ↔ Rust.
-- **`pg_table` tuple cursor** — `(updated_at, id::text) > (?, ?)` defends
-  against silent row loss at boundary timestamps. Activated by setting
-  `updated_at_column` in YAML. Python commit `ff01268`; Rust mirror in RM-B
-  Task 2.
-- **`s3` ETag IncrementalSource** — cursor is `{key: etag}` map; unchanged
-  ETags skip the GET. Cross-implementation cursor compatible.
-- **`http` depth-crawl + ETag/Last-Modified cursor + robots.txt** — BFS
-  link crawl with `crawl_depth`, conditional GETs (`If-None-Match` /
-  `If-Modified-Since`), polite delays, configurable `User-Agent`.
-- **`RawStore` primitive** — pluggable storage for the original bytes
-  (filesystem + S3). SHA-256-keyed paths defend against `doc_id`
-  traversal. LocalRawStore byte-identical to Python's; S3RawStore stores
-  fingerprint in S3 object metadata for cross-impl compatibility.
-- **Rust covers all the SP-1 surfaces** — see `rust/README.md` for the
-  at-a-glance parity table. The chunkshop-connectors plugin layer
-  (gdrive/github/blob/rss/notion/dropbox/gitlab + 20 stubs), the codeparse
-  foundation, the `code_aware` / `symbol_aware` chunkers, the
-  `code_relationships` / `code_summary` extractors, OAuth providers, and
-  the PDF/DOCX/PPTX/XLSX file parsers are explicitly Python-only by design
-  (spec D6).
-
-## v0.5.0 — modular backends + document-table groundwork
+## What's in the box
 
 - **4 sink backends** (postgres, mariadb, sqlite, clickhouse) — all 4 in
-  Python AND Rust.
-- **9 sources** (`files`, `json_corpus`, `http`, `s3`, `inline`,
-  `pg_table`, `mariadb_table`, `sqlite_table`, `clickhouse_table`).
-- **The 16-cell cross-backend matrix** — every DB-source × DB-sink combo
-  round-trips in both languages. Pinned in CI (`cargo test --test
-  cross_backend_matrix` / `pytest tests/chunkshop/test_cross_backend_matrix.py`).
-- **Cross-backend bakeoff** — one YAML, one `chunkshop bakeoff` command,
-  leaderboards across all 4 backends side-by-side (Python; Rust bakeoff is
-  PG-only for now).
-- **Opt-in Postgres document table** — Python/Postgres can write a companion
-  one-row-per-document table with `target.documents.enabled: true`. This is
-  Python/Postgres-only in v0.5.0; Rust rejects enabled document stores until
-  Rust/Postgres parity lands.
-- **Identical retrieval quality across backends.** The v0.4.0 validation
-  bakeoff (NTSB corpus, 20 docs, 12 gold queries, 2 chunkers, 1 embedder)
-  produced **identical MRR (0.903 sentence_aware, 0.896 hierarchy) on all 4
-  backends.** Differences are wall time, not accuracy.
+  Python AND Rust, with the full 16-cell DB-source × DB-sink matrix pinned
+  in CI. Identical retrieval quality across backends — differences are
+  wall time, not accuracy.
+- **12 sources** — `files` (with parsers for PDF/DOCX/PPTX/XLSX), `json_corpus`,
+  `http` (BFS depth-crawl, ETag/Last-Modified cursors, robots.txt), `s3`,
+  `inline`, `pg_table` / `mariadb_table` / `sqlite_table` / `clickhouse_table`,
+  `connector` (the chunkshop-connectors plugin layer: gdrive, github, blob,
+  rss + experimental stubs), `session_staging`, `comment_extracts`.
+- **Incremental sync** — `SyncMode` (`full_resync` / `cursor` /
+  `fingerprint`), prune-on-delete, crash-safe cursors, byte-identical
+  cursor wire format Python ↔ Rust. See [`docs/incremental.md`](docs/incremental.md).
+- **10 chunkers** — prose (`sentence_aware`, `hierarchy`, `fixed_overlap`,
+  `neighbor_expand`, `semantic`), summarization (`summary_embed`,
+  `hierarchical_summary`, `consolidation`), and code-aware (`code_aware`,
+  `symbol_aware` — 10 languages via tree-sitter, stamping `fqn` /
+  `scope_chain` per chunk).
+- **2 embedder types** — `fastembed` (local ONNX, int8 or fp32) and
+  `openai` (any OpenAI-compatible `/v1/embeddings` endpoint: OpenAI,
+  Voyage, Mistral, or a local server).
+- **11 extractors** — keywords/entities (`rake_keywords`, `keybert_phrases`,
+  `spacy_entities`, `lang_detect`, `cooccurrence`, `composite`), lede-powered
+  (`lede_top_terms`, `lede_report`), and code (`code_summary`,
+  `code_relationships` — cross-file call/import edges that power
+  `chunkshop impact-of`).
+- **Read side** — semantic / keyword / hybrid search plus Fast-mode
+  summarization, from the library or the `chunkshop search` CLI (next
+  section).
+- **Agent-memory primitives** — `session_staging` source +
+  `session_episode` framer + `consolidation` chunker turn raw agent-session
+  logs into consolidated, queryable memory tables.
 
 ## Read side — hybrid search + Fast-mode summarization
 
 chunkshop also ships an in-process **read API** over the tables it writes:
 `semantic_search` (vector top-K), `keyword_search` (full-text), and
 `hybrid_search` (both legs, RRF or weighted fusion) — on all four backends
-(pg/sqlite/mariadb full FTS; clickhouse degraded by design). On top of it,
+(pg/sqlite/mariadb full FTS; clickhouse degraded by design). The same
+surface is on the CLI as `chunkshop search` (plus `--by-symbol` for
+code corpora, `chunkshop impact-of` for call-graph blast radius, and
+`chunkshop fact-search` over consolidated facts). On top of it,
 `summarize_hits` is a **Fast-mode RAG** helper: collapse the K retrieved chunks
 into one query-biased summary before sending to an LLM — **~90% fewer input
 tokens for ~2–3 ms**, costing about one query in ten of accuracy. See
@@ -104,10 +98,10 @@ zero-ops dark horse at <1M chunks; MariaDB is now competitive on query.
 
 ```mermaid
 flowchart LR
-    S[Source<br/>files · json_corpus · http · s3<br/>pg_table · mariadb_table<br/>sqlite_table · clickhouse_table<br/>inline] --> F[Framer<br/>identity · heading_boundary<br/>regex_boundary · jsonpath]
-    F --> C[Chunker<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand<br/>semantic · summary_embed<br/>hierarchical_summary]
-    C --> E[Embedder<br/>fastembed · ONNX · int8 or fp32]
-    E --> X[Extractor<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · composite]
+    S[Source<br/>files · json_corpus · http · s3<br/>pg_table · mariadb_table<br/>sqlite_table · clickhouse_table<br/>inline · connector<br/>session_staging · comment_extracts] --> F[Framer<br/>identity · heading_boundary<br/>regex_boundary · jsonpath<br/>session_episode]
+    F --> C[Chunker<br/>sentence_aware · fixed_overlap<br/>hierarchy · neighbor_expand<br/>semantic · summary_embed<br/>hierarchical_summary · consolidation<br/>code_aware · symbol_aware]
+    C --> E[Embedder<br/>fastembed · int8 or fp32<br/>openai-compatible remote]
+    E --> X[Extractor<br/>none · rake_keywords · keybert_phrases<br/>spacy_entities · lang_detect · cooccurrence<br/>lede_top_terms · lede_report<br/>code_summary · code_relationships · composite]
     X --> SK[Sink<br/>postgres · mariadb<br/>sqlite · clickhouse]
     SK --> DB[(Vector table + index)]
 ```
@@ -164,6 +158,23 @@ Already past step 3 and just want the runtime? `chunkshop ingest --config
 <your-cell>.yaml`. Same for Rust: `chunkshop-rs ingest --config
 <your-cell>.yaml`.
 
+## CLI at a glance
+
+| Command | What it does |
+|---|---|
+| `chunkshop init` | Scaffold a starter cell YAML. |
+| `chunkshop validate` | Validate a YAML without running it (no DB touched). |
+| `chunkshop ingest` | Run one cell end-to-end. |
+| `chunkshop prefetch` | Download the embedder model ahead of time. |
+| `chunkshop orchestrate` | Run N cells as parallel subprocesses. |
+| `chunkshop bakeoff` | Chunker × embedder × backend matrix → leaderboard + `recommended.yaml`. |
+| `chunkshop eval validate` / `eval plan` | Validate + expand an eval-profile matrix. |
+| `chunkshop search` | Semantic / keyword / hybrid search over an ingested table ([reference](docs/reference/cli-search.md)). |
+| `chunkshop impact-of` | Callers/callees blast radius for a symbol, from `code_relationships` edges ([reference](docs/reference/cli-impact-of.md)). |
+| `chunkshop fact-search` | Query consolidated facts written by the `consolidation` chunker ([reference](docs/reference/cli-fact-search.md)). |
+
+Rust (`chunkshop-rs`) ships `ingest`, `validate`, and `bakeoff`.
+
 ## Pick your backend
 
 | Backend | When to use it | Engine doc |
@@ -181,7 +192,7 @@ test-pinned. See [`docs/mixing-sources-and-sinks.md`](docs/mixing-sources-and-si
 | Impl | Path | State |
 |---|---|---|
 | Python reference | `python/` | Published on [PyPI](https://pypi.org/project/chunkshop/). All features. int8 default. |
-| Rust | `rust/` | Published on [crates.io](https://crates.io/crates/chunkshop-rs). Full pipeline + 4 backends. Bakeoff is PG-only (multi-target Rust bakeoff is a v0.4.1 follow-up). Orchestrator is Python-only. |
+| Rust | `rust/` | Published on [crates.io](https://crates.io/crates/chunkshop-rs). Full pipeline + 4 backends + multi-backend bakeoff. Orchestrator, connectors, code-aware chunkers, and the read-side search CLI are Python-only. |
 | Go | `go/` | Not started. |
 
 ### What "parity" means and doesn't mean
@@ -192,8 +203,10 @@ test-pinned. See [`docs/mixing-sources-and-sinks.md`](docs/mixing-sources-and-si
 | `Pipeline` (inline / library mode) | ✅ | ✅ |
 | `chunkshop ingest` (one YAML → one cell) | ✅ | ✅ |
 | **16-cell cross-backend matrix (4 sources × 4 sinks)** | ✅ | ✅ |
-| `chunkshop bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ multi-backend | ✅ PG-only |
+| `chunkshop bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ multi-backend | ✅ multi-backend |
 | `chunkshop orchestrate` (N cells as parallel subprocesses) | ✅ | ❌ |
+| Read side (`search` / `impact-of` / `fact-search`, hybrid search API) | ✅ | ❌ (query the tables directly — [`docs/query-clients.md`](docs/query-clients.md)) |
+| Connectors plugin layer, codeparse / code-aware chunkers, file parsers | ✅ | ❌ Python-only by design (spec D6) |
 | `target.documents` companion document table | ✅ Postgres only | ❌ fails loudly |
 | Embedder registry breadth | full fastembed catalogue + custom-registered HF | BGE int8 (bit-near-exact) + nomic v1.5 + stock fastembed-rs catalogue + YAML-driven HF |
 
@@ -226,11 +239,11 @@ defaults to identity):
 
 | Section | Types |
 |---|---|
-| source | files · json_corpus · http · s3 · pg_table · mariadb_table · sqlite_table · clickhouse_table · inline |
-| framer | identity (default) · heading_boundary · regex_boundary · jsonpath |
-| chunker | sentence_aware · fixed_overlap · hierarchy · neighbor_expand · semantic · summary_embed · hierarchical_summary |
-| embedder | fastembed (ONNX via `fastembed` in Python, `ort` in Rust) |
-| extractor | none · rake_keywords · keybert_phrases · spacy_entities · lang_detect · composite (opt-in extras) |
+| source | files · json_corpus · http · s3 · pg_table · mariadb_table · sqlite_table · clickhouse_table · inline · connector · session_staging · comment_extracts |
+| framer | identity (default) · heading_boundary · regex_boundary · jsonpath · session_episode |
+| chunker | sentence_aware · fixed_overlap · hierarchy · neighbor_expand · semantic · summary_embed · hierarchical_summary · consolidation · code_aware · symbol_aware |
+| embedder | fastembed (ONNX via `fastembed` in Python, `ort` in Rust) · openai (OpenAI-compatible remote endpoint) |
+| extractor | none · rake_keywords · keybert_phrases · spacy_entities · lang_detect · cooccurrence · lede_top_terms · lede_report · code_summary · code_relationships · composite (opt-in extras) |
 | target | postgres · mariadb · sqlite · clickhouse; `mode: overwrite \| append \| create_if_missing`; `source_tag` + `promote_metadata` for multi-source tables |
 
 Full field-by-field reference: [`python/README.md`](python/README.md).
@@ -298,6 +311,8 @@ Rust parity yet. See [`docs/storage-model.md`](docs/storage-model.md).
 | [`docs/query-clients.md`](docs/query-clients.md) | Query the ingested table from Python, JS/TS, Rust, Go (raw SQL). |
 | [`docs/hybrid-search.md`](docs/hybrid-search.md) | Read-side Python API: semantic / keyword / hybrid search + fusion, and `summarize_hits` Fast-mode RAG. |
 | [`docs/fast-mode-rag-benchmarks.md`](docs/fast-mode-rag-benchmarks.md) | Fast-mode token-savings + accuracy benchmarks behind `summarize_hits`. |
+| [`docs/incremental.md`](docs/incremental.md) | Incremental sync: cursors, fingerprints, prune-on-delete, crash safety. |
+| [`docs/reference/`](docs/reference/README.md) | Per-type reference cards: `symbol_aware` / `code_aware` chunkers, `code_*` extractors, `openai` embedder, connectors, CLI `search` / `impact-of` / `fact-search`. |
 
 ### Tutorials
 
