@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+## 1.0.0-rc6 — 2026-08-28
+
+Documentation refresh + dependency security patches — no source changes.
+
+### Security
+
+- **Python (lockfile):** `pypdf` 6.14.2 → 6.16.2 (PYSEC-2026-3656),
+  `setuptools` 81.0.0 → 84.0.0 (PYSEC-2026-3447), `torch` 2.11.0 → 2.13.0
+  (PYSEC-2025-194 / CVE-2025-3000 — a fixed torch release now exists, so the
+  rc5-era "no fixed release" waiver in `dependency-audit.yml` is obsolete and
+  can be dropped), `pillow` 12.2.0 → 12.3.0 (PYSEC-2026-3493/3494/3496),
+  `click` 8.3.2 → 8.5.0 (PYSEC-2026-2132). `pip-audit` fully clean — no
+  remaining waivers needed on the Python side.
+- **Rust (lockfile):** `h2` 0.4.13 → 0.4.19 (RUSTSEC-2026-0258, unbounded
+  empty DATA frames). `cargo audit` clean modulo the documented quick-xml
+  waivers (RUSTSEC-2026-0194/0195).
+
+### Documentation
+
+- **All user-facing docs brought up to the current release surface (#90).**
+  The top-level README was frozen at the v0.6.0 era: 7 CLI subcommands
+  (`search`, `impact-of`, `fact-search`, `eval`, `init`, `validate`,
+  `prefetch`), the code-aware chunkers, the `openai` embedder, the
+  agent-memory primitives, and the connectors layer were all shipped but
+  undocumented there. READMEs are now version-free — release history lives
+  in this file only, so the two can't drift again. Also fixed:
+  CONTRIBUTING.md claimed the Rust implementation didn't exist; README /
+  architecture.md / getting-started.md claimed Rust bakeoff was PG-only /
+  in-flight (it ships multi-backend); getting-started.md pointed at a
+  corpus path in a sibling repo and a dead `sample-results.md` link;
+  python/README.md documented 2 of 10 subcommands, 5 of 12 sources, 7 of
+  10 chunkers, 2 of 11 extractors, and stale extras pins.
+
 ## 1.0.0-rc5 — 2026-07-11
 
 Dependency security patches — no source changes. Clears the dependency-audit
