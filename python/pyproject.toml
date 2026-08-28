@@ -1,6 +1,6 @@
 [project]
 name = "chunkshop"
-version = "1.0.0-rc5"
+version = "1.0.0-rc6"
 description = "Standalone ingest-to-pgvector: source → chunker → embedder → extractor → table. int8 by default."
 readme = "README.md"
 requires-python = ">=3.12"
