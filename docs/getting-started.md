@@ -1,7 +1,7 @@
 # Getting started — the chunkshop user journey, end-to-end
 
 This doc walks the canonical chunkshop loop using a real corpus: 20 NTSB
-aviation-accident reports shipped under `pg-raggraph/benchmarks/kg-rag-eval/`.
+aviation-accident reports shipped under `docs/samples/bakeoff-ntsb/corpus/`.
 By the end, you'll have:
 
 - A leaderboard ranking 12 (chunker × embedder) combos against 12 hand-written gold queries
@@ -32,7 +32,7 @@ Time budget: **~10 minutes** of reading, **~90 seconds** of bakeoff compute on a
 
 - A reachable Postgres with the `pgvector` extension
 - Python 3.12+ and `uv` (or `pip`)
-- Optional: `chunkshop-rs` if you want to run **step 4** (ingest) in Rust. Steps 1–3 (the bakeoff) are Python today; the Rust port is in flight.
+- Optional: `chunkshop-rs` if you want to run the bakeoff (step 3) or ingest (step 4) in Rust — both are shipped and parity-verified against Python.
 
 ```bash
 # Quickest path to a pgvector-enabled Postgres:
@@ -111,7 +111,7 @@ When it's done, you get three files:
 | `skill-output/bakeoff/ntsb_bakeoff/report.md`    | Leaderboard + per-query detail, sorted by MRR |
 | `skill-output/bakeoff/ntsb_bakeoff/recommended.yaml` | The winning combo as a runnable `chunkshop ingest` cell |
 
-The leaderboard for our verified run ([`docs/samples/bakeoff-ntsb/sample-results.md`](samples/bakeoff-ntsb/sample-results.md)) looks like:
+The leaderboard for our verified run ([`docs/samples/bakeoff-ntsb/sample-results-python.md`](samples/bakeoff-ntsb/sample-results-python.md); Rust: [`sample-results-rust.md`](samples/bakeoff-ntsb/sample-results-rust.md)) looks like:
 
 | # | Chunker | Embedder | r@1 | r@3 | r@5 | MRR |
 |---|---|---|---|---|---|---|

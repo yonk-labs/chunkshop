@@ -1,6 +1,7 @@
 # chunkshop (Python)
 
-Reference implementation of the chunkshop ingest tool. v0.5.0 beta.
+Reference implementation of the chunkshop ingest tool. For the current
+version and release history see [`CHANGELOG.md`](../CHANGELOG.md).
 
 **New here?** Start with the [**end-to-end tutorial**](../docs/tutorial.md) — a guided
 walkthrough from zero (no Postgres) to a running semantic query.
@@ -42,9 +43,13 @@ Optional extras:
 | `spacy`      | `spacy` for the `spacy_entities` NER extractor.                      |
 | `lang`       | `langdetect` for the `lang_detect` extractor.                        |
 | `nlp`        | Umbrella: `keybert` + `spacy` + `lang` in one install.               |
-| `lede`      | `lede>=0.4.5` for `summary_embed`, query hints, and `lede_report` document metadata. |
-| `lede-spacy`| `lede-spacy>=0.4.5` for optional spaCy-backed lede hint expansion. |
+| `lede`      | `lede>=0.5.0` for `summary_embed`, query hints, and `lede_report` document metadata. |
+| `lede-spacy`| `lede-spacy>=0.5.0` for optional spaCy-backed lede hint expansion. |
 | `sumy`       | `sumy` + NLTK corpora for the sumy adapter shim (`chunkshop.summarizers.sumy`). |
+| `sqlite` / `mariadb` / `clickhouse` | Per-backend drivers. `all-backends` pulls all three (Postgres needs no extra). |
+| `s3`         | `boto3` for the `s3` source and the S3 RawStore.                     |
+| `pdf` / `docx` / `pptx` / `xlsx` / `html` | File parsers for the `files` source. `office` = pdf+docx+pptx+xlsx; `all-parsers` = office+html. |
+| `code`       | tree-sitter grammars (10 languages) for `symbol_aware` + `code_relationships`. A regex fallback runs when absent. |
 | `quantize`   | `onnx` for on-the-fly quantization scratch.                          |
 | `dev`        | `pytest`, `pytest-asyncio`, `onnx`.                                  |
 
@@ -86,7 +91,19 @@ Success looks like:
 
 ## CLI
 
-Two subcommands: `ingest` (one cell) and `orchestrate` (many cells in parallel).
+Ten subcommands. The three core ones (`ingest`, `orchestrate`, `bakeoff`)
+are documented in detail below; the rest have their own reference cards:
+
+| Subcommand | Purpose | Reference |
+|---|---|---|
+| `init` / `validate` / `prefetch` | Scaffold a cell YAML / check it without touching a DB / pre-download the embedder model. | [`cli-admin.md`](../docs/reference/cli-admin.md) |
+| `ingest` | Run one cell end-to-end. | below |
+| `orchestrate` | Run N cells as parallel subprocesses. | below |
+| `bakeoff` | Chunker × embedder × backend matrix → leaderboard + `recommended.yaml`. | below |
+| `eval validate` / `eval plan` | Validate + expand an eval-profile matrix. | `chunkshop eval --help` |
+| `search` | Semantic / keyword / hybrid search over an ingested table (`--by-symbol` for code corpora). | [`cli-search.md`](../docs/reference/cli-search.md) |
+| `impact-of` | Callers/callees blast radius for a symbol via `code_relationships` edges. | [`cli-impact-of.md`](../docs/reference/cli-impact-of.md) |
+| `fact-search` | Query consolidated facts written by the `consolidation` chunker. | [`cli-fact-search.md`](../docs/reference/cli-fact-search.md) |
 
 ### `chunkshop ingest`
 
@@ -175,15 +192,20 @@ runtime:  { ... }    # optional, sensible defaults below
 
 | `type`         | Required fields                        | Optional fields                                                          |
 |----------------|----------------------------------------|--------------------------------------------------------------------------|
-| `files`        | `glob`                                 | `id_from: path \| stem \| sha1` (default `stem`), `encoding` (`utf-8`)   |
+| `files`        | `glob`                                 | `id_from: path \| stem \| sha1` (default `stem`), `encoding` (`utf-8`), `incremental` (cursor-based sync — see [`../docs/incremental.md`](../docs/incremental.md)) |
 | `json_corpus`  | `path`                                 | `documents_key` (`documents`), `id_field` (`id`), `content_field` (`content`), `title_field` (`title`) |
-| `pg_table`     | `dsn_env`, `schema`, `table`, `id_column`, `content_column` | `title_column`, `where`                               |
-| `http`         | `urls` or `sitemap`                    | — (stub today)                                                           |
-| `s3`           | `bucket`                               | `prefix` (stub today)                                                    |
+| `pg_table`     | `dsn_env`, `database`, `table`, `id_column`, `content_column` | `title_column`, `where`, `metadata_columns`, `updated_at_column` (enables incremental tuple cursor) |
+| `sqlite_table` / `mariadb_table` / `clickhouse_table` | `dsn_env`, `database`, `table`, `id_column`, `content_column` | `title_column`, `where`, `metadata_columns` |
+| `http`         | `urls` or `sitemap`                    | `crawl_depth` (0–5), `allow_external`, `request_delay_seconds`, `respect_robots`, `max_pages`, `user_agent` — see [`source-http.md`](../docs/reference/source-http.md) |
+| `s3`           | `bucket`                               | `prefix`, `endpoint_url` (minio/R2). Needs the `[s3]` extra. See [`source-s3-core.md`](../docs/reference/source-s3-core.md) |
+| `inline`       | —                                      | Library mode: the host app calls `Pipeline.ingest_text()` per document. |
+| `connector`    | `connector`, `config`                  | `sync`, `raw_store`. Plugin sources from the chunkshop-connectors package (gdrive, github, blob, rss, …) — see [`../docs/reference/`](../docs/reference/README.md) |
+| `comment_extracts` | `glob`                             | `languages`, `min_chars` (`20`), `granularity: block \| per_line \| per_file`, `include_docstrings`, `skip_pragmas` |
+| `session_staging` | `dsn_env`, `staging_table`, `mode: realtime \| consolidate` | `staging_schema` (`public`), `min_age_seconds` (`3600`), `max_sessions` |
 
 ### `chunker`
 
-Seven chunkers in three families. Pick one per cell.
+Ten chunkers in four families. Pick one per cell.
 
 **Structural** — split on headings, paragraphs, or word counts:
 
@@ -211,6 +233,12 @@ vs. what gets stored (`summary_embed`) or emit fine+coarse rows linked by
 |--------------------------|------------------------------------|--------------------------------------|
 | `summary_embed`          | `base:`, `summarizer:`             | —                                    |
 | `hierarchical_summary`   | `base:`, `summarizer:`, `grouping:` | `grouping: {strategy: fixed_n, n: 5}` |
+| `consolidation`          | `base:`, `consolidator:`           | `fact_max_chars: 1200`               |
+
+`consolidation` is the agent-memory chunker: it collapses a session episode
+into a bounded summary plus length-capped facts (queryable via
+`chunkshop fact-search`). See
+[`../docs/reference/consolidator-fact-extractors.md`](../docs/reference/consolidator-fact-extractors.md).
 
 The `summarizer` config is a discriminated union: `{mode: external, field: ...}`
 pulls a pre-computed summary from a source document metadata field; `{mode:
@@ -219,11 +247,28 @@ imports lazily at first use; `{mode: passthrough}` reuses the raw chunk as
 the summary (baseline). See [`../docs/summaries.md`](../docs/summaries.md)
 and [`../docs/tutorial-summaries.md`](../docs/tutorial-summaries.md).
 
+**Code-aware** — split source code at function/class/symbol boundaries:
+
+| `type`         | Required | Defaults                                                                  |
+|----------------|----------|---------------------------------------------------------------------------|
+| `code_aware`   | —        | `language: auto` (Python via stdlib `ast`), `max_chars: 4000`, `min_chars: 100`, `include_imports: true` |
+| `symbol_aware` | —        | `granularity: function \| class \| module` (`function`), `max_chars: 8000`, `include_imports: true`, `max_symbols_per_file: 2000` |
+
+`symbol_aware` covers 10 languages (Python, Java, Go, TypeScript,
+JavaScript, Rust, C, C++, C#, Ruby) via tree-sitter with the `[code]`
+extra, and stamps `fqn` / `scope_chain` / `node_id` per chunk — the
+metadata behind `chunkshop search --by-symbol` and `chunkshop impact-of`.
+See [`../docs/reference/chunker-symbol-aware.md`](../docs/reference/chunker-symbol-aware.md)
+and [`../docs/reference/chunker-code-aware.md`](../docs/reference/chunker-code-aware.md).
+
 Full per-chunker guidance: [`../docs/chunkers.md`](../docs/chunkers.md).
 
 ### `embedder`
 
-Only `fastembed` today.
+Two types: `fastembed` (local ONNX, the default choice) and `openai`
+(any OpenAI-compatible remote `/v1/embeddings` endpoint).
+
+**`fastembed`:**
 
 | Field        | Required | Default | Notes                                                    |
 |--------------|----------|---------|----------------------------------------------------------|
@@ -233,12 +278,37 @@ Only `fastembed` today.
 | `batch_size` | no       | `64`    | Per-call batch to `fastembed.embed`.                     |
 | `threads`    | no       | `None`  | `None` = auto (bad on shared boxes). Set to 4 typically. |
 
+**`openai`** — works with OpenAI, Voyage, Mistral, or a local
+OpenAI-compatible server. Full reference:
+[`embedder-openai.md`](../docs/reference/embedder-openai.md).
+
+| Field         | Required | Default                       | Notes                                          |
+|---------------|----------|-------------------------------|------------------------------------------------|
+| `type`        | yes      | —                             | Literal `openai`.                              |
+| `model`       | yes      | —                             | e.g. `text-embedding-3-small`.                 |
+| `dim`         | yes      | —                             | Must match the endpoint's output.              |
+| `base_url`    | no       | `https://api.openai.com/v1`   | Point at any compatible `/v1/embeddings` host. |
+| `api_key_env` | no       | `None`                        | Name of the env var holding the API key.       |
+| `batch_size` / `timeout` / `max_retries` | no | `64` / `60.0` / `3` | Request shaping.                |
+
 ### `extractor`
 
-| `type`            | Fields                                    |
-|-------------------|-------------------------------------------|
-| `none`            | — (default)                               |
-| `rake_keywords`   | `top_k: 10`, `min_chars: 3` (defaults)    |
+Eleven types. Field-level detail per extractor:
+[`../docs/extractors.md`](../docs/extractors.md).
+
+| `type`               | Extra needed | What it does                                                    |
+|----------------------|--------------|-----------------------------------------------------------------|
+| `none`               | —            | Default. No tags, no metadata.                                  |
+| `rake_keywords`      | `extractors` | RAKE keyword tags (`top_k: 10`, `min_chars: 3` defaults).       |
+| `keybert_phrases`    | `keybert`    | KeyBERT keyphrase tags.                                         |
+| `spacy_entities`     | `spacy`      | spaCy NER entities into metadata.                               |
+| `lang_detect`        | `lang`       | Per-chunk language code into metadata.                          |
+| `cooccurrence`       | —            | Term co-occurrence pairs into metadata.                         |
+| `lede_top_terms`     | `lede`       | lede scored top terms.                                          |
+| `lede_report`        | `lede`       | lede document-level report (summary, key facts) into metadata.  |
+| `code_summary`       | `code`       | Per-symbol code summaries ([reference](../docs/reference/extractor-code-summary.md)). |
+| `code_relationships` | `code`       | Cross-file call/import edges — feeds `chunkshop impact-of` ([reference](../docs/reference/extractor-code-relationships.md)). |
+| `composite`          | per child    | Run several extractors in sequence.                             |
 
 RAKE downloads NLTK corpora (`stopwords`, `punkt`) on first use to `~/nltk_data/`.
 
