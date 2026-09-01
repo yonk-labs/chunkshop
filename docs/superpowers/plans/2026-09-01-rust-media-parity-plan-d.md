@@ -2207,6 +2207,40 @@ git commit -m "feat(rust,derivers): rung 0 image_meta deriver + full FilesSource
 
 ### Task 10: CLIP vision-tower preprocessing — investigate, then record the SC-12 amendment
 
+> ## ⛔ CORRECTION NOTICE — THIS SECTION'S ROOT CAUSE WAS RETRACTED
+>
+> **Added 2026-09-01, after this plan executed. Do not read the section below
+> as current truth.** It is kept verbatim as a historical record of what was
+> believed at planning time.
+>
+> **What this section gets wrong:**
+>
+> 1. **The root cause.** This section states, as a "named, **verified** cause",
+>    that `fastembed-rs`'s `load_preprocessor` hardcodes
+>    `FilterType::CatmullRom` instead of the `resample: 3` (PIL `BICUBIC`) that
+>    `preprocessor_config.json` asks for. **That is retracted.** `CatmullRom`
+>    *is* PIL's `BICUBIC` — the same Keys cubic with a = −0.5; at matched
+>    dimensions they agree bit-for-bit on 96.6–98.8% of pixels. The filter was
+>    never wrong and **must not be changed**.
+>
+>    The actual cause is geometric: `fastembed-rs` builds a *square* target
+>    from `size.shortest_edge` (`utils.rs:215`) and applies it with
+>    `resize_exact` (`utils.rs:51`), ignoring `shortest_edge`'s
+>    aspect-preserving semantics. The two implementations were seeing a
+>    **different field of view**, not a different resampling of the same view.
+>    It is aspect-ratio-dependent, not downscale-dependent — a second
+>    superseded reading this plan also records.
+>
+> 2. **The tolerance.** The `cosine >= 0.9999` bar proposed here is superseded.
+>    chunkshop fixed the geometry in
+>    `rust/chunkshop/src/sources/derivers/clip_preprocess.rs`, and SC-12's
+>    vision clause is now **`cosine >= 0.99998`, uniformly for every image**.
+>
+> **Current truth:** `docs/superpowers/plans/MEDIA-INGEST-ROADMAP.md`,
+> §"The real root cause: `resize_exact` ignores `shortest_edge`'s semantics"
+> and §"What was NOT the cause: the filter".
+
+
 **No new production code.** This task is a decision point, not an implementation task — matching this plan's own "verify before writing" discipline: the roadmap already recorded (commit `8b0c5a7`, same day as this scoping) that the CLIP **vision** tower FAILS the 1e-6 tolerance that the text towers pass, with a root cause already identified during this plan's own research (see below) that this plan should not silently re-litigate or re-guess.
 
 **Files:**
@@ -2549,6 +2583,40 @@ git commit -m "feat(rust,derivers): wire ClipTagsDeriver into load_deriver; File
 ---
 
 ### Task 13: SC-12 bit-level parity test — CLIP text (tight) + CLIP vision (amended)
+
+> ## ⛔ CORRECTION NOTICE — THIS SECTION'S ROOT CAUSE WAS RETRACTED
+>
+> **Added 2026-09-01, after this plan executed. Do not read the section below
+> as current truth.** It is kept verbatim as a historical record of what was
+> believed at planning time.
+>
+> **What this section gets wrong:**
+>
+> 1. **The root cause.** This section states, as a "named, **verified** cause",
+>    that `fastembed-rs`'s `load_preprocessor` hardcodes
+>    `FilterType::CatmullRom` instead of the `resample: 3` (PIL `BICUBIC`) that
+>    `preprocessor_config.json` asks for. **That is retracted.** `CatmullRom`
+>    *is* PIL's `BICUBIC` — the same Keys cubic with a = −0.5; at matched
+>    dimensions they agree bit-for-bit on 96.6–98.8% of pixels. The filter was
+>    never wrong and **must not be changed**.
+>
+>    The actual cause is geometric: `fastembed-rs` builds a *square* target
+>    from `size.shortest_edge` (`utils.rs:215`) and applies it with
+>    `resize_exact` (`utils.rs:51`), ignoring `shortest_edge`'s
+>    aspect-preserving semantics. The two implementations were seeing a
+>    **different field of view**, not a different resampling of the same view.
+>    It is aspect-ratio-dependent, not downscale-dependent — a second
+>    superseded reading this plan also records.
+>
+> 2. **The tolerance.** The `cosine >= 0.9999` bar proposed here is superseded.
+>    chunkshop fixed the geometry in
+>    `rust/chunkshop/src/sources/derivers/clip_preprocess.rs`, and SC-12's
+>    vision clause is now **`cosine >= 0.99998`, uniformly for every image**.
+>
+> **Current truth:** `docs/superpowers/plans/MEDIA-INGEST-ROADMAP.md`,
+> §"The real root cause: `resize_exact` ignores `shortest_edge`'s semantics"
+> and §"What was NOT the cause: the filter".
+
 
 Extends the already-proven pattern in `tests/embedding_parity.rs` (full binary reference vector + three-threshold comparison) rather than the JSON-summary shape in `tests/parity/embedding-reference.json` (which stores only `first8`/`sum`/`l2_norm` — insufficient for a real per-component tolerance check on the full 512-dim vector).
 

@@ -619,5 +619,11 @@ ADJUDICATION OF RESIDUALS (no second fix wave; these are rulings, not fixes):
     packaging claims. The shipped contract (pyproject.toml) is now correct, which is the one
     that binds users. Worth one clarifying line in the SPEC saying extras ship WITH their
     rungs — filed as a follow-up for the user, not a merge blocker.
+    [CORRECTION 2026-09-01, post-hoc review — the ruling stands, its premise was overstated:
+    grep at HEAD finds NO reference to `chunkshop[media]` anywhere in the repo, and PLAN.md
+    references none of the three extras. Only SPEC.md still names `chunkshop[ocr]` and
+    `chunkshop[audio]` (F4, the rung ladder at :570, the deriver diagram at :919). So the
+    scope is "SPEC.md, ocr/audio", not "SPEC/PLAN, ocr/audio/media". The follow-up itself is
+    unchanged and still open.]
 
 FINAL STATE: 989 passed / 253 skipped. 27 commits. 0 Critical, 0 Important open.

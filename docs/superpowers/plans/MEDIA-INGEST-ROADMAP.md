@@ -304,8 +304,11 @@ Full list with reasoning: `spec/chunkshop-media-ingest/evidence/sdd-execution-le
 - [ ] `docs/reference/parsers.md` still documents only `FileParser.parse -> str`
 - [ ] `hybrid_search_fn` is an untyped escape hatch on a public entry point — mark provisional
 - [ ] `id_from: stem` risks basename collisions across image directories
-- [ ] `CLAUDE.md` wrongly says Postgres `database_name` is "ignored at runtime" (it is the schema)
-- [ ] SPEC/PLAN still reference the retracted `ocr`/`audio`/`media` extras as future design
+- [ ] SPEC.md still references the not-yet-shipped `chunkshop[ocr]` / `chunkshop[audio]`
+      extras as future design (F4, the rung ladder, the deriver diagram). Forward-looking
+      by intent; worth one line saying extras ship WITH their rungs. PLAN.md does not
+      reference them, and no doc references `chunkshop[media]` — both halves of the
+      original wording were wrong and are corrected here (2026-09-01).
 
 ---
 

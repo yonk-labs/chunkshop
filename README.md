@@ -216,10 +216,15 @@ chunkshop search --config docs/samples/images-keyless.yaml \
   --query "pixel art" --k 1 --include-facts
 ```
 
-`docs/samples/images/` ships three tiny fixture PNGs (a pixel-art sprite, a
-line chart, and a settings-screen mockup), plus the Pillow script that
-generated them, so the quickstart above is runnable as printed from a repo
-clone. `"pixel art"` appears only in the CLIP vocabulary above, never in a
+`docs/samples/images/` ships exactly three tiny fixture PNGs (a pixel-art
+sprite, a line chart, and a settings-screen mockup), plus the Pillow script
+that generated them, so the quickstart above is runnable as printed from a
+repo clone. That corpus is pinned by CI — the ranking margin asserted below
+is a property of *which* three images are in that directory, so adding a
+fourth fails the gate on purpose (test fixtures live in
+`tests/fixtures/images/` instead).
+
+`"pixel art"` appears only in the CLIP vocabulary above, never in a
 filename or path segment — so a correct top hit proves the CLIP tagging
 rung actually ran, not just that a filename happened to match. CI
 (`.github/workflows/sc1-quickstart-clock.yml`) runs this exact YAML on a

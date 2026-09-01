@@ -25,7 +25,7 @@ on the Rust port.
   must land that foundation before any media rung.
 - `derive` / `on_empty` / `cache` modelled in `FilesSourceConfig`.
 - CLIP image embedding via `fastembed-rs` — the `image-models` feature is
-  **already enabled** at `rust/chunkshop/Cargo.toml:76`, so the dependency work
+  **already enabled** at `rust/chunkshop/Cargo.toml:104`, so the dependency work
   is done.
 - SC-12 parity as the spec defines it: **bit-level** for embedding (same input
   text + model → vectors within float tolerance) and **contract-level** for

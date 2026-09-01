@@ -87,7 +87,7 @@ SC-13 all have evidence. (SC-12 Rust parity lands with M8; audio SCs are v1.1.)
   `content_origin` without a join. (SC-3, SC-4, SC-11)
 
 ## M8 — Rust parity
-**F17.** `fastembed`'s `image-models` feature is already enabled (`rust/chunkshop/Cargo.toml:76`).
+**F17.** `fastembed`'s `image-models` feature is already enabled (`rust/chunkshop/Cargo.toml:104`).
 - [ ] Same YAML, same schema, same metadata keys and provenance fields
 - **Verify:** bit-level — same input text + model → vectors within float tolerance.
   Contract-level — schema/metadata-key equality on derived rows, engine named in provenance. (SC-12)

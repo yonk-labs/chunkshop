@@ -26,7 +26,7 @@
 | Qdrant/colmodernvbert | 128 | 1.0 |
 
 ## Rust parity: ALREADY ENABLED
-`rust/chunkshop/Cargo.toml:76`
+`rust/chunkshop/Cargo.toml:104`
 ```toml
 fastembed = { version = "5.13.1", default-features = false,
               features = ["ort-download-binaries-native-tls", "image-models"], optional = true }

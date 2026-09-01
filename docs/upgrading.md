@@ -103,11 +103,16 @@ the cell raises `EmptyDerivationError` and the run stops.
 ### Why this matters more than a typical default change
 `runner.py` calls `sink.create_table()` — which under `target.mode:
 overwrite` **drops and recreates** the target table — *before* the document
-loop begins. Nothing in the runner catches `EmptyDerivationError`. So on an
-`overwrite`-mode cell, hitting this on upgrade means: table dropped, some
-documents written, then the run aborts on the first empty-text file — you
-are left with a **partially-refilled table**, not your original complete
-one. Re-running after fixing the corpus (via one of the options above) will
+loop begins. `run_cell` *does* catch `EmptyDerivationError` — a blanket
+`except Exception` at `runner.py:267` turns it into a
+`CellResult(error=...)` rather than letting it propagate. But catching it
+only changes how the failure is *reported*; it does **not** roll the table
+back, because the drop already happened and chunkshop takes no snapshot to
+restore from. So on an `overwrite`-mode cell, hitting this on upgrade
+means: table dropped, some documents written, then the cell stops on the
+first empty-text file and returns an error — you are left with a
+**partially-refilled table**, not your original complete one. Re-running
+after fixing the corpus (via one of the options above) will
 refill it correctly, but until then the table is incomplete. `append` and
 `create_if_missing` modes don't drop existing data, so they're safe to
 retry as-is; `overwrite` mode is the one to check your corpus against
