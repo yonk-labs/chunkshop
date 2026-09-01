@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from chunkshop.config import FilesSource as Cfg
 from chunkshop.sources.files import FilesSource
 from chunkshop.sources.parsers.result import ParseResult
@@ -18,6 +20,17 @@ class _Counting:
         return ParseResult(text="expensive", metadata={"k": 1})
 
 
+def _src_with_counting_spy(cfg):
+    """Build a FilesSource whose "weird" extension is genuinely
+    derive-configured (so it lands in ``_derived_exts`` exactly as
+    production wiring would), then swap the real deriver for the counting
+    spy so the test can observe how many times it actually runs.
+    """
+    src = FilesSource(cfg)
+    src._parsers["weird"] = _Counting()
+    return src
+
+
 def test_second_run_derives_nothing(tmp_path):
     CALLS.clear()
     corpus = tmp_path / "corpus"
@@ -26,18 +39,14 @@ def test_second_run_derives_nothing(tmp_path):
     cfg = Cfg(
         type="files",
         glob=str(corpus / "*.weird"),
-        # A derive block (for an unrelated extension) is required to build a
-        # cache at all — see test_no_derive_block_builds_no_cache below. The
-        # injected `parsers={"weird": _Counting()}` below still wins over
-        # this block for the "weird" extension the corpus actually uses.
-        derive={"png": {"rung": "image_meta"}},
+        derive={"weird": {"rung": "image_meta"}},
         cache={"enabled": True, "root": str(tmp_path / "cache")},
     )
 
-    list(FilesSource(cfg, parsers={"weird": _Counting()}).iter_documents())
+    list(_src_with_counting_spy(cfg).iter_documents())
     assert len(CALLS) == 1
 
-    list(FilesSource(cfg, parsers={"weird": _Counting()}).iter_documents())
+    list(_src_with_counting_spy(cfg).iter_documents())
     assert len(CALLS) == 1, "cache hit must skip the expensive derivation"
 
 
@@ -49,12 +58,12 @@ def test_disabling_the_cache_always_derives(tmp_path):
     cfg = Cfg(
         type="files",
         glob=str(corpus / "*.weird"),
-        derive={"png": {"rung": "image_meta"}},
+        derive={"weird": {"rung": "image_meta"}},
         cache={"enabled": False},
     )
 
     for _ in range(2):
-        list(FilesSource(cfg, parsers={"weird": _Counting()}).iter_documents())
+        list(_src_with_counting_spy(cfg).iter_documents())
     assert len(CALLS) == 2
 
 
@@ -100,3 +109,61 @@ def test_derive_block_still_caches_by_default(tmp_path):
 
     src = FilesSource(cfg, parsers={"weird": _Counting()})
     assert src._cache is not None
+
+
+def test_cache_scoped_to_derive_configured_extensions_only(tmp_path):
+    """Regression test for the cross-cell encoding-collision bug.
+
+    Before this fix, building a cache for *any* derive block made
+    ``_document_for`` route EVERY extension through ``cached_derive`` —
+    including plain-text extensions still handled by ``TextParser``, which
+    takes a config-dependent ``encoding`` and has no ``derivation_hash()``.
+    Its cache key fell back to ``parser.__class__.__name__`` alone (i.e.
+    the literal string "TextParser"), identical regardless of encoding, so
+    two cells (or two runs with different ``encoding:``) touching the same
+    file could silently serve the first cell's decoded text to the second.
+
+    Only the derive-configured extension (".png" here) may produce a cache
+    entry; the plain-text ".txt" file, dispatched to the default
+    ``TextParser``, must bypass the cache entirely.
+    """
+    Image = pytest.importorskip("PIL.Image", reason="Pillow comes with fastembed")
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    Image.new("RGB", (2, 2), "red").save(corpus / "a.png")
+    (corpus / "b.txt").write_text("hello world", encoding="utf-8")
+    cache_root = tmp_path / "cache"
+    cfg = Cfg(
+        type="files",
+        glob=str(corpus / "*"),
+        derive={"png": {"rung": "image_meta"}},
+        cache={"root": str(cache_root)},
+    )
+
+    docs = list(FilesSource(cfg).iter_documents())
+    assert len(docs) == 2
+
+    cache_files = list(cache_root.rglob("*.json"))
+    assert len(cache_files) == 1, (
+        "only the derive-configured .png should produce a cache entry; "
+        "the plain TextParser-handled .txt must bypass the cache entirely"
+    )
+
+
+def test_pipe_separated_keys_with_whitespace_and_leading_dots(tmp_path):
+    """Regression coverage for pipe-key parsing: whitespace around each
+    segment and an optional leading dot must both be tolerated, and every
+    resulting extension must be marked derive-configured (cache-eligible).
+    """
+    from chunkshop.sources.derivers.image_meta import ImageMetaDeriver
+
+    cfg = Cfg(
+        type="files",
+        glob=str(tmp_path / "**" / "*"),
+        derive={" .PNG | jpg |webp ": {"rung": "image_meta"}},
+    )
+    src = FilesSource(cfg)
+
+    assert src._derived_exts == {"png", "jpg", "webp"}
+    for ext in ("png", "jpg", "webp"):
+        assert isinstance(src._parsers[ext], ImageMetaDeriver)

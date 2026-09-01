@@ -55,18 +55,27 @@ class FilesSource:
             self._parsers = dict(parsers)
 
         # Derive config layers over the parser table: one deriver per
-        # extension listed in a pipe-separated key ("png|jpg|webp").
+        # extension listed in a pipe-separated key ("png|jpg|webp"). Track
+        # exactly which extensions came from this block — the cache below is
+        # scoped to only those, never to the default/injected parser table.
+        self._derived_exts: set[str] = set()
         if cfg.derive:
             from chunkshop.sources.derivers import load_deriver
 
             for pattern, deriver_cfg in cfg.derive.items():
                 deriver = load_deriver(deriver_cfg)
                 for ext in pattern.split("|"):
-                    self._parsers[ext.strip().lower().lstrip(".")] = deriver
+                    ext = ext.strip().lower().lstrip(".")
+                    self._parsers[ext] = deriver
+                    self._derived_exts.add(ext)
 
         # The cache exists to memoise EXPENSIVE derivation. Without a derive
         # block every parser is cheap local text extraction, so a text-only
-        # cell builds no cache and touches no disk (NN-6).
+        # cell builds no cache and touches no disk (NN-6). Even with a
+        # derive block, only derive-configured extensions are ever routed
+        # through it — see _document_for — so a config-dependent parser
+        # (e.g. TextParser's `encoding`) can never be served a stale,
+        # differently-configured cache hit.
         self._cache = None
         if cfg.derive and cfg.cache.enabled:
             from chunkshop.sources.derivers.cache import DerivationCache
@@ -153,16 +162,24 @@ class FilesSource:
     def _document_for(self, path: Path, content_hash: Optional[str] = None) -> Optional[Document]:
         ext = path.suffix.lower().lstrip(".")
         parser = get_parser(ext, self._parsers)
-        if content_hash is None:
-            content_hash = _hash_bytes(path.read_bytes())
-        d_hash = getattr(parser, "derivation_hash", None)
-        if callable(d_hash):
-            d_hash = d_hash()
-        if d_hash is None:
-            d_hash = parser.__class__.__name__
-        result, _was_hit = cached_derive(
-            self._cache, content_hash, d_hash, lambda: call_deriver(parser, path)
-        )
+        if ext in self._derived_exts:
+            # Only derive-configured extensions are cache-eligible. Routing
+            # the default/injected parser table through the cache too would
+            # key it on parser.__class__.__name__ alone — collapsing e.g.
+            # every TextParser regardless of its `encoding` onto one cache
+            # entry and silently serving a stale/wrongly-decoded hit.
+            if content_hash is None:
+                content_hash = _hash_bytes(path.read_bytes())
+            d_hash = getattr(parser, "derivation_hash", None)
+            if callable(d_hash):
+                d_hash = d_hash()
+            if d_hash is None:
+                d_hash = parser.__class__.__name__
+            result, _was_hit = cached_derive(
+                self._cache, content_hash, d_hash, lambda: call_deriver(parser, path)
+            )
+        else:
+            result = call_deriver(parser, path)
         if not result.text.strip():
             mode = self.cfg.on_empty
             if mode == "error":
