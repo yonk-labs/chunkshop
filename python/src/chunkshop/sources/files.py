@@ -7,7 +7,7 @@ from typing import Iterator, Optional
 
 from chunkshop.config import FilesSource as Cfg
 from chunkshop.sources.base import Document, SyncMode
-from chunkshop.sources.parsers import DEFAULT_PARSERS, FileParser, get_parser
+from chunkshop.sources.parsers import DEFAULT_PARSERS, FileParser, call_deriver, get_parser
 from chunkshop.sources.parsers.text import TextParser
 
 
@@ -121,15 +121,18 @@ class FilesSource:
     def _document_for(self, path: Path, content_hash: Optional[str] = None) -> Document:
         ext = path.suffix.lower().lstrip(".")
         parser = get_parser(ext, self._parsers)
-        text = parser.parse(path)
+        result = call_deriver(parser, path)
+        metadata = {
+            **result.metadata,
+            # chunkshop's own provenance always wins over a deriver's keys.
+            "source_path": str(path),
+            "parser": parser.__class__.__name__,
+        }
         return Document(
             id=self._id_for(path),
-            content=text,
+            content=result.text,
             title=path.name,
-            metadata={
-                "source_path": str(path),
-                "parser": parser.__class__.__name__,
-            },
+            metadata=metadata,
             fingerprint=content_hash,
         )
 
