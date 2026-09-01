@@ -167,3 +167,57 @@ def test_pipe_separated_keys_with_whitespace_and_leading_dots(tmp_path):
     assert src._derived_exts == {"png", "jpg", "webp"}
     for ext in ("png", "jpg", "webp"):
         assert isinstance(src._parsers[ext], ImageMetaDeriver)
+
+
+def test_fingerprint_asymmetry_on_full_resync(tmp_path):
+    """Pins the intended, currently-shipped contract on the full-resync
+    (``iter_documents``) path: ``Document.fingerprint`` is populated only
+    where the cache actually needs a content hash.
+
+    This asymmetry is intentional, not an oversight:
+
+    - A non-derived extension takes the plain ``call_deriver`` path (no
+      cache lookup possible), so no content hash is computed and
+      ``fingerprint`` stays ``None`` — matching shipped ``main`` (v1.0.0-rc6,
+      ``3df86cb``), where ``iter_documents`` has *always* called
+      ``_document_for(Path(p))`` with no ``content_hash``, full stop. This
+      task's first commit briefly changed that unconditionally; that was a
+      regression, not a design decision, and was reverted here.
+    - A derive-configured extension needs the hash for its cache key, so it
+      gets computed regardless — and the resulting ``Document`` now
+      *incidentally* carries a fingerprint it never had before this task.
+      That's a strict improvement, not a behaviour change anyone asked for.
+
+    The incremental path (``iter_changes_since``) is unaffected either way:
+    it always computes and passes ``content_hash`` itself before calling
+    ``_document_for``, for every extension, derived or not — already
+    covered by ``test_full_resync_from_empty_cursor_sets_fingerprint`` in
+    test_files_incremental.py (non-derived ``.md``, via
+    ``iter_changes_since``), so it is not re-asserted here.
+    """
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("hello", encoding="utf-8")
+    Image = pytest.importorskip("PIL.Image", reason="Pillow comes with fastembed")
+    Image.new("RGB", (2, 2), "red").save(corpus / "b.png")
+
+    cfg = Cfg(
+        type="files",
+        glob=str(corpus / "*"),
+        derive={"png": {"rung": "image_meta"}},
+        cache={"root": str(tmp_path / "cache")},
+    )
+
+    docs = {Path(d.metadata["source_path"]).suffix.lstrip("."): d
+            for d in FilesSource(cfg).iter_documents()}
+
+    assert docs["txt"].fingerprint is None, (
+        "non-derived extension on full resync: no cache lookup needed, so "
+        "no content hash is computed — matches shipped main's long-standing "
+        "iter_documents() behaviour"
+    )
+    assert docs["png"].fingerprint is not None, (
+        "derive-configured extension on full resync: the cache needs a "
+        "content hash for its key, so the Document incidentally gets a "
+        "fingerprint it never had pre-media-ingest"
+    )
