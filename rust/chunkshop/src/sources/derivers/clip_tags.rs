@@ -109,7 +109,15 @@ struct Models {
 pub struct ClipTagsDeriver {
     pub vocabulary: Vec<String>,
     pub top_k: usize,
-    pub min_score: f32,
+    /// `f64`, matching Python's plain `float` — NOT `f32`. This value is
+    /// serialized verbatim into `cache_key_parts()`'s params object, whose
+    /// canonical JSON is hashed into `derived.params_hash`. An `f32`
+    /// widens to `f64` inside `serde_json`, so the shipped default `0.20`
+    /// would canonicalize as `0.20000000298023224` here against Python's
+    /// `0.2` and the two ports would compute different `params_hash`
+    /// values — a second cross-language cache-split axis on top of the one
+    /// `engine` already accounts for. See `config::ClipTagsDeriverConfig`.
+    pub min_score: f64,
     pub vision_model: String,
     pub text_model: String,
     models: Mutex<Option<Models>>,
@@ -119,7 +127,7 @@ impl ClipTagsDeriver {
     pub fn new(
         vocabulary: Vec<String>,
         top_k: usize,
-        min_score: f32,
+        min_score: f64,
         vision_model: String,
         text_model: String,
     ) -> anyhow::Result<Self> {
@@ -226,7 +234,9 @@ impl ClipTagsDeriver {
         let mut tags: Vec<String> = Vec::new();
         let mut tag_scores: Vec<f64> = Vec::new();
         for (i, score) in ranked.into_iter().take(self.top_k) {
-            if score >= self.min_score {
+            // Widen before comparing: Python compares a numpy float32
+            // score against a Python float, which promotes to float64.
+            if (score as f64) >= self.min_score {
                 tags.push(self.vocabulary[i].clone());
                 tag_scores.push(round4(score));
             }
@@ -341,7 +351,7 @@ mod tests {
         }
     }
 
-    fn deriver(top_k: usize, min_score: f32) -> ClipTagsDeriver {
+    fn deriver(top_k: usize, min_score: f64) -> ClipTagsDeriver {
         ClipTagsDeriver::new(
             vec!["red".to_string(), "blue".to_string(), "cat".to_string()],
             top_k,

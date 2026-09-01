@@ -161,20 +161,187 @@ impl<'de> serde::Deserialize<'de> for PromoteColumn {
     }
 }
 
+/// Promoted by default whenever a cell configures `source.derive`. Mirrors
+/// Python's `DEFAULT_MEDIA_PROMOTIONS` (`config.py`).
+///
+/// A VLM caption and a verbatim email are byte-identical once both are
+/// `original_content`; these columns are what let a downstream consumer
+/// rank, filter, or refuse derived content in the query it already runs.
+/// Without them a Rust cell appending to a table a Python cell created
+/// writes NULL where Python writes a value, and a downstream
+/// `WHERE content_origin = 'derived'` silently drops every Rust-written row.
+pub fn default_media_promotions() -> Vec<PromoteColumn> {
+    vec![
+        PromoteColumn {
+            path: "content_origin".to_string(),
+            type_: "text".to_string(),
+        },
+        PromoteColumn {
+            path: "derived_rung".to_string(),
+            type_: "text".to_string(),
+        },
+    ]
+}
+
 /// One YAML = one cell. Matches `python/src/chunkshop/config.py::CellConfig`.
-#[derive(Debug, Clone, Deserialize)]
+///
+/// `Deserialize` is hand-written below (rather than derived) so the
+/// media-promotion injection Python performs in a
+/// `@model_validator(mode="after")` runs on every YAML load here too.
+#[derive(Debug, Clone)]
 pub struct CellConfig {
     pub cell_name: String,
     pub source: SourceConfig,
     pub chunker: ChunkerConfig,
     pub embedder: EmbedderConfig,
     pub target: TargetConfig,
-    #[serde(default)]
     pub runtime: RuntimeConfig,
-    #[serde(default)]
     pub framer: FramerConfig,
-    #[serde(default)]
     pub extractor: ExtractorConfig,
+}
+
+impl CellConfig {
+    /// Mirror of Python's `CellConfig._promote_media_origin_columns`
+    /// (`config.py`): a cell that configures `source.derive` always gets
+    /// `content_origin` + `derived_rung` as real promoted columns.
+    ///
+    /// Python's semantics, matched exactly: user-specified promotions WIN
+    /// (nothing is reordered or replaced), defaults only fill gaps, the
+    /// gap test is by `column_name()` (not raw `path`, so a user entry of
+    /// `Content_Origin` counts as already present), and additions are
+    /// APPENDED after the user's entries. Idempotent.
+    pub fn apply_default_media_promotions(&mut self) {
+        let has_derive = match &self.source {
+            SourceConfig::Files(f) => f.derive.is_some(),
+            _ => false,
+        };
+        if !has_derive {
+            return;
+        }
+        let promote = self.target.promote_metadata_mut();
+        let existing: std::collections::HashSet<String> =
+            promote.iter().map(PromoteColumn::column_name).collect();
+        for pc in default_media_promotions() {
+            if !existing.contains(&pc.column_name()) {
+                promote.push(pc);
+            }
+        }
+    }
+}
+
+impl CellConfig {
+    /// Everything about `source.derive` that is knowable from config alone
+    /// and can still fail. Must run BEFORE any destructive DDL.
+    ///
+    /// Why this exists: Python raises both of these in
+    /// `FilesSource.__init__`, which `runner.py` calls before
+    /// `sink.create_table()`. Rust's equivalents were deferred —
+    /// `FilesSource`'s ambiguity error is stashed in `derive_error` and only
+    /// returned from `iter_documents()`, and a missing-Cargo-feature rung
+    /// resolves to a `MissingFeatureDeriver` that fails at point of use.
+    /// Both therefore landed AFTER `create_table()`'s DROP+CREATE, so a
+    /// `mode: overwrite` cell destroyed and emptied its target table before
+    /// reporting an error that was knowable at config-load time.
+    ///
+    /// Deliberate behaviour change worth naming: in a build without the
+    /// `media` feature, a cell with a `derive:` block now fails here even
+    /// if its glob happens to match no derive-routed file (see
+    /// `derivers::load_deriver`'s note on the old point-of-use asymmetry).
+    /// Failing loudly on a config the build cannot honor is preferable to
+    /// dropping the user's table first.
+    pub fn preflight_derive(&self) -> Result<()> {
+        let SourceConfig::Files(f) = &self.source else {
+            return Ok(());
+        };
+        let Some(derive) = &f.derive else {
+            return Ok(());
+        };
+
+        // (1) Ambiguous routing: the same extension reachable from two
+        // different `derive` keys. Same normalization as
+        // `FilesSource::new` (split on '|', trim, lowercase, strip a
+        // leading '.') so the two agree on what "the same extension" means.
+        let mut ext_owner: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for pattern in derive.keys() {
+            for raw_ext in pattern.split('|') {
+                let ext = raw_ext.trim().to_lowercase();
+                let ext = ext.trim_start_matches('.').to_string();
+                if let Some(first_key) = ext_owner.get(&ext) {
+                    if first_key != pattern {
+                        return Err(anyhow::Error::new(
+                            crate::sources::parsers::AmbiguousDeriverError {
+                                ext,
+                                first_key: first_key.clone(),
+                                second_key: pattern.clone(),
+                            },
+                        ));
+                    }
+                    continue;
+                }
+                ext_owner.insert(ext, pattern.clone());
+            }
+        }
+
+        // (2) Cargo-feature availability per rung. Mirrors the gates in
+        // `sources::derivers::load_deriver`; kept in sync with the feature
+        // names that module names in its errors.
+        for dcfg in derive.values() {
+            let needed: Option<&str> = match dcfg {
+                DeriverConfig::ImageMeta(_) if !cfg!(feature = "media") => Some("media"),
+                DeriverConfig::ClipTags(_)
+                    if !cfg!(feature = "media") || !cfg!(feature = "embedder-hub") =>
+                {
+                    Some("media,embedder-hub")
+                }
+                _ => None,
+            };
+            if let Some(features) = needed {
+                let rung = match dcfg {
+                    DeriverConfig::ImageMeta(_) => "image_meta",
+                    DeriverConfig::ClipTags(_) => "clip_tags",
+                };
+                return Err(anyhow!(
+                    "derive rung '{rung}' requires the `{features}` Cargo feature(s); \
+                     rebuild with --features {features}"
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CellConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            cell_name: String,
+            source: SourceConfig,
+            chunker: ChunkerConfig,
+            embedder: EmbedderConfig,
+            target: TargetConfig,
+            #[serde(default)]
+            runtime: RuntimeConfig,
+            #[serde(default)]
+            framer: FramerConfig,
+            #[serde(default)]
+            extractor: ExtractorConfig,
+        }
+        let r = Raw::deserialize(d)?;
+        let mut cfg = CellConfig {
+            cell_name: r.cell_name,
+            source: r.source,
+            chunker: r.chunker,
+            embedder: r.embedder,
+            target: r.target,
+            runtime: r.runtime,
+            framer: r.framer,
+            extractor: r.extractor,
+        };
+        cfg.apply_default_media_promotions();
+        Ok(cfg)
+    }
 }
 
 /// Discriminated union over extractor types. Mirrors Python's `ExtractorConfig`.
@@ -450,7 +617,14 @@ pub struct InlineSourceConfig {}
 #[serde(deny_unknown_fields)]
 pub struct FilesSourceConfig {
     pub glob: String,
-    #[serde(default = "default_id_from")]
+    /// Held as a `String` for source-compatibility with `FilesSource`'s
+    /// `id_from.as_str()` dispatch, but the VALUE is validated at
+    /// config-load through the `IdFrom` allowlist below — matching
+    /// Python's `Literal["path", "stem", "sha1"]` (`config.py:120`), which
+    /// rejects `id_from: sha256` at config load rather than mid-run.
+    /// `deny_unknown_fields` only validates field *names*; a bare `String`
+    /// accepts any value, which is the parity bug this guard closes.
+    #[serde(default = "default_id_from", deserialize_with = "deserialize_id_from")]
     pub id_from: String,
     #[serde(default = "default_encoding")]
     pub encoding: String,
@@ -502,7 +676,14 @@ pub enum DeriverConfig {
     ClipTags(ClipTagsDeriverConfig),
 }
 
+/// `deny_unknown_fields` is load-bearing, not decoration: without it a
+/// typo'd key here is silently dropped and the default silently stands,
+/// which is exactly the contract CLAUDE.md states ("a typo in YAML produces
+/// a validation error, not silent ignore") and Python's `extra="forbid"`
+/// enforces. Every nested media config block below carries it for the same
+/// reason.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImageMetaDeriverConfig {
     #[serde(default = "default_true")]
     pub path_segments: bool,
@@ -515,12 +696,23 @@ fn default_segment_depth() -> u32 {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClipTagsDeriverConfig {
     pub vocabulary: Vec<String>,
     #[serde(default = "default_top_k")]
     pub top_k: usize,
+    /// `f64`, NOT `f32`, and that is a parity requirement rather than a
+    /// precision preference. This value lands verbatim in the deriver's
+    /// `cache_key_parts()` params object, which is canonicalized to JSON
+    /// and hashed into `derived.params_hash`. An `f32` widens to `f64` on
+    /// the way into `serde_json`, so the shipped default `0.20` serializes
+    /// as `0.20000000298023224` in Rust against Python's `0.2` — the two
+    /// languages then compute different `params_hash` values for identical
+    /// config and silently maintain separate derivation caches. Same
+    /// defect class as the `ensure_ascii` canonicalization bug. Python's
+    /// `min_score` is a plain `float` (i.e. f64); match it.
     #[serde(default = "default_min_score")]
-    pub min_score: f32,
+    pub min_score: f64,
     #[serde(default = "default_vision_model")]
     pub vision_model: String,
     #[serde(default = "default_text_model")]
@@ -530,7 +722,7 @@ pub struct ClipTagsDeriverConfig {
 fn default_top_k() -> usize {
     3
 }
-fn default_min_score() -> f32 {
+fn default_min_score() -> f64 {
     0.20
 }
 fn default_vision_model() -> String {
@@ -550,6 +742,7 @@ fn default_text_model() -> String {
 /// hand-written impl below keeps `DerivationCacheSettings::default()` and
 /// "no `cache:` key in YAML" in agreement.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DerivationCacheSettings {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -839,7 +1032,34 @@ fn default_staging_schema() -> String {
 }
 
 fn default_id_from() -> String {
-    "stem".to_string()
+    IdFrom::Stem.as_str().to_string()
+}
+
+/// The allowlist behind `FilesSourceConfig::id_from`. Mirrors Python's
+/// `Literal["path", "stem", "sha1"]`. Modeled as an enum (like `OnEmpty`)
+/// so serde produces a named error listing the valid variants.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum IdFrom {
+    Path,
+    Stem,
+    Sha1,
+}
+
+impl IdFrom {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IdFrom::Path => "path",
+            IdFrom::Stem => "stem",
+            IdFrom::Sha1 => "sha1",
+        }
+    }
+}
+
+fn deserialize_id_from<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<String, D::Error> {
+    Ok(IdFrom::deserialize(d)?.as_str().to_string())
 }
 
 fn default_encoding() -> String {
@@ -1337,6 +1557,29 @@ impl TargetConfig {
             TargetConfig::Mariadb(t) => t.validate(),
             TargetConfig::Sqlite(t) => t.validate(),
             TargetConfig::Clickhouse(t) => t.validate(),
+        }
+    }
+
+    /// Variant-agnostic read access to `promote_metadata`.
+    pub fn promote_metadata(&self) -> &[PromoteColumn] {
+        match self {
+            TargetConfig::Postgres(t) => &t.promote_metadata,
+            TargetConfig::Mariadb(t) => &t.promote_metadata,
+            TargetConfig::Sqlite(t) => &t.promote_metadata,
+            TargetConfig::Clickhouse(t) => &t.promote_metadata,
+        }
+    }
+
+    /// Variant-agnostic mutable access, used by
+    /// `CellConfig::apply_default_media_promotions`. Python has one
+    /// `TargetConfig` covering all four backends and so needs no such
+    /// accessor; Rust models them as four structs behind an enum.
+    pub fn promote_metadata_mut(&mut self) -> &mut Vec<PromoteColumn> {
+        match self {
+            TargetConfig::Postgres(t) => &mut t.promote_metadata,
+            TargetConfig::Mariadb(t) => &mut t.promote_metadata,
+            TargetConfig::Sqlite(t) => &mut t.promote_metadata,
+            TargetConfig::Clickhouse(t) => &mut t.promote_metadata,
         }
     }
 }
@@ -2068,6 +2311,15 @@ target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hn
         // deny_unknown_fields must still catch config typos INSIDE the now-
         // modeled derive block — this is the equivalent of Python's
         // test_typo_in_derive_block_is_rejected (test_derive_config.py).
+        //
+        // The original spelling of this test typed `vocabulary` as
+        // `vocabluary`, which made the REQUIRED field missing — so it
+        // passed on a "missing field" error and never exercised the
+        // unknown-field path at all. It went green for two months while
+        // `ClipTagsDeriverConfig` had no `deny_unknown_fields` and silently
+        // dropped every unknown key. The unknown key below sits alongside a
+        // complete, valid set of required fields, so ONLY
+        // `deny_unknown_fields` can reject it.
         let yaml = r#"
 cell_name: t
 source:
@@ -2076,13 +2328,344 @@ source:
   derive:
     png:
       rung: clip_tags
-      vocabluary: ["x"]
+      vocabulary: ["x"]
+      top_kk: 5
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
-        assert!(load_config(&path).is_err(), "typo'd field must fail to load");
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("unknown field `top_kk`"),
+            "must fail on the UNKNOWN FIELD, not on a missing required one: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_field_in_image_meta_block_is_rejected() {
+        // `ImageMetaDeriverConfig` has no required fields, so a missing-field
+        // error can never stand in for the unknown-field check here.
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    png:
+      rung: image_meta
+      path_segments: true
+      segment_depth: 3
+      bogus_field: 1
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("unknown field `bogus_field`"),
+            "image_meta block must reject unknown fields: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_field_in_cache_block_is_rejected() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  cache:
+    enabled: true
+    encrypt: true
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("unknown field `encrypt`"),
+            "cache block must reject unknown fields: {err}"
+        );
+    }
+
+    #[test]
+    fn invalid_id_from_value_is_rejected_at_config_load() {
+        // Python's `Literal["path","stem","sha1"]` rejects this at config
+        // load. Rust used to accept it and only fail per-path inside
+        // `FilesSource::id_for` — i.e. mid-run, after DDL.
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: sha256 }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("unknown variant `sha256`"),
+            "id_from must be rejected at config load: {err}"
+        );
+    }
+
+    #[test]
+    fn all_three_id_from_values_still_parse() {
+        for v in ["path", "stem", "sha1"] {
+            let yaml = format!(
+                r#"
+cell_name: t
+source: {{ type: files, glob: "x", id_from: {v} }}
+chunker: {{ type: sentence_aware }}
+embedder: {{ type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }}
+target: {{ type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }}
+"#
+            );
+            let path = write_yaml(&yaml);
+            let cfg = load_config(&path).expect("valid id_from must load");
+            let SourceConfig::Files(f) = &cfg.source else {
+                panic!("expected Files source");
+            };
+            assert_eq!(f.id_from, v);
+        }
+    }
+
+    // ---- default media promotions (parity with Python's
+    // `CellConfig._promote_media_origin_columns`) -------------------------
+
+    /// The shipped sample is the artifact both ports actually run, so it is
+    /// the right subject for the parity assertion. The mirror on the Python
+    /// side is
+    /// `python/tests/chunkshop/test_derive_config.py::
+    /// test_shipped_images_keyless_sample_promotes_media_origin_columns`,
+    /// which asserts the SAME (path, type, column_name) triples against the
+    /// SAME file — so if either port drifts, exactly one suite goes red.
+    #[test]
+    fn shipped_images_keyless_sample_promotes_media_origin_columns() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/samples/images-keyless.yaml");
+        let cfg = load_config(&path).expect("shipped sample must load");
+        let got: Vec<(String, String, String)> = cfg
+            .target
+            .promote_metadata()
+            .iter()
+            .map(|p| (p.path.clone(), p.type_.clone(), p.column_name()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "content_origin".to_string(),
+                    "text".to_string(),
+                    "content_origin".to_string()
+                ),
+                (
+                    "derived_rung".to_string(),
+                    "text".to_string(),
+                    "derived_rung".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_derive_block_means_no_default_promotions() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x" }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        assert!(cfg.target.promote_metadata().is_empty());
+    }
+
+    #[test]
+    fn user_promotions_win_and_defaults_only_fill_gaps() {
+        // Python appends the missing defaults AFTER the user's entries and
+        // de-dupes by `column_name`, never by raw `path` — so a user entry
+        // spelled `Content_Origin` (same column) suppresses that default
+        // while `derived_rung` is still added.
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    png:
+      rung: image_meta
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: postgres
+  dsn_env: D
+  database: s
+  table: t
+  mode: overwrite
+  hnsw: false
+  promote_metadata:
+    - { path: Content_Origin, type: text }
+    - { path: heading, type: text }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        let cols: Vec<String> = cfg
+            .target
+            .promote_metadata()
+            .iter()
+            .map(|p| p.column_name())
+            .collect();
+        assert_eq!(cols, vec!["content_origin", "heading", "derived_rung"]);
+        // The user's original spelling survives untouched.
+        assert_eq!(cfg.target.promote_metadata()[0].path, "Content_Origin");
+    }
+
+    #[test]
+    fn applying_default_media_promotions_twice_is_idempotent() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    png:
+      rung: image_meta
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let mut cfg = load_config(&path).expect("load");
+        cfg.apply_default_media_promotions();
+        cfg.apply_default_media_promotions();
+        assert_eq!(cfg.target.promote_metadata().len(), 2);
+    }
+
+    // ---- preflight (runs before the sink's destructive DDL) -------------
+
+    #[test]
+    fn preflight_rejects_ambiguous_derive_keys() {
+        // "png|jpg" and "jpg|webp" both claim "jpg". Rust used to stash
+        // this and only surface it from `iter_documents()` — i.e. after
+        // `create_table()` had already dropped the target table.
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    "png|jpg":
+      rung: image_meta
+    "jpg|webp":
+      rung: image_meta
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("config itself is well-formed");
+        let err = format!("{:#}", cfg.preflight_derive().unwrap_err());
+        assert!(
+            err.contains("reachable from two different `derive` keys"),
+            "expected the ambiguity error, got: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(not(all(feature = "media", feature = "embedder-hub")))]
+    fn preflight_rejects_a_rung_whose_cargo_feature_is_absent() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    png:
+      rung: clip_tags
+      vocabulary: ["a cat"]
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("config itself is well-formed");
+        let err = format!("{:#}", cfg.preflight_derive().unwrap_err());
+        assert!(
+            err.contains("requires the `media,embedder-hub` Cargo feature"),
+            "expected the missing-feature error, got: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(all(feature = "media", feature = "embedder-hub"))]
+    fn preflight_accepts_a_rung_whose_cargo_feature_is_present() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    png:
+      rung: clip_tags
+      vocabulary: ["a cat"]
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("config itself is well-formed");
+        cfg.preflight_derive().expect("feature is built in");
+    }
+
+    #[test]
+    fn preflight_is_a_noop_without_a_derive_block() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x" }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        load_config(&path).unwrap().preflight_derive().unwrap();
+    }
+
+    #[test]
+    fn min_score_is_f64_so_the_shipped_default_canonicalizes_like_python() {
+        // The whole point of holding `min_score` as f64: this value flows
+        // into `ClipTagsDeriver::cache_key_parts()`, gets canonicalized to
+        // JSON, and is hashed into `derived.params_hash`. As an f32 the
+        // shipped default rendered as `0.20000000298023224` while Python
+        // rendered `0.2`, splitting the derivation cache across ports.
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    png:
+      rung: clip_tags
+      vocabulary: ["a cat"]
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        let SourceConfig::Files(f) = &cfg.source else {
+            panic!("expected Files source");
+        };
+        let DeriverConfig::ClipTags(c) = &f.derive.as_ref().unwrap()["png"] else {
+            panic!("expected clip_tags");
+        };
+        assert_eq!(
+            serde_json::to_string(&serde_json::json!({ "min_score": c.min_score })).unwrap(),
+            r#"{"min_score":0.2}"#
+        );
     }
 
     #[test]

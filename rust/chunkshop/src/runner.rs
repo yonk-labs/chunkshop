@@ -43,7 +43,7 @@ pub struct CellResult {
     pub embed_seconds: f64,
 }
 
-pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
+pub async fn run_cell(mut cfg: CellConfig) -> Result<CellResult> {
     let start = Instant::now();
     info!(cell = %cfg.cell_name, "cell starting");
 
@@ -54,6 +54,23 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
              See docs/incremental.md (Pattern F) and docs/samples/inline-mode/."
         ));
     }
+
+    // Everything knowable from config alone that can still fail runs BEFORE
+    // the sink's DROP+CREATE — and before the embedder downloads its ONNX
+    // weights. Python raises these same conditions inside
+    // `FilesSource.__init__`, which `runner.py` calls before
+    // `sink.create_table()`; Rust deferred them to `iter_documents()` /
+    // point-of-use, so a `mode: overwrite` cell destroyed and emptied its
+    // target table and only then reported the error.
+    cfg.preflight_derive().context("source preflight")?;
+
+    // Idempotent re-application, for configs built by struct literal rather
+    // than deserialized (the bakeoff runner, library callers). Python gets
+    // this for free — its `@model_validator` fires on direct construction
+    // too — so without this line the two ports would disagree on the target
+    // schema for a programmatically-assembled media cell.
+    cfg.apply_default_media_promotions();
+
     let source: AnySource = crate::sources::load_source(&cfg.source).context("load source")?;
     let framer = build_framer(cfg.framer)?;
     let chunker = build_chunker(cfg.chunker)?;
