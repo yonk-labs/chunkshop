@@ -785,9 +785,48 @@ shape. Transport must be configurable, not hard-coded to the spec-blessed form.
 ### D5 — F10/F11/F12: cache, provenance, supersession are one mechanism
 
 **Mechanism.** The cache key **is** the provenance record:
-`key = H(content_hash, derivation_hash)` where `derivation_hash = H(rung, model_id, model_version,
-params, prompt, argv)`. Stored alongside every derived artefact and stamped into
-`metadata.derived.<tier>.*`.
+`key = H(content_hash, derivation_hash, cache_key_extra)` where `derivation_hash =
+H(cache_schema_version, rung, model_id, model_version, engine, params_hash)`. Stored alongside
+every derived artefact and stamped into `metadata.derived.<tier>.*`.
+
+**The invariant that makes "the key IS the provenance record" true — a deriver MUST be a pure
+function of its content plus everything it declares in the key.** This was left unwritten in the
+first draft of this section and it was violated in the first implementation, with the worst
+possible symptom: silent, unattributed data corruption.
+
+The failure. `ImageMetaDeriver` derives its output **text** from the filename and the parent path
+segments, but neither half of the two-part key contained the path. Two byte-identical images with
+different names therefore produced the same key, and the second was served the first's derived
+text — embedded, indexed and searchable under the wrong document, with no warning and no error.
+`ClipTagsDeriver` builds its text as `base.text + tags`, so it inherited the collision and its
+tags came from the wrong image too. The trigger did not need duplicate files at all: renaming one
+file and re-running the cell served the old name's text forever.
+
+The rule. *Anything a deriver reads that is not its own bytes — the filename, the parent
+directory, the mtime, an environment variable, a sibling file — is invisible to the key unless the
+deriver declares it. Two documents agreeing on the key will be served each other's output.*
+
+The mechanism. Each deriver declares its **own** per-document key contribution:
+`cache_key_extra(path) -> str | None` (Python) / `fn cache_key_extra(&self, path: &Path) ->
+Option<String>` (Rust, a trait default returning `None`). The path is deliberately **not** folded
+into every key: that would defeat content-addressing for the derivers that genuinely are pure
+functions of `(bytes, params)`, and two copies of the same PDF deriving once is a property worth
+keeping.
+
+- A deriver that consumes per-document material outside its bytes returns a string capturing
+  exactly that material, reflecting its **current config** — `ImageMetaDeriver` returns the
+  already-computed path-derived text prefix (which includes the parent segments only when
+  `path_segments` is on), rather than re-deriving the path logic a second time where the two
+  copies could drift apart.
+- A deriver that **wraps** another must **delegate**, or it silently drops the inner deriver's
+  contribution. `ClipTagsDeriver` delegates to its `ImageMetaDeriver`.
+- A deriver that is genuinely pure returns `None`, and its cache behaviour is unchanged: text,
+  PDF, XLSX, DOCX and HTML derivers all keep full content-addressed sharing.
+
+Both languages must produce the identical key for the same file and config; this is covered by the
+cross-language probe (`python/scripts/hash_parity_probe.py` /
+`rust/chunkshop/examples/hash_parity_probe.rs`) alongside `derivation_hash` and the cache path,
+including a non-ASCII filename case.
 
 Consequences that fall out for free:
 - Re-chunk / re-embed / change target → **0** re-derivations (key unchanged).
@@ -809,9 +848,12 @@ is accepted.
   `chunkshop cache purge` command, and an explicit **opt-out** (`cache: false`) for corpora that
   must not persist derived text outside the target database.
 - **No redaction and no encryption-at-rest in v1** — stated as a limitation, not implied to be solved.
-- **Cache schema version** is part of the key: `key = H(cache_schema_version, content_hash,
-  derivation_hash)`. If the `derivation_hash` formula itself changes in a later release, the
-  version bump invalidates cleanly instead of silently serving mismatched entries.
+- **Cache schema version** is folded into `derivation_hash` and so into the key. If the key
+  formula itself changes in a later release, the version bump invalidates cleanly instead of
+  silently serving mismatched entries. `CACHE_SCHEMA_VERSION` was bumped `"1"` -> `"2"` when
+  `cache_key_extra` was added, for a correctness reason and not merely a shape change: any entry
+  written under the two-part key may hold poisoned data attributed to the wrong document, so those
+  entries must be unreachable, not merely re-shaped.
 - Size: 40k captions is real disk. Document expected footprint per 10k items.
 
 ## Tech Stack
@@ -944,6 +986,10 @@ class ParseResult:
 class Deriver(Protocol):                       # generalises today's FileParser
     supported_extensions: list[str]
     def derive(self, path: Path) -> ParseResult: ...
+    # Per-document material this deriver consumes beyond its bytes; None
+    # (the default) means "pure function of content + params" and keeps
+    # full content-addressed sharing. See D5's cache-soundness invariant.
+    def cache_key_extra(self, path: Path) -> str | None: ...
 
 # --- API 2 ---------------------------------------------------------------
 class MediaEncoder(Protocol):
@@ -953,7 +999,8 @@ class MediaEncoder(Protocol):
 
 # --- cross-cutting -------------------------------------------------------
 class DerivationCache(Protocol):
-    def key(self, content_hash: str, derivation_hash: str) -> str: ...
+    def key(self, content_hash: str, derivation_hash: str,
+            extra: str | None) -> str: ...
     def get(self, key: str) -> ParseResult | None: ...
     def put(self, key: str, result: ParseResult) -> None: ...
 ```
@@ -967,8 +1014,10 @@ sources/chunkers/embedders. No new stage, no new pipeline concept.
 1. Source yields a path. `content_hash` = sha256 of bytes (the existing incremental cursor already
    computes this — reuse, do not recompute).
 2. `DeriverRegistry` picks the rung by extension + config.
-3. `derivation_hash = H(rung, model_id, model_version, params, prompt, argv)`.
-4. **Cache lookup on `(content_hash, derivation_hash)`.** Hit → skip all work.
+3. `derivation_hash = H(cache_schema_version, rung, model_id, model_version, engine, params_hash)`.
+4. **Cache lookup on `(content_hash, derivation_hash, cache_key_extra(path))`.** Hit → skip all
+   work. The third component is the deriver's own declaration of any per-document material it
+   consumes beyond its bytes — `None` for a pure deriver. See D5's cache-soundness invariant.
 5. Miss → run the deriver. **A `""`/`None` result is a failure, not an empty success (F5).**
 6. `ProvenanceStamp` writes `derived.<tier>.{model,version,ts,params_hash}` into metadata.
 7. Cache put. `ParseResult` → `Document(content=text, metadata=...)`.
@@ -1092,6 +1141,7 @@ tutorial defaults to GPT-4o."*
 |---|---|
 | **Cache holds raw claim text / transcripts unencrypted on local disk** | **FIXED** — configurable cache root, documented TTL, `chunkshop cache purge`, `cache: false` opt-out. No redaction/encryption-at-rest in v1, **stated as a limitation** rather than implied solved. |
 | **No cache-schema versioning** — a later change to the `derivation_hash` formula would silently serve mismatched entries | **FIXED** — `cache_schema_version` is part of the key. |
+| **Path-dependent derivers collide in a content-addressed cache** — `ImageMetaDeriver` derives text from the filename while the key held no path, so byte-identical images with different names were served each other's text | **FIXED** — per-deriver `cache_key_extra` is a third key component, and D5 now states the cache-soundness invariant that makes the key a valid provenance record. |
 | **No cost governance for the bakeoff**, the one feature explicitly allowed to spend money | **FIXED** — **F24**: budget ceiling, pre-run estimate, `cost` recorded in provenance. |
 | **SC-3 was an unfair fight** — a single CLIP leg measured against gamelib's 5-leg fused RRF, with the fusion technique (F15) deferred | **FIXED** — SC-3 is now whole-system vs whole-system (unified text plane incl. FTS + vector legs), and the stale `SC-3→F16` traceability row is corrected. |
 | **No contingency if the bakeoff says chunkshop loses** | **FIXED** — SC-3 now states the result is published **whichever way it goes**; a loss redirects v1.1. Required by NN-1: a gate that is quietly dropped when unfavourable is not a measurement. |

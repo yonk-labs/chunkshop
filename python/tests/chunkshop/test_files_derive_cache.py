@@ -221,3 +221,155 @@ def test_fingerprint_asymmetry_on_full_resync(tmp_path):
         "content hash for its key, so the Document incidentally gets a "
         "fingerprint it never had pre-media-ingest"
     )
+
+
+# --- path-collision regression (silent data corruption) --------------------
+#
+# The cache key was H(content_hash, derivation_hash) with the file path in
+# NEITHER half, while `ImageMetaDeriver` derives its output TEXT from the
+# filename and path segments. Two byte-identical images with different names
+# therefore collided and the second silently received the FIRST's derived
+# text — embedded, indexed and searchable under the wrong document, with no
+# warning. `ClipTagsDeriver` inherited it (its text is `base.text + tags`),
+# so the expensive rung was affected too. Fixed by giving each deriver a
+# per-document cache-key contribution (`Deriver.cache_key_extra`).
+
+
+def _identical_pngs(corpus: Path) -> tuple[Path, Path]:
+    """Two BYTE-IDENTICAL images with different names.
+
+    Copied, not re-encoded, so the collision is a genuine content-hash
+    match and not an artefact of two separately-written files happening to
+    compress the same way.
+    """
+    Image = pytest.importorskip("PIL.Image", reason="Pillow comes with fastembed")
+    a = corpus / "a_chart_revenue.png"
+    Image.new("RGB", (8, 8), "red").save(a)
+    b = corpus / "b_goblin_warrior.png"
+    b.write_bytes(a.read_bytes())
+    assert a.read_bytes() == b.read_bytes(), "fixtures must be byte-identical"
+    return a, b
+
+
+@pytest.mark.parametrize("path_segments", [False, True])
+def test_identical_images_with_different_names_get_their_own_text(
+    tmp_path, path_segments
+):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    a, b = _identical_pngs(corpus)
+    cache_root = tmp_path / "cache"
+
+    cfg = Cfg(
+        type="files",
+        glob=str(corpus / "*.png"),
+        derive={"png": {"rung": "image_meta", "path_segments": path_segments}},
+        cache={"enabled": True, "root": str(cache_root)},
+    )
+    docs = {Path(d.metadata["source_path"]).name: d
+            for d in FilesSource(cfg).iter_documents()}
+
+    assert "chart revenue" in docs["a_chart_revenue.png"].content
+    assert "goblin warrior" in docs["b_goblin_warrior.png"].content
+    assert "chart revenue" not in docs["b_goblin_warrior.png"].content, (
+        "the second byte-identical image was served the FIRST's derived "
+        "text — this is the silent data-corruption bug"
+    )
+    assert len(list(cache_root.rglob("*.json"))) == 2, (
+        "byte-identical images with different names must not share one entry"
+    )
+
+
+def test_renaming_a_file_re_derives_under_the_new_name(tmp_path):
+    """The most ordinary trigger: rename a file and re-run the cell.
+
+    Content unchanged, deriver config unchanged — so before the fix both
+    halves of the key were identical and the old name's text was served
+    forever.
+    """
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    Image = pytest.importorskip("PIL.Image", reason="Pillow comes with fastembed")
+    a = corpus / "a.png"
+    Image.new("RGB", (8, 8), "red").save(a)
+    cache_root = tmp_path / "cache"
+
+    def run() -> str:
+        cfg = Cfg(
+            type="files",
+            glob=str(corpus / "*.png"),
+            derive={"png": {"rung": "image_meta", "path_segments": False}},
+            cache={"enabled": True, "root": str(cache_root)},
+        )
+        (doc,) = list(FilesSource(cfg).iter_documents())
+        return doc.content
+
+    assert run() == "a"
+    (corpus / "a.png").rename(corpus / "b.png")
+    assert run() == "b", "derived text must follow the new name, not the cache"
+
+
+class _PureSpy:
+    """A deriver that IS a pure function of (bytes, params).
+
+    It declares no `cache_key_extra`, exactly as `TextParser`/`PDFParser`
+    and every other content-only deriver does, so `cache_key_extra_for`
+    reports `None` for it and it keeps full content-addressed sharing.
+    """
+
+    supported_extensions = ["weird"]
+    calls: list[str] = []
+
+    def derivation_hash(self) -> str:
+        return "pure-hash-v1"
+
+    def derive(self, path: Path) -> ParseResult:
+        type(self).calls.append(str(path))
+        return ParseResult(text="content only", metadata={})
+
+
+def test_pure_derivers_still_share_one_cache_entry(tmp_path):
+    """The property the fix PRESERVES — proof it is not too broad.
+
+    Two byte-identical files with different names must still derive ONCE
+    and hold ONE entry when the deriver is genuinely content-only (two
+    copies of the same PDF should not pay twice). If this fails, the fix
+    has been widened into "path in every key" and content-addressing is
+    gone.
+    """
+    _PureSpy.calls.clear()
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "one.weird").write_text("shared body", encoding="utf-8")
+    (corpus / "two.weird").write_text("shared body", encoding="utf-8")
+    cache_root = tmp_path / "cache"
+
+    cfg = Cfg(
+        type="files",
+        glob=str(corpus / "*.weird"),
+        derive={"weird": {"rung": "image_meta"}},
+        cache={"enabled": True, "root": str(cache_root)},
+    )
+    src = FilesSource(cfg)
+    src._parsers["weird"] = _PureSpy()
+    docs = list(src.iter_documents())
+
+    assert len(docs) == 2
+    assert len(_PureSpy.calls) == 1, "the second file must be a cache hit"
+    assert len(list(cache_root.rglob("*.json"))) == 1, (
+        "a pure deriver must keep exactly one shared, content-addressed entry"
+    )
+
+
+def test_stock_text_and_pdf_parsers_declare_no_extra():
+    """The pure-deriver contract, asserted on the shipped parsers.
+
+    `cache_key_extra_for` returning None is what preserves their sharing;
+    if a future edit gives one of them a path-dependent contribution, that
+    is a deliberate act and this test should be the thing that notices.
+    """
+    from chunkshop.sources.parsers import PDFParser, TextParser, cache_key_extra_for
+
+    p = Path("/corpus/anything.txt")
+    assert cache_key_extra_for(TextParser(), p) is None
+    assert cache_key_extra_for(PDFParser(), p) is None

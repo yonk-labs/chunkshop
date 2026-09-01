@@ -128,3 +128,28 @@ def test_model_version_falls_back_to_unknown_on_lookup_failure(monkeypatch):
 
     monkeypatch.setattr(importlib.metadata, "version", _raise)
     assert ClipTagsDeriver._model_version() == "unknown"
+
+
+def test_cache_key_extra_is_delegated_to_the_wrapped_image_meta_deriver():
+    """`derive()` builds text as `base.text + tags`, so this rung inherits
+    rung 0's path dependence — and, before the fix, rung 0's silent cache
+    collision. Two byte-identical images with different names would share
+    one clip_tags entry and the second would receive the first's filename
+    text AND the first image's CLIP tags.
+
+    No model download: `cache_key_extra` is pure path arithmetic, so this
+    is not marked slow.
+    """
+    from pathlib import Path
+
+    from chunkshop.sources.derivers.image_meta import ImageMetaDeriver
+
+    d = ClipTagsDeriver(vocabulary=VOCAB)
+    a = Path("/corpus/sprites/a_chart_revenue.png")
+    b = Path("/corpus/sprites/b_goblin_warrior.png")
+
+    assert d.cache_key_extra(a) == ImageMetaDeriver().cache_key_extra(a)
+    assert d.cache_key_extra(a) != d.cache_key_extra(b), (
+        "byte-identical images with different names must not share a "
+        "clip_tags cache entry"
+    )

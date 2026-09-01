@@ -11,9 +11,22 @@ from chunkshop.sources.parsers.result import ParseResult
 #
 # Task 6 added `engine` (5 parts -> 6) WITHOUT bumping this: the media
 # deriver cache has never shipped (feat/media-ingest-v1a is unmerged), so
-# there are zero cache entries in the wild to invalidate. Once this ships,
-# a future shape change DOES need the bump.
-CACHE_SCHEMA_VERSION = "1"
+# there were zero cache entries in the wild to invalidate. That reasoning
+# still holds for `engine` and is kept here as the record of a deliberate
+# NON-bump.
+#
+# "1" -> "2" IS a bump, for a different and stronger reason than shape
+# alone: the cache key gained a third component (the per-deriver
+# `cache_key_extra`, see `cache.DerivationCache._path`) to fix a silent
+# data-corruption bug. Before this bump the key was
+# H(content_hash, derivation_hash) with the file path in NEITHER half,
+# while `ImageMetaDeriver` derives its output text FROM the path — so two
+# byte-identical images with different names collided and the second
+# silently received the first's derived text (and, through
+# `ClipTagsDeriver`, the first image's CLIP tags). Any pre-existing entry
+# may therefore hold poisoned data attributed to the wrong document, so
+# old entries must not merely be re-shaped, they must be unreachable.
+CACHE_SCHEMA_VERSION = "2"
 
 
 def _params_hash(params: dict) -> str:

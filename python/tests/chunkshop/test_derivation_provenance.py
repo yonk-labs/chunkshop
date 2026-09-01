@@ -100,9 +100,16 @@ def test_set_valued_param_raises_with_key_name():
 
 
 def test_cache_schema_version_affects_hash(monkeypatch):
-    """Different CACHE_SCHEMA_VERSION values must produce different hashes."""
+    """Different CACHE_SCHEMA_VERSION values must produce different hashes.
+
+    The patched value is derived from the LIVE constant rather than a
+    literal, so this test cannot silently become a no-op the next time the
+    constant is bumped to whatever literal it happened to use (it did
+    exactly that on the "1" -> "2" bump).
+    """
     base = derivation_hash("r", "m", "1", "python", {"x": 1})
-    # Monkeypatch the version constant
-    monkeypatch.setattr(provenance, "CACHE_SCHEMA_VERSION", "2")
+    other = provenance.CACHE_SCHEMA_VERSION + "-other"
+    assert other != provenance.CACHE_SCHEMA_VERSION
+    monkeypatch.setattr(provenance, "CACHE_SCHEMA_VERSION", other)
     modified = derivation_hash("r", "m", "1", "python", {"x": 1})
     assert base != modified

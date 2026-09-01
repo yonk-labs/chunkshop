@@ -13,6 +13,7 @@ from chunkshop.sources.parsers.base import (
     EmptyDerivationError,
     FileParser,
     ParserError,
+    cache_key_extra_for,
     call_deriver,
 )
 from chunkshop.sources.parsers.docx import DOCXParser
@@ -70,6 +71,7 @@ __all__ = [
     "EmptyDerivationError",
     "AmbiguousDeriverError",
     "call_deriver",
+    "cache_key_extra_for",
     "ParseResult",
     "normalize_parse_result",
 ]

@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from chunkshop.sources.derivers.cache import DerivationCache
+from chunkshop.sources.derivers.image_meta import ImageMetaDeriver
 from chunkshop.sources.derivers.provenance import derivation_hash
 
 # Synthetic, never-created root used only so `relative_key_path` can strip
@@ -26,8 +27,12 @@ from chunkshop.sources.derivers.provenance import derivation_hash
 _PROBE_ROOT = Path("/probe-root-unused")
 
 
-def relative_key_path(content_hash: str, derivation_hash_: str) -> str:
-    full = DerivationCache(root=_PROBE_ROOT)._path(content_hash, derivation_hash_)
+def relative_key_path(
+    content_hash: str, derivation_hash_: str, extra: str | None = None
+) -> str:
+    full = DerivationCache(root=_PROBE_ROOT)._path(
+        content_hash, derivation_hash_, extra
+    )
     return str(full.relative_to(_PROBE_ROOT))
 
 
@@ -104,6 +109,51 @@ def main() -> None:
             "e159c4e35c8cf84439ecaf417477d67316c5607a367f773753ae76c54cdf0d1d",
         ),
     )
+
+    # The third key component (`cache_key_extra`), added to fix the silent
+    # path-collision data-corruption bug. Two byte-identical images with
+    # different names share `content_hash` AND `derivation_hash` — only
+    # this component separates them, so if it disagrees across languages
+    # the two ports assign the same document DIFFERENT identities.
+    #
+    # The `extra` values below are produced by the SHIPPED
+    # `ImageMetaDeriver.cache_key_extra`, not by a probe-local
+    # reimplementation. `path_text` is pure path arithmetic and never
+    # touches the filesystem, so the probe can use synthetic paths that
+    # need not exist.
+    with_segments = ImageMetaDeriver(path_segments=True, segment_depth=3)
+    no_segments = ImageMetaDeriver(path_segments=False, segment_depth=3)
+    a = Path("/srv/corpus/assets/sprites/a_chart_revenue.png")
+    b = Path("/srv/corpus/assets/sprites/b_goblin_warrior.png")
+    # A non-ASCII filename, per the fix's parity requirement: humanise()
+    # splits on `_`/`-`/`.` only, so accented and CJK graphemes must pass
+    # through both languages' string handling byte-identically.
+    nonascii = Path("/srv/corpus/données/café_猫-01.png")
+
+    print("python-extra-a-noseg     ", repr(no_segments.cache_key_extra(a)))
+    print("python-extra-b-noseg     ", repr(no_segments.cache_key_extra(b)))
+    print("python-extra-a-seg       ", repr(with_segments.cache_key_extra(a)))
+    print("python-extra-nonascii-seg", repr(with_segments.cache_key_extra(nonascii)))
+
+    print(
+        "python-cachekey-a-noseg  ",
+        relative_key_path("c1", "d1", no_segments.cache_key_extra(a)),
+    )
+    print(
+        "python-cachekey-b-noseg  ",
+        relative_key_path("c1", "d1", no_segments.cache_key_extra(b)),
+    )
+    print(
+        "python-cachekey-a-seg    ",
+        relative_key_path("c1", "d1", with_segments.cache_key_extra(a)),
+    )
+    print(
+        "python-cachekey-nonascii-seg",
+        relative_key_path("c1", "d1", with_segments.cache_key_extra(nonascii)),
+    )
+    # The preserved property: a PURE deriver contributes None, so
+    # byte-identical files keep ONE shared entry.
+    print("python-cachekey-pure     ", relative_key_path("c1", "d1", None))
 
 
 if __name__ == "__main__":

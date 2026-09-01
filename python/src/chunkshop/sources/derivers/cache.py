@@ -19,12 +19,24 @@ def default_cache_root() -> Path:
 
 
 class DerivationCache:
-    """Memoises derivations on (content_hash, derivation_hash).
+    """Memoises derivations on (content_hash, derivation_hash, extra).
 
     The key is the provenance: a different model, prompt, or parameter is a
     different derivation_hash and therefore a miss. Re-chunking or changing
-    the target table does not touch either half of the key, so it re-derives
+    the target table does not touch any part of the key, so it re-derives
     nothing.
+
+    ``extra`` is the deriver's own per-document cache-key contribution
+    (``Deriver.cache_key_extra(path)``), and it exists because
+    content-addressing alone is only sound for a deriver that is a PURE
+    function of (bytes, params). ``ImageMetaDeriver`` is not: it derives its
+    output text from the filename and path segments, so two byte-identical
+    images with different names must NOT share an entry. Rather than fold
+    the path into every key — which would defeat content-addressing for the
+    derivers that genuinely are pure, e.g. two copies of the same PDF that
+    should derive once — each deriver declares what per-document material it
+    actually consumes. Pure derivers contribute ``None`` and keep the exact
+    sharing behaviour they had before.
 
     Entries hold derived text — for some corpora that is sensitive material.
     The root is configurable so it can live on an encrypted volume, and
@@ -34,12 +46,27 @@ class DerivationCache:
     def __init__(self, root: Optional[Path] = None):
         self.root = Path(root) if root is not None else default_cache_root()
 
-    def _path(self, content_hash: str, derivation_hash: str) -> Path:
-        key = hashlib.sha256(f"{content_hash}\x00{derivation_hash}".encode()).hexdigest()
+    def _path(
+        self,
+        content_hash: str,
+        derivation_hash: str,
+        extra: Optional[str] = None,
+    ) -> Path:
+        # `extra` is always folded in — as the empty string when a deriver
+        # contributes nothing — so there is exactly ONE key formula rather
+        # than a two-shape scheme where a pure deriver and a deriver whose
+        # extra happens to be "" could land on different paths.
+        material = f"{content_hash}\x00{derivation_hash}\x00{extra or ''}"
+        key = hashlib.sha256(material.encode()).hexdigest()
         return self.root / key[:2] / f"{key}.json"
 
-    def get(self, content_hash: str, derivation_hash: str) -> Optional[ParseResult]:
-        path = self._path(content_hash, derivation_hash)
+    def get(
+        self,
+        content_hash: str,
+        derivation_hash: str,
+        extra: Optional[str] = None,
+    ) -> Optional[ParseResult]:
+        path = self._path(content_hash, derivation_hash, extra)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             return ParseResult(text=payload["text"], metadata=payload["metadata"])
@@ -48,8 +75,14 @@ class DerivationCache:
             # misses, never errors — a damaged cache must degrade to recomputation.
             return None
 
-    def put(self, content_hash: str, derivation_hash: str, result: ParseResult) -> None:
-        path = self._path(content_hash, derivation_hash)
+    def put(
+        self,
+        content_hash: str,
+        derivation_hash: str,
+        result: ParseResult,
+        extra: Optional[str] = None,
+    ) -> None:
+        path = self._path(content_hash, derivation_hash, extra)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps({"text": result.text, "metadata": result.metadata})
         # Atomic write so a crash mid-write cannot leave a half entry.
@@ -75,13 +108,19 @@ def cached_derive(
     content_hash: str,
     derivation_hash: str,
     compute: Callable[[], ParseResult],
+    extra: Optional[str] = None,
 ) -> tuple[ParseResult, bool]:
-    """Return (result, was_cache_hit). A None cache disables memoisation."""
+    """Return (result, was_cache_hit). A None cache disables memoisation.
+
+    ``extra`` is the deriver's ``cache_key_extra(path)`` contribution; see
+    ``DerivationCache`` for why it is per-deriver rather than always the
+    path.
+    """
     if cache is None:
         return compute(), False
-    hit = cache.get(content_hash, derivation_hash)
+    hit = cache.get(content_hash, derivation_hash, extra)
     if hit is not None:
         return hit, True
     result = compute()
-    cache.put(content_hash, derivation_hash, result)
+    cache.put(content_hash, derivation_hash, result, extra)
     return result, False

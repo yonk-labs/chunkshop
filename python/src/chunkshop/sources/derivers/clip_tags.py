@@ -78,6 +78,20 @@ class ClipTagsDeriver:
              "min_score": self.min_score},
         )
 
+    def cache_key_extra(self, path: Path) -> str | None:
+        """Delegated to the wrapped ``ImageMetaDeriver``.
+
+        ``derive()`` builds its text as ``base.text + tags``, so this rung
+        inherits rung 0's path dependence wholesale — and with it rung 0's
+        collision. Without delegating, two byte-identical images with
+        different names would share one clip_tags entry and the second
+        would be served the first's filename text AND the first image's
+        CLIP tags. This stays delegation rather than a copy of rung 0's
+        path logic so the contribution tracks whatever config
+        ``self._meta`` is built with, now or later.
+        """
+        return self._meta.cache_key_extra(path)
+
     def _ensure_models(self):
         """Lazy: nothing downloads at import or install (NN-6)."""
         if self._vision is not None:

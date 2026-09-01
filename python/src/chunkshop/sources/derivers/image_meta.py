@@ -38,6 +38,44 @@ class ImageMetaDeriver:
             {"path_segments": self.path_segments, "segment_depth": self.segment_depth},
         )
 
+    def path_text(self, path: Path) -> str:
+        """The path-derived prefix of this deriver's output text.
+
+        The single place path -> text material is computed. ``derive()``
+        builds its output from it and ``cache_key_extra()`` returns it
+        verbatim, so the two can never drift into disagreeing about which
+        path material was consumed — a second, key-only re-derivation of
+        the same logic is exactly the duplication class that has already
+        produced defects on this branch.
+
+        May be empty (a stem of all separators humanises to nothing);
+        ``derive()`` owns the non-empty fallback, which depends on the
+        image format rather than the path and so is not key material.
+        """
+        words = [humanise(path.stem)]
+        if self.path_segments:
+            segments = [
+                p for p in path.parent.parts[-self.segment_depth:]
+                if p not in ("/", "")
+            ]
+            words.extend(humanise(s) for s in segments)
+        return " ".join(w for w in words if w)
+
+    def cache_key_extra(self, path: Path) -> str | None:
+        """This deriver is NOT a pure function of its bytes.
+
+        Its output text comes from the filename (always) and the parent
+        segments (only when ``path_segments`` is on), so byte-identical
+        images with different names must not share a cache entry.
+        Returning ``path_text`` — the exact material consumed under the
+        CURRENT config, not the path unconditionally — keeps the key as
+        narrow as correctness allows: with ``path_segments`` off the parent
+        directory is correctly absent from the key, and a rename that
+        leaves the humanised text unchanged (``a-b.png`` -> ``a_b.png``)
+        still hits, because the derived text is genuinely identical.
+        """
+        return self.path_text(path)
+
     def derive(self, path: Path) -> ParseResult:
         try:
             from PIL import Image
@@ -55,12 +93,7 @@ class ImageMetaDeriver:
         except Exception as exc:
             raise ParserError(f"failed to parse image {path}: {exc}") from exc
 
-        words = [humanise(path.stem)]
-        if self.path_segments:
-            segments = [p for p in path.parent.parts[-self.segment_depth:] if p not in ("/", "")]
-            words.extend(humanise(s) for s in segments)
-
-        text = " ".join(w for w in words if w)
+        text = self.path_text(path)
         # Fallback: if all segments humanised to empty (e.g., stem is "_"), use format token.
         if not text.strip():
             text = f"{fmt.lower()} image"

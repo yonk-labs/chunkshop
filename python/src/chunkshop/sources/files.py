@@ -12,6 +12,7 @@ from chunkshop.sources.parsers import (
     DEFAULT_PARSERS,
     EmptyDerivationError,
     FileParser,
+    cache_key_extra_for,
     call_deriver,
     get_parser,
 )
@@ -191,8 +192,19 @@ class FilesSource:
                 d_hash = d_hash()
             if d_hash is None:
                 d_hash = parser.__class__.__name__
+            # Third component of the key: whatever per-document material
+            # this deriver consumes beyond its bytes (None for a pure
+            # deriver — see `parsers.base.Deriver`'s cache-soundness
+            # invariant). Without it, `ImageMetaDeriver` — whose text comes
+            # from the FILENAME — served byte-identical images each other's
+            # derived text.
+            extra = cache_key_extra_for(parser, path)
             result, _was_hit = cached_derive(
-                self._cache, content_hash, d_hash, lambda: call_deriver(parser, path)
+                self._cache,
+                content_hash,
+                d_hash,
+                lambda: call_deriver(parser, path),
+                extra,
             )
         else:
             result = call_deriver(parser, path)
