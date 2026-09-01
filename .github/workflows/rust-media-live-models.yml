@@ -73,17 +73,25 @@ jobs:
             fastembed-rs-live-${{ runner.os }}-
             fastembed-rs-${{ runner.os }}-
 
-      # `-- --ignored` runs ONLY the ignored tests. Every `#[ignore]` in the
-      # workspace is a live-model test (verified 2026-09-01: the DB-backed
-      # tests use a runtime skip-and-return instead, never `#[ignore]`), so
-      # this needs no per-test filter. If someone adds an `#[ignore]` for a
-      # different reason, it starts running here — which is the right
-      # default, since the alternative is a test that runs nowhere.
+      # `-- --ignored` runs ONLY the ignored tests. `--lib --tests` is
+      # load-bearing: without it, `--ignored` ALSO picks up the two
+      # ```ignore-marked doctests (pipeline.rs:7, sources/base.rs:87), which
+      # are illustrative snippets that are not meant to run and would fail
+      # the job. `--lib --tests` scopes to the unit + integration test
+      # targets, which resolves to exactly the four live-model tests
+      # (verified 2026-09-01 with `-- --ignored --list`):
+      #   sources::derivers::clip_tags::tests::tags_are_text_and_correct
+      #   clip_text_tower_matches_python_within_1e6
+      #   clip_vision_tower_matches_python_within_1e_minus_5_cosine
+      #   rung1_metadata_keys_match_python
+      # No `#[ignore]` in the workspace exists for any other reason — the
+      # DB-backed tests use a runtime skip-and-return instead (see
+      # cross_backend_matrix.rs's module doc).
       - name: cargo test --features media,embedder-hub -- --ignored
         working-directory: rust
         run: |
           cargo test --workspace --features media,embedder-hub --locked \
-            --no-fail-fast -- --ignored --nocapture
+            --lib --tests --no-fail-fast -- --ignored --nocapture
 
       - name: Report cache size
         if: always()
