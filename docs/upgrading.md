@@ -70,6 +70,51 @@ for how to compose a source from one engine with a sink on another.
 
 ---
 
+## Media ingest: on_empty default change
+
+**TL;DR:** `files` source cells that hit a document a parser can't extract
+any text from now abort the run by default, instead of silently indexing an
+empty document. If your corpus has any such files — most commonly scanned
+PDFs or images with no OCR/derive rung configured — you'll see this on your
+next upgrade.
+
+### What changed
+Before this release, a parser producing empty text (e.g. `pypdf` on a
+scanned, image-only PDF) was silently indexed as an empty document. The
+document vanished from search results with no error and no log line — a
+correctness bug, not a feature. `source.on_empty` now defaults to `"error"`:
+the cell raises `EmptyDerivationError` and the run stops.
+
+### Action required
+1. **Before upgrading, check your corpus** for files that might extract to
+   empty text under your current parsers (scanned/image-only PDFs are the
+   common case). If in doubt, do a dry run against a copy of your target
+   table first.
+2. Pick one of:
+   - Fix the gap — configure a `source.derive` rung (e.g. `image_meta` or
+     `clip_tags` for images) so the file produces real text/tags instead of
+     nothing.
+   - `source.on_empty: "skip"` — omit the offending document and continue
+     the run. Recommended if you'd rather review skipped files after the
+     fact than block ingest.
+   - `source.on_empty: "index"` — restores the pre-1.0 behaviour (index an
+     empty document). Not recommended; kept only for backward compatibility.
+
+### Why this matters more than a typical default change
+`runner.py` calls `sink.create_table()` — which under `target.mode:
+overwrite` **drops and recreates** the target table — *before* the document
+loop begins. Nothing in the runner catches `EmptyDerivationError`. So on an
+`overwrite`-mode cell, hitting this on upgrade means: table dropped, some
+documents written, then the run aborts on the first empty-text file — you
+are left with a **partially-refilled table**, not your original complete
+one. Re-running after fixing the corpus (via one of the options above) will
+refill it correctly, but until then the table is incomplete. `append` and
+`create_if_missing` modes don't drop existing data, so they're safe to
+retry as-is; `overwrite` mode is the one to check your corpus against
+first.
+
+---
+
 ## Future upgrade notes
 
 When breaking changes ship in future releases, sections will be added here

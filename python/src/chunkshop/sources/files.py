@@ -183,11 +183,21 @@ class FilesSource:
         if not result.text.strip():
             mode = self.cfg.on_empty
             if mode == "error":
-                raise EmptyDerivationError(
+                message = (
                     f"{path} produced no text via {parser.__class__.__name__}. "
-                    f"A scanned PDF or image needs an OCR rung; set "
-                    f"source.on_empty='skip' to continue past these."
+                    f"Set source.on_empty='skip' to continue past these files, "
+                    f"or 'index' to restore pre-1.0 behaviour."
                 )
+                # NN-6: a text-only user must never see a media concept in an
+                # error message. Only mention OCR when this cell actually has
+                # a derive rung configured — otherwise this fires for an
+                # ordinary empty .md file with no media in sight.
+                if self.cfg.derive:
+                    message += (
+                        " If this file needs OCR (e.g. a scanned PDF or "
+                        "image), configure an OCR-capable deriver for it."
+                    )
+                raise EmptyDerivationError(message)
             if mode == "skip":
                 return None
         metadata = {

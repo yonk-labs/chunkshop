@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+### Added
+
+- **Media ingest (Python): `files` source can now derive text from non-text
+  bytes.** A new `Deriver`/`ParseResult` seam sits alongside the existing
+  `FileParser` protocol — fully backward-compatible, third-party
+  `FileParser`s keep working unchanged. Configure it with `source.derive`
+  (per-extension deriver mapping), `source.on_empty` (`error` / `skip` /
+  `index` — see "Changed" below), and `source.cache` (provenance-keyed
+  derivation cache, keyed on content hash + derivation hash, so a deriver
+  is never re-run on unchanged input).
+- Two keyless image rungs ship out of the box: `image_meta` (deterministic
+  Pillow metadata — dimensions, format, path segments) and `clip_tags`
+  (zero-shot CLIP image tagging against a user-supplied vocabulary via
+  `fastembed`, no extra install required — see the `vision` extra below).
+- `content_origin` and `derived_rung` are promoted to real columns by
+  default on any cell that configures `source.derive`, so you can filter or
+  facet search results on which rung produced a chunk's text without a
+  jsonb reach-through.
+- **New `vision` extra (`chunkshop[vision]`), declared empty.** CLIP image
+  tagging runs on `fastembed`, which is already a core dependency — `vision`
+  exists only to name the capability for discoverability; it pulls in
+  nothing extra.
+
+### Changed
+
+- **`source.on_empty` now defaults to `"error"`.** A `files` cell that
+  produces no extractable text for a document (a scanned/image-only PDF is
+  the common case) now aborts the run with `EmptyDerivationError` instead
+  of silently indexing an empty document — the pre-1.0 behaviour let such
+  documents vanish from the index with no error and no log line. See
+  [`docs/upgrading.md`](docs/upgrading.md#media-ingest-on_empty-default-change)
+  for the `on_empty: "index"` escape hatch and an important interaction
+  with `target.mode: overwrite` (it drops the table before this can fire —
+  check your corpus before upgrading an `overwrite`-mode cell).
+
+### Fixed
+
+- **`chunkshop search` was hardcoded to the Postgres backend and did not
+  work against sqlite targets**, a bug shipped in v1.0.0-rc6.
+  `chunkshop.search_common.search` always used `chunkshop.search`'s
+  psycopg-based `hybrid_search` regardless of `target.type`, even though
+  sqlite (and mariadb/clickhouse) ship their own `hybrid_search` module. Any
+  rc6 user on a sqlite target hitting `chunkshop search` from the CLI was
+  affected. Fixed with an additive `hybrid_search_fn` override on
+  `search_common.search` (defaults to `None`, so every existing caller's
+  behavior is unchanged) and a `_hybrid_search_fn_for(target_type)`
+  dispatcher wired into the CLI's `search` command for sqlite targets.
+  mariadb/clickhouse CLI search and the `fact-search` command remain
+  Postgres-only for now.
+
 ## 1.0.0-rc6 — 2026-08-28
 
 Documentation refresh + dependency security patches — no source changes.
