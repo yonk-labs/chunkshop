@@ -43,8 +43,9 @@ class DerivationCache:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             return ParseResult(text=payload["text"], metadata=payload["metadata"])
-        except (OSError, ValueError, KeyError):
-            # Missing or corrupt entries are misses, never errors.
+        except (OSError, ValueError, KeyError, TypeError):
+            # Missing, unreadable, malformed, or structurally wrong entries are
+            # misses, never errors — a damaged cache must degrade to recomputation.
             return None
 
     def put(self, content_hash: str, derivation_hash: str, result: ParseResult) -> None:

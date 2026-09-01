@@ -55,3 +55,19 @@ def test_corrupt_entry_is_treated_as_a_miss(tmp_path):
     for f in tmp_path.rglob("*.json"):
         f.write_text("{not json", encoding="utf-8")
     assert cache.get("c1", "d1") is None
+
+
+def test_non_dict_json_is_treated_as_a_miss(tmp_path):
+    """Valid JSON that isn't a dict (null, number, string, array) must be a miss."""
+    cache = DerivationCache(root=tmp_path)
+
+    # Store a valid entry first to establish the file
+    cache.put("c1", "d1", ParseResult(text="original"))
+
+    # Corrupt with various non-dict JSON payloads
+    for invalid_payload in ["null", "42", '"x"', "[]"]:
+        cache.put("c1", "d1", ParseResult(text="placeholder"))
+        for f in tmp_path.rglob("*.json"):
+            f.write_text(invalid_payload, encoding="utf-8")
+        # Should degrade to miss, not raise TypeError
+        assert cache.get("c1", "d1") is None
