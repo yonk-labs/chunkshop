@@ -82,6 +82,20 @@ tokenizers = { version = "0.22.2", default-features = false, features = ["onig"]
 # --- `extractor` feature ---
 whatlang = { version = "0.16", optional = true }
 
+# --- `media` feature: SP-3 parser layer (pdf/docx/xlsx/html) + rung-0 image
+# metadata. Mirrors Python's per-format parser modules
+# (sources/parsers/{pdf,docx,xlsx,html}.py) and the free image_meta deriver.
+# `docx-rust` is the crates.io name for PoiScript's *reader* — NOT bokuweb's
+# `docx-rs`, which is writer-only and would silently fail to extract text.
+pdf-extract = { version = "0.12", optional = true }
+calamine = { version = "0.36", optional = true }
+docx-rust = { version = "0.1", optional = true }
+html2text = { version = "0.17", optional = true }
+# `image-models` already pulls `image` transitively via fastembed, but only
+# fastembed's own code can `use` it that way — a direct dependency is needed
+# for `image_meta.rs`'s own `image::open`/`ImageFormat`/`ColorType` calls.
+image = { version = "0.25", optional = true }
+
 # --- `source` feature: files (glob) / HTTP / S3 ---
 futures = { version = "0.3", optional = true }
 glob = { version = "0.3", optional = true }
@@ -242,3 +256,12 @@ code-aware-go         = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-go", 
 code-aware-typescript = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-typescript", "dep:tree-sitter-tags"]
 code-aware-javascript = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-javascript", "dep:tree-sitter-tags"]
 code-aware-rust       = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-rust",       "dep:tree-sitter-tags"]
+
+# SP-3 parser layer + rung 0 (image metadata, keyless/deterministic).
+# `clip_tags` (rung 1) additionally requires `embedder-hub` — gated in code
+# with #[cfg(all(feature = "media", feature = "embedder-hub"))], not a
+# separate Cargo feature, because a YAML that asks for `rung: clip_tags`
+# without embedder-hub built in should fail at config-load with a clear
+# message (F14/NN-6 convention), not a missing-symbol compile error for
+# users who only wanted image_meta.
+media = ["dep:pdf-extract", "dep:calamine", "dep:docx-rust", "dep:html2text", "dep:image"]

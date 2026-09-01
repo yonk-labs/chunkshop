@@ -11,6 +11,10 @@
 pub mod base;
 pub use base::Document;
 
+// `ParseResult` / `Deriver` are always available (no feature gate) — only the
+// format-specific submodules under `parsers/` are gated behind `media`.
+pub mod parsers;
+
 #[cfg(all(feature = "source", feature = "sink"))]
 use anyhow::anyhow;
 #[cfg(feature = "source")]
