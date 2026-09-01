@@ -1688,7 +1688,7 @@ def test_media_cell_gets_origin_columns_automatically():
       type: files
       glob: /tmp/*.png
       derive: {png: {rung: image_meta}}
-    chunker: {type: fixed_overlap, max_words: 128, overlap: 0}
+    chunker: {type: fixed_overlap, window_words: 128, step_words: 128}
     embedder: {type: fastembed, model_name: Xenova/bge-base-en-v1.5-int8, dim: 768}
     extractor: {type: none}
     target: {type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: t, mode: overwrite, hnsw: false}
@@ -1708,7 +1708,7 @@ def test_user_promotion_is_not_duplicated():
       type: files
       glob: /tmp/*.png
       derive: {png: {rung: image_meta}}
-    chunker: {type: fixed_overlap, max_words: 128, overlap: 0}
+    chunker: {type: fixed_overlap, window_words: 128, step_words: 128}
     embedder: {type: fastembed, model_name: Xenova/bge-base-en-v1.5-int8, dim: 768}
     extractor: {type: none}
     target:
@@ -1733,7 +1733,7 @@ def test_text_only_cell_gets_no_media_columns():
     cfg = CellConfig(**yaml.safe_load("""
     cell_name: t
     source: {type: files, glob: /tmp/*.md}
-    chunker: {type: fixed_overlap, max_words: 128, overlap: 0}
+    chunker: {type: fixed_overlap, window_words: 128, step_words: 128}
     embedder: {type: fastembed, model_name: Xenova/bge-base-en-v1.5-int8, dim: 768}
     extractor: {type: none}
     target: {type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: t, mode: overwrite, hnsw: false}
@@ -1888,8 +1888,8 @@ source:
       top_k: 2
 chunker:
   type: fixed_overlap
-  max_words: 512
-  overlap: 0
+  window_words: 512
+  step_words: 512
 embedder:
   type: fastembed
   model_name: Xenova/bge-base-en-v1.5-int8
