@@ -7,7 +7,13 @@ from typing import Iterator, Optional
 
 from chunkshop.config import FilesSource as Cfg
 from chunkshop.sources.base import Document, SyncMode
-from chunkshop.sources.parsers import DEFAULT_PARSERS, FileParser, call_deriver, get_parser
+from chunkshop.sources.parsers import (
+    DEFAULT_PARSERS,
+    EmptyDerivationError,
+    FileParser,
+    call_deriver,
+    get_parser,
+)
 from chunkshop.sources.parsers.text import TextParser
 
 
@@ -54,7 +60,9 @@ class FilesSource:
         if not paths:
             raise ValueError(f"no files matched glob: {self.cfg.glob}")
         for p in paths:
-            yield self._document_for(Path(p))
+            doc = self._document_for(Path(p))
+            if doc is not None:
+                yield doc
 
     # --- IncrementalSource ------------------------------------------------
 
@@ -91,7 +99,9 @@ class FilesSource:
             content_hash = _hash_bytes(path.read_bytes())
             if prev is not None and prev.get("h") == content_hash:
                 continue  # unchanged content
-            yield self._document_for(path, content_hash)
+            doc = self._document_for(path, content_hash)
+            if doc is not None:
+                yield doc
 
     def cursor_from(self, last_document: Document) -> dict:
         meta = last_document.metadata or {}
@@ -118,10 +128,20 @@ class FilesSource:
 
     # --- shared helpers ---------------------------------------------------
 
-    def _document_for(self, path: Path, content_hash: Optional[str] = None) -> Document:
+    def _document_for(self, path: Path, content_hash: Optional[str] = None) -> Optional[Document]:
         ext = path.suffix.lower().lstrip(".")
         parser = get_parser(ext, self._parsers)
         result = call_deriver(parser, path)
+        if not result.text.strip():
+            mode = self.cfg.on_empty
+            if mode == "error":
+                raise EmptyDerivationError(
+                    f"{path} produced no text via {parser.__class__.__name__}. "
+                    f"A scanned PDF or image needs an OCR rung; set "
+                    f"source.on_empty='skip' to continue past these."
+                )
+            if mode == "skip":
+                return None
         metadata = {
             **result.metadata,
             # chunkshop's own provenance always wins over a deriver's keys.

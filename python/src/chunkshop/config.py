@@ -88,6 +88,15 @@ class FilesSource(_Base):
     id_from: Literal["path", "stem", "sha1"] = "stem"
     encoding: str = "utf-8"
     incremental: Optional[FilesIncrementalSettings] = None
+    on_empty: Literal["error", "skip", "index"] = "error"
+    """What to do when a deriver produces no text.
+
+    ``error`` (default) raises EmptyDerivationError — a scanned PDF that
+    yields nothing is a failure, not an empty success. ``skip`` omits the
+    document and lets the run continue. ``index`` restores the pre-1.0
+    behaviour of indexing an empty document; it is retained only for
+    backward compatibility and is not recommended.
+    """
 
 
 class CommentExtractsSource(_Base):

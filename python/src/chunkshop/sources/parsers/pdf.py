@@ -17,6 +17,7 @@ class PDFParser:
             ) from exc
         try:
             reader = pypdf.PdfReader(str(path))
-            return "\n".join((page.extract_text() or "") for page in reader.pages)
+            pages = [(page.extract_text() or "") for page in reader.pages]
+            return "\n".join(pages)
         except Exception as exc:
             raise ParserError(f"failed to parse PDF {path}: {exc}") from exc
