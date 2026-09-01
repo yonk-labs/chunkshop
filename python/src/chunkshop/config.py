@@ -1134,6 +1134,18 @@ class PromoteColumn(_Base):
         return self.path.replace(".", "__").lower()
 
 
+DEFAULT_MEDIA_PROMOTIONS: list[PromoteColumn] = [
+    PromoteColumn(path="content_origin", type="text"),
+    PromoteColumn(path="derived_rung", type="text"),
+]
+"""Promoted by default whenever a cell configures ``source.derive``.
+
+A VLM caption and a verbatim email are byte-identical once both are
+``original_content``; these columns are what let a downstream consumer rank,
+filter, or refuse derived content in the query it already runs.
+"""
+
+
 # FTS language allowlist mirrored from chunkshop.search._ALLOWED_LANGUAGES.
 # A top-level `from chunkshop.search import _ALLOWED_LANGUAGES` would be circular
 # because search.py (via its backend import) pulls in chunkshop.config. Keep this
@@ -1278,6 +1290,24 @@ class CellConfig(_Base):
     extractor: ExtractorConfig = NoneExtractor()
     target: TargetConfig
     runtime: RuntimeConfig = RuntimeConfig()
+
+    @model_validator(mode="after")
+    def _promote_media_origin_columns(self) -> "CellConfig":
+        """Media cells always get content_origin + derived_rung as real columns.
+
+        Downstream consumers must be able to tell a verbatim document from a
+        model's guess in the query they already run — not via an opt-in join.
+        User-specified promotions win; defaults only fill gaps.
+        """
+        if not getattr(self.source, "derive", None):
+            return self
+        existing = {pc.column_name for pc in (self.target.promote_metadata or [])}
+        additions = [
+            pc for pc in DEFAULT_MEDIA_PROMOTIONS if pc.column_name not in existing
+        ]
+        if additions:
+            self.target.promote_metadata = list(self.target.promote_metadata or []) + additions
+        return self
 
 
 def load_config(path: str | Path) -> CellConfig:
