@@ -3,7 +3,6 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use serde_json::json;
 use sha1::{Digest, Sha1};
 
 use crate::config::FilesSourceConfig;
@@ -18,7 +17,10 @@ impl FilesSource {
         Self { cfg }
     }
 
-    /// Enumerate files matching the glob, in sorted order, reading each as text.
+    /// Enumerate files matching the glob, in sorted order, deriving each
+    /// through the extension-dispatched parser registry (plain text passes
+    /// through unchanged; recognized binary formats get real extraction or a
+    /// named refusal — never a silent UTF-8 mis-decode).
     pub fn iter_documents(&self) -> Result<Vec<Document>> {
         let mut paths: Vec<PathBuf> = glob::glob(&self.cfg.glob)
             .with_context(|| format!("invalid glob {:?}", self.cfg.glob))?
@@ -31,18 +33,30 @@ impl FilesSource {
 
         let mut out = Vec::with_capacity(paths.len());
         for p in paths {
-            let text =
-                std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))?;
+            let ext = p
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let deriver = crate::sources::parsers::registry::get_deriver(&ext);
+            let result = deriver
+                .derive(&p)
+                .with_context(|| format!("deriving {}", p.display()))?;
             let doc_id = self.id_for(&p)?;
             let title = p
                 .file_name()
                 .and_then(|s| s.to_str())
                 .map(|s| s.to_string());
+            let mut metadata = result.metadata;
+            metadata.insert(
+                "source_path".to_string(),
+                serde_json::Value::String(p.display().to_string()),
+            );
             out.push(Document {
                 id: doc_id,
-                content: text,
+                content: result.text,
                 title,
-                metadata: json!({ "source_path": p.display().to_string() }),
+                metadata: serde_json::Value::Object(metadata),
                 fingerprint: None,
             });
         }

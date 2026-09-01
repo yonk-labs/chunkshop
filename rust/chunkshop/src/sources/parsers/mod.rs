@@ -11,11 +11,11 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 // `registry` (extension -> Deriver dispatch) and `text` (the always-available
-// TextDeriver) are Task 2's job — this task only lays the trait + result type
-// + Cargo feature foundation they build on. Declaring them here before they
-// exist would break the build unconditionally (unlike the format-specific
-// submodules below, these two are not `media`-gated, so an absent file is a
-// hard compile error regardless of which features are enabled).
+// TextDeriver) are not `media`-gated — every text-only YAML must keep
+// working with no media feature involved at all.
+pub mod registry;
+pub mod text;
+
 #[cfg(feature = "media")]
 pub mod docx;
 #[cfg(feature = "media")]
