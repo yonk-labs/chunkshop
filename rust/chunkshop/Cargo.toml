@@ -57,6 +57,14 @@ serde_yaml_ng = "0.10"
 sha2 = "0.10"
 thiserror = "1"
 tracing = "0.1"
+# Task 6 (provenance): RFC3339 UTC timestamp for stamp_provenance()'s "ts"
+# field, mirroring Python's `datetime.now(timezone.utc).isoformat()`.
+# Already present transitively (sqlx's "chrono" feature, `sink` builds) —
+# declared directly here (not optional/feature-gated) so `derivers`
+# (always compiled, no feature gate — see sources/mod.rs) also builds
+# under `--no-default-features`, which pulls in no sqlx and therefore no
+# chrono otherwise. Adds zero new crates to the dependency tree.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # --- Bin-only (kept always-on for diff minimality; clap + tracing-subscriber
 # are tiny relative to the heavy deps below) ---

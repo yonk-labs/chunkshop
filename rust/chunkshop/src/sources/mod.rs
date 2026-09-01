@@ -15,6 +15,10 @@ pub use base::Document;
 // format-specific submodules under `parsers/` are gated behind `media`.
 pub mod parsers;
 
+// Provenance (derivation_hash / stamp_provenance) is always available, same
+// as `parsers` above — no feature gate. Task 6.
+pub mod derivers;
+
 #[cfg(all(feature = "source", feature = "sink"))]
 use anyhow::anyhow;
 #[cfg(feature = "source")]

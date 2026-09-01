@@ -493,6 +493,7 @@ dependencies = [
  "anyhow",
  "blake2",
  "calamine",
+ "chrono",
  "clap",
  "clickhouse",
  "docx-rust",
