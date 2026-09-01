@@ -73,11 +73,11 @@ fn media_deriver(_ext: &str) -> Option<Box<dyn Deriver>> {
     None
 }
 
-/// Core dispatch, parameterized over the two refusal lists so the
-/// media-gated branch can be exercised by a unit test even while
-/// `MEDIA_GATED_FORMATS` is empty in production (see the `tests` module
+/// Core dispatch, parameterized over the two refusal lists so either branch
+/// can be exercised by a unit test with injected lists, independently of
+/// whichever formats happen to occupy them today (see the `tests` module
 /// below) — a branch no test reaches is exactly how the pdf/xlsx/docx hole
-/// slipped through the previous round of this fix.
+/// slipped through an earlier round of this fix.
 fn dispatch(
     ext: &str,
     unimplemented: &'static [&'static str],
