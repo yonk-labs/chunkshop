@@ -54,14 +54,22 @@ def test_deriver_module_imports_without_touching_models():
     assert d._vision is None, "models must be lazy until derive() is called"
 
 
-def test_pyproject_declares_media_extras():
+def test_pyproject_declares_vision_extra_empty():
+    """`vision` names a real, working, zero-cost capability and must stay.
+
+    `ocr`/`audio`/`media` are deliberately NOT asserted here: no OCR or ASR
+    rung exists yet, so those extras would be an empty promise — installing
+    them delivers real weight for zero capability. Extras are a published
+    contract (retracting one later is breaking), so they aren't declared
+    until a rung backs them.
+    """
     import tomllib
     from pathlib import Path
 
     root = Path(__file__).parents[2] / "pyproject.toml"
     data = tomllib.loads(root.read_text(encoding="utf-8"))
     extras = data["project"]["optional-dependencies"]
-    assert "ocr" in extras and "audio" in extras and "media" in extras
+    assert "vision" in extras
     assert extras["vision"] == [], "CLIP needs no extra — fastembed is already core"
 
 
