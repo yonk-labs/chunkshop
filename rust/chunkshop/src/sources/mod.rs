@@ -124,7 +124,7 @@ impl AnySource {
 #[cfg(all(feature = "source", feature = "sink"))]
 pub fn load_source(cfg: &SourceConfig) -> Result<AnySource> {
     match cfg {
-        SourceConfig::Files(c) => Ok(AnySource::Files(FilesSource::new(c.clone()))),
+        SourceConfig::Files(c) => Ok(AnySource::Files(FilesSource::new(c.clone())?)),
         SourceConfig::JsonCorpus(c) => Ok(AnySource::JsonCorpus(JsonCorpusSource::new(c.clone()))),
         SourceConfig::PgTable(c) => Ok(AnySource::PgTable(PgTableSource::new(c.clone()))),
         SourceConfig::MariadbTable(c) => {

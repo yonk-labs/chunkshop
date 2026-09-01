@@ -40,7 +40,7 @@ fn assert_named_refusal(ext: &str, filename: &str) {
         derive: None,
         cache: Default::default(),
     };
-    let src = FilesSource::new(cfg);
+    let src = FilesSource::new(cfg).unwrap();
     let err = src.iter_documents().unwrap_err();
     let msg = format!("{err:#}");
     assert!(
@@ -65,7 +65,7 @@ fn text_file_output_is_unchanged_by_the_parser_layer() {
         derive: None,
         cache: Default::default(),
     };
-    let src = FilesSource::new(cfg);
+    let src = FilesSource::new(cfg).unwrap();
     let docs = src.iter_documents().unwrap();
     assert_eq!(docs.len(), 1);
     assert_eq!(docs[0].content, "# Title\n\nBody text.\n");
@@ -108,7 +108,7 @@ fn pdf_without_media_feature_refuses_naming_the_feature() {
         derive: None,
         cache: Default::default(),
     };
-    let src = FilesSource::new(cfg);
+    let src = FilesSource::new(cfg).unwrap();
     let err = src.iter_documents().unwrap_err();
     let msg = format!("{err:#}");
     assert!(
@@ -131,7 +131,7 @@ fn docx_without_media_feature_refuses_naming_the_feature() {
         derive: None,
         cache: Default::default(),
     };
-    let src = FilesSource::new(cfg);
+    let src = FilesSource::new(cfg).unwrap();
     let err = src.iter_documents().unwrap_err();
     let msg = format!("{err:#}");
     assert!(
@@ -154,7 +154,7 @@ fn xlsx_without_media_feature_refuses_naming_the_feature() {
         derive: None,
         cache: Default::default(),
     };
-    let src = FilesSource::new(cfg);
+    let src = FilesSource::new(cfg).unwrap();
     let err = src.iter_documents().unwrap_err();
     let msg = format!("{err:#}");
     assert!(
@@ -184,7 +184,7 @@ fn pdf_with_extractable_text_round_trips() {
         derive: None,
         cache: Default::default(),
     };
-    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
     assert_eq!(docs.len(), 1);
     assert!(
         docs[0].content.contains("Hello PDF"),
@@ -214,7 +214,7 @@ fn xlsx_with_a_cell_round_trips() {
         derive: None,
         cache: Default::default(),
     };
-    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
     assert_eq!(docs.len(), 1);
     assert!(
         docs[0].content.contains("hello xlsx"),
@@ -245,7 +245,7 @@ fn docx_with_a_paragraph_round_trips() {
         derive: None,
         cache: Default::default(),
     };
-    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
     assert_eq!(docs.len(), 1);
     assert!(
         docs[0].content.contains("hello docx"),
@@ -266,7 +266,7 @@ fn on_empty_error_is_the_default() {
         derive: None,
         cache: Default::default(),
     };
-    let err = FilesSource::new(cfg).iter_documents().unwrap_err();
+    let err = FilesSource::new(cfg).unwrap().iter_documents().unwrap_err();
     assert!(format!("{err:#}").contains("a.txt"));
 }
 
@@ -282,7 +282,7 @@ fn on_empty_skip_omits_the_document() {
         derive: None,
         cache: Default::default(),
     };
-    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
     assert_eq!(docs.len(), 0);
 }
 
@@ -301,7 +301,7 @@ fn on_empty_index_keeps_the_empty_document() {
         derive: None,
         cache: Default::default(),
     };
-    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
     assert_eq!(docs.len(), 1);
     assert!(docs[0].content.trim().is_empty());
 }

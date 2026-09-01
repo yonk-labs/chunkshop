@@ -26,21 +26,29 @@ pub struct FilesSource {
     /// Set at construction if `cfg.derive` routes the same extension from
     /// two different pattern keys (Task 9 Correction 2). Checked by
     /// `iter_documents` before any file is touched, and returned as an
-    /// error rather than silently picking a winner. Stored here (instead
-    /// of making `new()` fallible) to keep `FilesSource::new`'s existing
-    /// infallible signature — and every other call site — unchanged.
+    /// error rather than silently picking a winner. Deliberately still
+    /// deferred (rather than folded into `new()`'s `Result`, which Task 12
+    /// added for deriver-construction failures): it is a typed, `Clone`
+    /// error whose existing call sites assert on it at iteration time, and
+    /// the two failure classes are worth keeping distinguishable.
     derive_error: Option<AmbiguousDeriverError>,
 }
 
 impl FilesSource {
-    pub fn new(cfg: FilesSourceConfig) -> Self {
+    /// Fallible since Task 12: a `derive:` block can now name a deriver
+    /// that cannot be constructed — an empty CLIP vocabulary, an
+    /// unsupported `vision_model`/`text_model` override, or a rung whose
+    /// Cargo feature wasn't built in. Every one of those must surface here,
+    /// at config-load, rather than degrade to a different rung at runtime.
+    pub fn new(cfg: FilesSourceConfig) -> Result<Self> {
         let mut derived: HashMap<String, Rc<dyn CacheableDeriver>> = HashMap::new();
         let mut ext_owner: HashMap<String, String> = HashMap::new();
         let mut derive_error = None;
 
         if let Some(derive_cfg) = &cfg.derive {
             for (pattern, dcfg) in derive_cfg {
-                let deriver: Rc<dyn CacheableDeriver> = crate::sources::derivers::load_deriver(dcfg);
+                let deriver: Rc<dyn CacheableDeriver> =
+                    crate::sources::derivers::load_deriver(dcfg)?;
                 for raw_ext in pattern.split('|') {
                     let ext = raw_ext.trim().to_lowercase();
                     let ext = ext.trim_start_matches('.').to_string();
@@ -74,12 +82,12 @@ impl FilesSource {
             None
         };
 
-        Self {
+        Ok(Self {
             cfg,
             derived,
             cache,
             derive_error,
-        }
+        })
     }
 
     /// Enumerate files matching the glob, in sorted order, deriving each
@@ -231,7 +239,7 @@ mod tests {
         derive.insert("jpg|webp".to_string(), image_meta_cfg());
         let cfg = base_cfg(format!("{}/*", dir.path().display()), Some(derive));
 
-        let src = FilesSource::new(cfg);
+        let src = FilesSource::new(cfg).unwrap();
         let err = src.iter_documents().unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("jpg"), "{msg}");
@@ -251,7 +259,7 @@ mod tests {
         derive.insert("webp|gif".to_string(), image_meta_cfg());
         let cfg = base_cfg(format!("{}/*", dir.path().display()), Some(derive));
 
-        let src = FilesSource::new(cfg);
+        let src = FilesSource::new(cfg).unwrap();
         let docs = src.iter_documents().unwrap();
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0].content, "hello");
