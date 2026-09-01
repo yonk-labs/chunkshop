@@ -64,8 +64,11 @@ class FilesSource:
                 for ext in pattern.split("|"):
                     self._parsers[ext.strip().lower().lstrip(".")] = deriver
 
+        # The cache exists to memoise EXPENSIVE derivation. Without a derive
+        # block every parser is cheap local text extraction, so a text-only
+        # cell builds no cache and touches no disk (NN-6).
         self._cache = None
-        if cfg.cache.enabled:
+        if cfg.derive and cfg.cache.enabled:
             from chunkshop.sources.derivers.cache import DerivationCache
 
             self._cache = DerivationCache(
