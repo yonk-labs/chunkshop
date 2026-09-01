@@ -14,7 +14,7 @@
 
 use std::io::Write;
 
-use chunkshop::config::FilesSourceConfig;
+use chunkshop::config::{FilesSourceConfig, OnEmpty};
 use chunkshop::sources::files::FilesSource;
 
 /// Not valid UTF-8 in any encoding — guarantees `TextDeriver` would error
@@ -36,6 +36,9 @@ fn assert_named_refusal(ext: &str, filename: &str) {
         glob: format!("{}/*.{ext}", dir.path().display()),
         id_from: "stem".to_string(),
         encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
     };
     let src = FilesSource::new(cfg);
     let err = src.iter_documents().unwrap_err();
@@ -58,6 +61,9 @@ fn text_file_output_is_unchanged_by_the_parser_layer() {
         glob: format!("{}/*.md", dir.path().display()),
         id_from: "stem".to_string(),
         encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
     };
     let src = FilesSource::new(cfg);
     let docs = src.iter_documents().unwrap();
@@ -98,6 +104,9 @@ fn pdf_without_media_feature_refuses_naming_the_feature() {
         glob: format!("{}/*.pdf", dir.path().display()),
         id_from: "stem".to_string(),
         encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
     };
     let src = FilesSource::new(cfg);
     let err = src.iter_documents().unwrap_err();
@@ -118,6 +127,9 @@ fn docx_without_media_feature_refuses_naming_the_feature() {
         glob: format!("{}/*.docx", dir.path().display()),
         id_from: "stem".to_string(),
         encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
     };
     let src = FilesSource::new(cfg);
     let err = src.iter_documents().unwrap_err();
@@ -138,6 +150,9 @@ fn xlsx_without_media_feature_refuses_naming_the_feature() {
         glob: format!("{}/*.xlsx", dir.path().display()),
         id_from: "stem".to_string(),
         encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
     };
     let src = FilesSource::new(cfg);
     let err = src.iter_documents().unwrap_err();
@@ -165,6 +180,9 @@ fn pdf_with_extractable_text_round_trips() {
         glob: format!("{}/*.pdf", dir.path().display()),
         id_from: "stem".to_string(),
         encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
     };
     let docs = FilesSource::new(cfg).iter_documents().unwrap();
     assert_eq!(docs.len(), 1);
@@ -192,6 +210,9 @@ fn xlsx_with_a_cell_round_trips() {
         glob: format!("{}/*.xlsx", dir.path().display()),
         id_from: "stem".to_string(),
         encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
     };
     let docs = FilesSource::new(cfg).iter_documents().unwrap();
     assert_eq!(docs.len(), 1);
@@ -220,6 +241,9 @@ fn docx_with_a_paragraph_round_trips() {
         glob: format!("{}/*.docx", dir.path().display()),
         id_from: "stem".to_string(),
         encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
     };
     let docs = FilesSource::new(cfg).iter_documents().unwrap();
     assert_eq!(docs.len(), 1);
@@ -228,4 +252,56 @@ fn docx_with_a_paragraph_round_trips() {
         "got: {:?}",
         docs[0].content
     );
+}
+
+#[test]
+fn on_empty_error_is_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    write_temp(dir.path(), "a.txt", b"   \n  ");
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.txt", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
+    };
+    let err = FilesSource::new(cfg).iter_documents().unwrap_err();
+    assert!(format!("{err:#}").contains("a.txt"));
+}
+
+#[test]
+fn on_empty_skip_omits_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    write_temp(dir.path(), "a.txt", b"   \n  ");
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.txt", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Skip,
+        derive: None,
+        cache: Default::default(),
+    };
+    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    assert_eq!(docs.len(), 0);
+}
+
+#[test]
+fn on_empty_index_keeps_the_empty_document() {
+    // Not in the plan's Step 4 snippet, but the third enum variant deserves
+    // direct coverage at the FilesSource level too (config-layer coverage
+    // for `index` already exists in config.rs's on_empty_all_three_valid_values_parse).
+    let dir = tempfile::tempdir().unwrap();
+    write_temp(dir.path(), "a.txt", b"   \n  ");
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.txt", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Index,
+        derive: None,
+        cache: Default::default(),
+    };
+    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    assert_eq!(docs.len(), 1);
+    assert!(docs[0].content.trim().is_empty());
 }

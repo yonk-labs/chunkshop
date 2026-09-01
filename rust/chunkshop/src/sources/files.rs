@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use sha1::{Digest, Sha1};
 
-use crate::config::FilesSourceConfig;
+use crate::config::{FilesSourceConfig, OnEmpty};
 use crate::sources::base::Document;
 
 pub struct FilesSource {
@@ -42,6 +42,21 @@ impl FilesSource {
             let result = deriver
                 .derive(&p)
                 .with_context(|| format!("deriving {}", p.display()))?;
+
+            if result.text.trim().is_empty() {
+                match self.cfg.on_empty {
+                    OnEmpty::Error => {
+                        return Err(crate::sources::parsers::EmptyDerivationError {
+                            path: p.clone(),
+                            parser: ext.clone(),
+                        }
+                        .into());
+                    }
+                    OnEmpty::Skip => continue,
+                    OnEmpty::Index => {} // fall through, index the empty document
+                }
+            }
+
             let doc_id = self.id_for(&p)?;
             let title = p
                 .file_name()

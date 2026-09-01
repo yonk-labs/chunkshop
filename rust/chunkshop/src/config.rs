@@ -439,17 +439,13 @@ pub enum SourceConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct InlineSourceConfig {}
 
-/// Mirrors Python `chunkshop.config.FilesSource`. Rust implements only
-/// `glob` / `id_from` / `encoding` — the media-ingest fields `derive`,
-/// `on_empty`, and `cache` (deriver pipeline + empty-derivation policy +
-/// derivation cache) have no Rust implementation, and `incremental` has no
-/// Rust implementation for the `files` source specifically (unlike `s3`,
-/// `pg_table`, and `http`, which do implement `IncrementalSource`).
-/// `deny_unknown_fields` makes Rust refuse a YAML carrying any of these
-/// fields instead of silently dropping them — a Rust user pointing at a
-/// Python-authored media/incremental config gets a clear config-load error
-/// naming the field, rather than a confusing downstream I/O failure (or,
-/// for `incremental`, silent full-resync behavior it never asked for).
+/// Mirrors Python `chunkshop.config.FilesSource`. `on_empty`/`derive`/`cache`
+/// (media-ingest fields) now have Rust support (Plan D). `incremental` is
+/// still unmodeled for the `files` source specifically (unlike `s3`,
+/// `pg_table`, and `http`, which do implement `IncrementalSource`) — that
+/// remains a separate, tracked follow-up (see MEDIA-INGEST-ROADMAP.md),
+/// not part of this plan. `deny_unknown_fields` still refuses `incremental`
+/// with a named error rather than silently full-resyncing.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FilesSourceConfig {
@@ -458,6 +454,115 @@ pub struct FilesSourceConfig {
     pub id_from: String,
     #[serde(default = "default_encoding")]
     pub encoding: String,
+    #[serde(default)]
+    pub on_empty: OnEmpty,
+    /// `BTreeMap`, not `HashMap`: Python (`files.py:65`) iterates
+    /// `cfg.derive.items()` in dict-insertion order to build a per-extension
+    /// routing table, so when two pattern keys' extensions overlap the
+    /// *later* one wins deterministically. A `HashMap` here would make that
+    /// override nondeterministic across runs — `BTreeMap` keeps it stable
+    /// (lexicographic key order) even though it won't match Python's
+    /// insertion order bit-for-bit; either deterministic order is better
+    /// than none for a case that's already an edge case in both languages.
+    pub derive: Option<std::collections::BTreeMap<String, DeriverConfig>>,
+    #[serde(default)]
+    pub cache: DerivationCacheSettings,
+}
+
+/// Mirrors Python's `Literal["error", "skip", "index"]` at
+/// `config.py:123`. Modeled as an enum (not `String`) so serde rejects an
+/// invalid value (e.g. `on_empty: banana`) at config-load time — matching
+/// Python's pydantic `Literal` rejection. `deny_unknown_fields` only
+/// validates field *names*; a bare `String` field would accept any value
+/// silently, which is exactly the parity bug this type prevents.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OnEmpty {
+    Error,
+    Skip,
+    Index,
+}
+
+impl Default for OnEmpty {
+    fn default() -> Self {
+        OnEmpty::Error
+    }
+}
+
+/// Mirrors Python's `ImageMetaDeriverConfig`/`ClipTagsDeriverConfig` /
+/// `DeriverConfig = Annotated[Union[...], Field(discriminator="rung")]`.
+/// The discriminator field is `rung`, NOT `type` — unlike every other
+/// discriminated union in this file (`SourceConfig`, `ExtractorConfig`,
+/// etc.), which tag on `type`. Do not copy that convention here; Python's
+/// `config.py:85-103` uses `rung` and the YAML shape must match.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "rung", rename_all = "snake_case")]
+pub enum DeriverConfig {
+    ImageMeta(ImageMetaDeriverConfig),
+    ClipTags(ClipTagsDeriverConfig),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageMetaDeriverConfig {
+    #[serde(default = "default_true")]
+    pub path_segments: bool,
+    #[serde(default = "default_segment_depth")]
+    pub segment_depth: u32,
+}
+
+fn default_segment_depth() -> u32 {
+    3
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClipTagsDeriverConfig {
+    pub vocabulary: Vec<String>,
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+    #[serde(default = "default_min_score")]
+    pub min_score: f32,
+    #[serde(default = "default_vision_model")]
+    pub vision_model: String,
+    #[serde(default = "default_text_model")]
+    pub text_model: String,
+}
+
+fn default_top_k() -> usize {
+    3
+}
+fn default_min_score() -> f32 {
+    0.20
+}
+fn default_vision_model() -> String {
+    "Qdrant/clip-ViT-B-32-vision".to_string()
+}
+fn default_text_model() -> String {
+    "Qdrant/clip-ViT-B-32-text".to_string()
+}
+
+/// Mirrors Python's `DerivationCacheSettings` (`config.py:106-114`):
+/// `enabled: bool = True`, `root: Optional[str] = None`.
+///
+/// `Default` is hand-written, NOT derived. `#[derive(Default)]` ignores
+/// `#[serde(default = "default_true")]` and uses `bool`'s own `Default`
+/// (`false`), while YAML-deserializing an absent `cache:` block uses the
+/// serde default (`true`) — those two paths would silently disagree. The
+/// hand-written impl below keeps `DerivationCacheSettings::default()` and
+/// "no `cache:` key in YAML" in agreement.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DerivationCacheSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub root: Option<String>,
+}
+
+impl Default for DerivationCacheSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            root: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1894,29 +1999,33 @@ target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hn
     }
 
     #[test]
-    fn rejects_files_source_derive_field() {
+    fn files_source_derive_field_now_loads_correctly() {
+        // Was `rejects_files_source_derive_field` before Plan D — the
+        // interim-guard test is now obsolete because real support landed.
         let yaml = r#"
 cell_name: t
 source:
   type: files
   glob: "x"
   derive:
-    text:
+    "png|jpg":
       rung: image_meta
 chunker: { type: sentence_aware }
 embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
-        let err = format!("{:#}", load_config(&path).unwrap_err());
-        assert!(
-            err.contains("derive"),
-            "expected error to name the unsupported `derive` field, got: {err}"
-        );
+        let cfg = load_config(&path).expect("derive block must now load");
+        let SourceConfig::Files(f) = &cfg.source else {
+            panic!("expected Files source");
+        };
+        let derive = f.derive.as_ref().expect("derive must be Some");
+        assert!(derive.contains_key("png|jpg"));
     }
 
     #[test]
-    fn rejects_files_source_on_empty_field() {
+    fn files_source_on_empty_field_now_loads_correctly() {
+        // Was `rejects_files_source_on_empty_field`.
         let yaml = r#"
 cell_name: t
 source: { type: files, glob: "x", on_empty: skip }
@@ -1925,15 +2034,16 @@ embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
-        let err = format!("{:#}", load_config(&path).unwrap_err());
-        assert!(
-            err.contains("on_empty"),
-            "expected error to name the unsupported `on_empty` field, got: {err}"
-        );
+        let cfg = load_config(&path).expect("on_empty must now load");
+        let SourceConfig::Files(f) = &cfg.source else {
+            panic!("expected Files source");
+        };
+        assert_eq!(f.on_empty, OnEmpty::Skip);
     }
 
     #[test]
-    fn rejects_files_source_cache_field() {
+    fn files_source_cache_field_now_loads_correctly() {
+        // Was `rejects_files_source_cache_field`.
         let yaml = r#"
 cell_name: t
 source:
@@ -1946,10 +2056,123 @@ embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
 target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
 "#;
         let path = write_yaml(yaml);
-        let err = format!("{:#}", load_config(&path).unwrap_err());
+        let cfg = load_config(&path).expect("cache block must now load");
+        let SourceConfig::Files(f) = &cfg.source else {
+            panic!("expected Files source");
+        };
+        assert!(!f.cache.enabled);
+    }
+
+    #[test]
+    fn typo_in_derive_block_is_still_rejected() {
+        // deny_unknown_fields must still catch config typos INSIDE the now-
+        // modeled derive block — this is the equivalent of Python's
+        // test_typo_in_derive_block_is_rejected (test_derive_config.py).
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    png:
+      rung: clip_tags
+      vocabluary: ["x"]
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        assert!(load_config(&path).is_err(), "typo'd field must fail to load");
+    }
+
+    #[test]
+    fn on_empty_default_is_error_when_absent() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x" }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        let SourceConfig::Files(f) = &cfg.source else {
+            panic!("expected Files source");
+        };
+        assert_eq!(f.on_empty, OnEmpty::Error);
+        assert_eq!(OnEmpty::default(), OnEmpty::Error);
+    }
+
+    #[test]
+    fn on_empty_all_three_valid_values_parse() {
+        for (yaml_value, expected) in [
+            ("error", OnEmpty::Error),
+            ("skip", OnEmpty::Skip),
+            ("index", OnEmpty::Index),
+        ] {
+            let yaml = format!(
+                r#"
+cell_name: t
+source: {{ type: files, glob: "x", on_empty: {yaml_value} }}
+chunker: {{ type: sentence_aware }}
+embedder: {{ type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }}
+target: {{ type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }}
+"#
+            );
+            let path = write_yaml(&yaml);
+            let cfg = load_config(&path).unwrap_or_else(|e| {
+                panic!("on_empty: {yaml_value} must load, got error: {e:#}")
+            });
+            let SourceConfig::Files(f) = &cfg.source else {
+                panic!("expected Files source");
+            };
+            assert_eq!(f.on_empty, expected, "on_empty: {yaml_value}");
+        }
+    }
+
+    #[test]
+    fn on_empty_invalid_value_is_rejected() {
+        // A bare `String` field would silently accept this — the enum must
+        // reject it at config-load time, matching Python's pydantic
+        // `Literal["error", "skip", "index"]` rejection.
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", on_empty: banana }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = load_config(&path).expect_err("on_empty: banana must be rejected");
+        let msg = format!("{err:#}");
         assert!(
-            err.contains("cache"),
-            "expected error to name the unsupported `cache` field, got: {err}"
+            msg.contains("on_empty") || msg.to_lowercase().contains("banana") || msg.contains("unknown variant"),
+            "expected error to reject the invalid on_empty value, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn derivation_cache_settings_default_agrees_with_absent_yaml_block() {
+        // Both paths must yield `enabled: true` — this is the exact
+        // footgun a derived `Default` impl would reintroduce (see
+        // `DerivationCacheSettings`'s doc comment).
+        assert!(DerivationCacheSettings::default().enabled);
+
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x" }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("load");
+        let SourceConfig::Files(f) = &cfg.source else {
+            panic!("expected Files source");
+        };
+        assert!(
+            f.cache.enabled,
+            "no cache: block in YAML must also default to enabled: true"
         );
     }
 
