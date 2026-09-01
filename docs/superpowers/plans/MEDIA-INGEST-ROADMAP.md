@@ -80,3 +80,29 @@ Full list with reasoning: `spec/chunkshop-media-ingest/evidence/sdd-execution-le
 - [ ] `id_from: stem` risks basename collisions across image directories
 - [ ] `CLAUDE.md` wrongly says Postgres `database_name` is "ignored at runtime" (it is the schema)
 - [ ] SPEC/PLAN still reference the retracted `ocr`/`audio`/`media` extras as future design
+
+---
+
+## ⚠️ Systemic finding — Rust config permissiveness is not a media problem
+
+Surfaced by the change-A survey (2026-09-01). **Only 6 of 49 Rust config structs
+have `deny_unknown_fields`** — all six from the SP-A memory work. Every other
+config silently ignores fields it does not model. Two of these affect *shipped*
+functionality, independent of media:
+
+- [ ] **`dsn` is silently dropped by every table source config and every target
+      config.** Rust models only `dsn_env`. Python has supported a direct `dsn`
+      since v0.4.3 (a "batteries-included" feature added for stele). A YAML using
+      `dsn:` therefore behaves differently on the two implementations.
+- [ ] **The `fts` block is silently dropped by every target config** — Rust has no
+      `FtsConfig` at all. So a cell that asks for full-text search gets a GIN
+      tsvector index under Python and **no index** under Rust, from the same YAML.
+      Hybrid search then differs between implementations while both report success.
+- [ ] `comment_extracts` and `connector` source types are unmodeled in Rust, but
+      those fail loudly at the enum tag — correct behaviour, not silent.
+
+**Recommendation:** audit `deny_unknown_fields` across all 49 structs as its own
+task, ahead of or alongside Plan D. The pattern this branch hit twice — silently
+accepting config you cannot honour — is a cross-implementation contract bug, and
+the media fields were only the instance that happened to get noticed.
+Full struct-by-struct list: `.superpowers/rust-deny-unknown-fields-report.md`.

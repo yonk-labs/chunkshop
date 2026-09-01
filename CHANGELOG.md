@@ -39,6 +39,18 @@
 
 ### Fixed
 
+- **Rust: `files` source config now rejects unknown fields instead of silently
+  dropping them.** `FilesSourceConfig` gained `#[serde(deny_unknown_fields)]`.
+  A YAML carrying `derive:`, `on_empty:` or `cache:` (Python-only for now) had
+  been silently discarded by the Rust binary, which then failed on the first
+  non-UTF-8 file with an I/O error that never mentioned the dropped config.
+  **User-visible behaviour change:** a `files` source with `incremental:` now
+  hard-fails at config load on Rust. Rust implements `IncrementalSource` for
+  `s3`, `pg_table` and `http` but *not* `files`, so such a config has been
+  silently running a full resync every time since v0.8.3. Failing loudly is the
+  correct outcome, but it will surface for anyone who had one.
+
+
 - **`chunkshop search` was hardcoded to the Postgres backend and did not
   work against sqlite targets**, a bug shipped in v1.0.0-rc6.
   `chunkshop.search_common.search` always used `chunkshop.search`'s
