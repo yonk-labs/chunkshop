@@ -1691,7 +1691,7 @@ def test_media_cell_gets_origin_columns_automatically():
     chunker: {type: fixed_overlap, max_words: 128, overlap: 0}
     embedder: {type: fastembed, model_name: Xenova/bge-base-en-v1.5-int8, dim: 768}
     extractor: {type: none}
-    target: {type: sqlite, path: ./x.db, table: t, mode: overwrite}
+    target: {type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: t, mode: overwrite, hnsw: false}
     """))
     names = {pc.column_name for pc in cfg.target.promote_metadata}
     assert {"content_origin", "derived_rung"} <= names
@@ -1713,9 +1713,11 @@ def test_user_promotion_is_not_duplicated():
     extractor: {type: none}
     target:
       type: sqlite
-      path: ./x.db
+      dsn_env: SQLITE_PATH
+      database: ignored
       table: t
       mode: overwrite
+      hnsw: false
       promote_metadata: [{path: content_origin, type: text}]
     """))
     names = [pc.column_name for pc in cfg.target.promote_metadata]
@@ -1734,7 +1736,7 @@ def test_text_only_cell_gets_no_media_columns():
     chunker: {type: fixed_overlap, max_words: 128, overlap: 0}
     embedder: {type: fastembed, model_name: Xenova/bge-base-en-v1.5-int8, dim: 768}
     extractor: {type: none}
-    target: {type: sqlite, path: ./x.db, table: t, mode: overwrite}
+    target: {type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: t, mode: overwrite, hnsw: false}
     """))
     assert not cfg.target.promote_metadata
 ```
@@ -1896,9 +1898,11 @@ extractor:
   type: none
 target:
   type: sqlite
-  path: ./images.db
+  dsn_env: SQLITE_PATH
+  database: ignored      # SQLite has no schema concept; required by config but unused
   table: images
   mode: overwrite
+  hnsw: false            # sqlite-vec is brute-force KNN
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -1953,8 +1957,9 @@ In `README.md`, add a "Search a folder of images — no API key, no GPU" section
 
 ```bash
 pip install chunkshop            # no extras
+export SQLITE_PATH=/tmp/chunkshop-images.db
 chunkshop ingest --config docs/samples/images-keyless.yaml
-chunkshop search "a game sprite" --config docs/samples/images-keyless.yaml
+chunkshop search "a game sprite" --config docs/samples/images-keyless.yaml -k 1
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
@@ -1998,11 +2003,13 @@ jobs:
           EOF
 
       - name: Run the documented quickstart, on a clock
+        env:
+          SQLITE_PATH: /tmp/chunkshop-images.db
         run: |
           start=$(date +%s)
           chunkshop ingest --config docs/samples/images-keyless.yaml
           chunkshop search "a game sprite" \
-            --config docs/samples/images-keyless.yaml --limit 1 --json > result.json
+            --config docs/samples/images-keyless.yaml -k 1 --json > result.json
           elapsed=$(( $(date +%s) - start ))
           echo "elapsed: ${elapsed}s (budget 300s, includes model download)"
           test "$elapsed" -lt 300 || { echo "FAIL: SC-1 budget exceeded"; exit 1; }
