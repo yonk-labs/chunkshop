@@ -28,32 +28,64 @@ jobs:
           print("no media package present — the media path is genuinely keyless")
           EOF
 
+      # The corpus this gate measures is `docs/samples/images/*.png` (the glob
+      # in docs/samples/images-keyless.yaml). Its ranking margin is a property
+      # of WHICH images are in that directory, so the directory is pinned here
+      # rather than left to whoever last dropped a file into it. This is not
+      # hypothetical: seven `swatch_*` image_meta test fixtures were once
+      # committed here, and because the CLIP tagger labels a flat colour swatch
+      # "a game sprite or pixel art" too, they cut the rank-1-vs-rank-2 cosine
+      # margin from 0.2166 to 0.0562 while the gate stayed green. Test fixtures
+      # belong in tests/fixtures/images/, not in the sample corpus.
+      - name: Pin the quickstart corpus (guards the measured margin below)
+        run: |
+          expected="chart_revenue.png screenshot_settings.png sprite_knight.png"
+          actual=$(cd docs/samples/images && ls *.png | sort | tr '\n' ' ' | sed 's/ $//')
+          if [ "$actual" != "$expected" ]; then
+            echo "FAIL: docs/samples/images/*.png changed."
+            echo "  expected: $expected"
+            echo "  actual:   $actual"
+            echo
+            echo "This directory IS the SC-1 corpus. Adding an image changes what"
+            echo "this gate measures and can silently erode the ranking margin"
+            echo "documented below. Put test fixtures in tests/fixtures/images/."
+            echo "If the corpus change is deliberate: re-measure the cosine margin"
+            echo "(see the comment below), update it here, and update this list."
+            exit 1
+          fi
+          echo "corpus pinned: $actual"
+
       - name: Run the documented quickstart, on a clock
         env:
           SQLITE_PATH: /tmp/chunkshop-images.db
         run: |
           start=$(date +%s)
           chunkshop ingest --config docs/samples/images-keyless.yaml
-          # -k 3 (not 1): the corpus only has 3 images, so this is still the
-          # whole result set, but it lets the failure path below print every
-          # hit instead of an undiagnosable single-row red gate.
+          # -k 3 (not 1): matches the pinned corpus size exactly, so this is
+          # the WHOLE result set and the failure path below prints every hit
+          # instead of an undiagnosable single-row red gate. The pin step above
+          # is what keeps "3" and "the whole corpus" the same number.
           chunkshop search --config docs/samples/images-keyless.yaml \
             --query "pixel art" --k 3 --include-facts --json > result.json
           elapsed=$(( $(date +%s) - start ))
           echo "elapsed: ${elapsed}s (budget 300s, includes model download)"
           test "$elapsed" -lt 300 || { echo "FAIL: SC-1 budget exceeded"; exit 1; }
 
-      # Real measured semantic margin (bge-base-en-v1.5-int8, cosine, query
-      # "pixel art" vs. each image's derived embedded_content — the same
-      # texts and model this gate actually searches over):
+      # Real measured semantic margin over the pinned 3-image corpus above
+      # (bge-base-en-v1.5-int8, cosine, query "pixel art" vs. each image's
+      # derived embedded_content — the same texts and model this gate actually
+      # searches over). Re-measured 2026-09-01 against the corpus as it exists
+      # at this commit, not carried forward:
       #   sprite_knight.png:        0.803519  (rank 1 — the expected winner)
       #   screenshot_settings.png:  0.586941  (rank 2)
       #   chart_revenue.png:        0.574639  (rank 3)
-      # Margin between rank 1 and rank 2 is ~0.217 cosine — genuine headroom,
+      # Margin between rank 1 and rank 2 is 0.216579 cosine — genuine headroom,
       # not the mechanical ~0.016 RRF rank-contribution spacing (1/(60+rank))
-      # a prior analysis mistook for the margin. Recompute by embedding the
-      # query and each row's `embedded_content` with the cell's configured
-      # embedder and taking cosine similarity, if the fixtures ever change.
+      # a prior analysis mistook for the margin. NOTE the `score` field in
+      # result.json IS that RRF fusion score (0.016393 / 0.016129 / 0.015873
+      # here), so it is not the number to read this margin off of — recompute
+      # by embedding the query and each row's `embedded_content` with the
+      # cell's configured embedder and taking cosine similarity.
       #
       # "pixel art" appears only in the clip_tags vocabulary above, never in a
       # filename or path segment — so the rank assertion below only passes if
