@@ -9,7 +9,10 @@
 //! `tests/parity/generate_embedding_reference.py`).
 use chunkshop::config::FastembedEmbedderConfig;
 use chunkshop::embedder::FastembedEmbedder;
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fastembed::{
+    EmbeddingModel, ImageEmbedding, ImageEmbeddingModel, ImageInitOptions, InitOptions,
+    TextEmbedding,
+};
 
 const FIXTURE: &str = "a game sprite or pixel art";
 
@@ -22,6 +25,15 @@ fn report(label: &str, v: &[f32]) {
     println!("{label:<16} dim={:<4} |v|={norm:.6}", v.len());
     println!("{:<16} first8 = {first8:?}", "");
     println!("{:<16} sum    = {:.8}", "", v.iter().sum::<f32>());
+    if std::env::var("PARITY_FULL").is_ok() {
+        println!(
+            "{label}_FULL {}",
+            v.iter()
+                .map(|x| format!("{x:.10}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,5 +57,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut bge = FastembedEmbedder::new(cfg)?;
     report("text_bge_int8", &bge.embed(vec![FIXTURE.to_string()])?[0]);
+
+    // 3. CLIP vision tower against the committed fixture image.
+    let img = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/samples/images/sprite_knight.png"
+    );
+    let iopts =
+        ImageInitOptions::new(ImageEmbeddingModel::ClipVitB32).with_show_download_progress(false);
+    let mut vision = ImageEmbedding::try_new(iopts)?;
+    report("clip_vision", &vision.embed(vec![img], None)?[0]);
     Ok(())
 }

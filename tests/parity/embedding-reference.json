@@ -34,6 +34,24 @@
       ],
       "sum": 1.62794122,
       "sha256_of_rounded6": "f9f43557af8f2220"
+    },
+    "clip_vision": {
+      "model_id": "Qdrant/clip-ViT-B-32-vision",
+      "dim": 512,
+      "l2_norm": 0.9999999644045211,
+      "first8": [
+        0.00249834,
+        0.02776945,
+        0.02200708,
+        -0.00994916,
+        0.04606861,
+        -0.11546495,
+        -0.03902984,
+        0.00428083
+      ],
+      "sum": -0.53068588,
+      "input": "image_fixture"
     }
-  }
+  },
+  "image_fixture": "docs/samples/images/sprite_knight.png"
 }
