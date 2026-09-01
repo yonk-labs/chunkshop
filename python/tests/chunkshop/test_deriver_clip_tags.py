@@ -107,12 +107,13 @@ def test_derivation_hash_matches_what_stamp_provenance_records(images, monkeypat
     result = d.derive(red)
     recorded_version = result.metadata["derived"]["model_version"]
     assert recorded_version == "1.2.3"
+    recorded_engine = result.metadata["derived"]["engine"]
 
     recomputed = _dhash(
         "clip_tags",
         f"{d.vision_model}+{d.text_model}",
         recorded_version,
-        "python",
+        recorded_engine,
         {"vocabulary": d.vocabulary, "top_k": d.top_k, "min_score": d.min_score},
     )
     assert recomputed == hash_, "derivation_hash() must exactly match what was recorded"

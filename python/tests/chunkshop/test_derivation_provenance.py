@@ -3,7 +3,7 @@ import pathlib
 import pytest
 
 from chunkshop.sources.derivers import provenance
-from chunkshop.sources.derivers.provenance import derivation_hash, stamp_provenance
+from chunkshop.sources.derivers.provenance import _params_hash, derivation_hash, stamp_provenance
 from chunkshop.sources.parsers.result import ParseResult
 
 
@@ -11,6 +11,20 @@ def test_hash_is_stable_for_same_inputs():
     a = derivation_hash("clip_tags", "clip-ViT-B-32", "1", "python", {"top_k": 3})
     b = derivation_hash("clip_tags", "clip-ViT-B-32", "1", "python", {"top_k": 3})
     assert a == b
+
+
+def test_params_hash_non_ascii_matches_rust_canonical_form():
+    """Pins params_hash's exact digest for non-ASCII params (accented +
+    CJK label strings, as ClipTagsDeriver's user-supplied `vocabulary`
+    would carry). json.dumps(..., ensure_ascii=False) must produce raw
+    UTF-8 output — matching serde_json's default — not \\uXXXX escapes.
+    If a future serialiser change flips this, the digest changes and this
+    test fails loudly instead of the two languages silently maintaining
+    separate caches. Verified against rust/chunkshop's own params_hash for
+    the identical dict (see hash_parity_probe.rs's "nonascii" case).
+    """
+    params = {"top_k": 3, "vocabulary": ["café", "猫"]}
+    assert _params_hash(params) == "e1784762871f0088"
 
 
 def test_hash_ignores_dict_ordering():

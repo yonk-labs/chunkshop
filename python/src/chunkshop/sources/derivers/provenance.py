@@ -8,6 +8,11 @@ from chunkshop.sources.parsers.result import ParseResult
 
 # Bump when the *shape* of the derivation hash changes, so old cache entries
 # invalidate cleanly instead of being served against a new formula.
+#
+# Task 6 added `engine` (5 parts -> 6) WITHOUT bumping this: the media
+# deriver cache has never shipped (feat/media-ingest-v1a is unmerged), so
+# there are zero cache entries in the wild to invalidate. Once this ships,
+# a future shape change DOES need the bump.
 CACHE_SCHEMA_VERSION = "1"
 
 
@@ -18,7 +23,9 @@ def _params_hash(params: dict) -> str:
     offending key so the caller knows exactly which param to fix.
     """
     try:
-        canonical = json.dumps(params, sort_keys=True, separators=(",", ":"))
+        canonical = json.dumps(
+            params, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
     except TypeError as e:
         # Re-raise with the key name if possible
         for key in params:
