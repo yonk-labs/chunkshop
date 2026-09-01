@@ -627,6 +627,28 @@ def _parse_by_symbol(value: str) -> tuple[list[str], list[str]]:
     return exact, like
 
 
+def _hybrid_search_fn_for(target_type: str):
+    """Pick the backend's ``hybrid_search`` for the `search` command.
+
+    ``chunkshop.search_common.search`` defaults to the Postgres backend when
+    no override is given. sqlite ships its own hybrid_search
+    (`chunkshop.search_sqlite`) with the same `Hit` contract but without the
+    Postgres-only `vector_metric`/`ef_search` knobs, so it's wrapped to drop
+    those two kwargs before delegating. mariadb/clickhouse aren't wired here
+    yet — CLI search against those targets still requires a direct API call.
+    ``fact-search`` doesn't take this override yet either; it stays
+    Postgres-only for now.
+    """
+    if target_type == "sqlite":
+        from chunkshop.search_sqlite import hybrid_search as _sqlite_hybrid_search
+
+        def _adapted(*args, vector_metric=None, ef_search=None, **kwargs):
+            return _sqlite_hybrid_search(*args, **kwargs)
+
+        return _adapted
+    return None  # None => search_common.search's Postgres default
+
+
 @cli.command()
 @click.option(
     "--config", required=True,
@@ -776,6 +798,7 @@ def search(config, query, k, return_mode, legs, vector_metric, ef_search, where_
             vector_metric=vector_metric or tgt.vector_metric,
             ef_search=ef_search,
             compress_fn=compress_fn,
+            hybrid_search_fn=_hybrid_search_fn_for(tgt.type),
         )
     except click.ClickException:
         raise

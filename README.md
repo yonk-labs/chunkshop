@@ -158,6 +158,73 @@ Already past step 3 and just want the runtime? `chunkshop ingest --config
 <your-cell>.yaml`. Same for Rust: `chunkshop-rs ingest --config
 <your-cell>.yaml`.
 
+## Search a folder of images — no API key, no GPU
+
+Images go through the same `Source → Chunker → Embedder → Sink` pipeline as
+everything else. A `source.derive` block turns each image into searchable
+text on the way in — deterministic Pillow metadata (filename, dimensions)
+plus zero-shot CLIP tags against a vocabulary you choose. Both rungs ship
+in fastembed, chunkshop's existing core dependency: no media extra, no API
+key, no GPU, and no model to pick beyond the vocabulary itself.
+
+<!-- BEGIN images-keyless -->
+```yaml
+# Keyless image search. Base install only — no extras, no API key, no GPU.
+cell_name: images_keyless
+source:
+  type: files
+  glob: docs/samples/images/*.png
+  id_from: stem
+  derive:
+    png|jpg|jpeg|webp:
+      rung: clip_tags
+      vocabulary:
+        - a screenshot of a user interface
+        - a photograph of a person
+        - a chart or diagram
+        - a game sprite or pixel art
+        - a scanned document page
+      top_k: 2
+chunker:
+  type: fixed_overlap
+  window_words: 512
+  step_words: 512
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+extractor:
+  type: none
+target:
+  type: sqlite
+  dsn_env: SQLITE_PATH
+  database: ignored      # SQLite has no schema concept; required by config but unused
+  table: images
+  mode: overwrite
+  hnsw: false            # sqlite-vec is brute-force KNN
+```
+<!-- END images-keyless -->
+
+```bash
+pip install chunkshop[sqlite]    # storage backend only — NO media extra, no key, no GPU
+export SQLITE_PATH=/tmp/chunkshop-images.db
+chunkshop ingest --config docs/samples/images-keyless.yaml
+chunkshop search --config docs/samples/images-keyless.yaml \
+  --query "a game sprite" --k 1 --include-facts
+```
+
+`docs/samples/images/` ships three tiny fixture PNGs (a pixel-art sprite, a
+line chart, and a settings-screen mockup) so the quickstart above is
+runnable as printed. CI (`.github/workflows/sc1-quickstart-clock.yml`) runs
+this exact YAML on a clock every push, on a base install, and asserts the
+sprite ranks first for `"a game sprite"` — so this claim can't quietly rot.
+
+`--include-facts` is there because SQLite's `where` builder doesn't yet
+support the fact-row exclusion filter `chunkshop search` applies by default
+on every backend (a documented gap, not a media-path limitation) — it's a
+no-op for this corpus, which has no `consolidation`-chunker fact rows to
+exclude in the first place.
+
 ## CLI at a glance
 
 | Command | What it does |
