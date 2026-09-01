@@ -63,7 +63,9 @@ tracing = "0.1"
 # declared directly here (not optional/feature-gated) so `derivers`
 # (always compiled, no feature gate — see sources/mod.rs) also builds
 # under `--no-default-features`, which pulls in no sqlx and therefore no
-# chrono otherwise. Adds zero new crates to the dependency tree.
+# chrono otherwise. Adds no new crates in default builds (it's already in
+# Cargo.lock via sqlx); `--no-default-features` does newly compile it since
+# sqlx (and its transitive chrono) is excluded there.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # --- Bin-only (kept always-on for diff minimality; clap + tracing-subscriber

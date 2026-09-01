@@ -4,7 +4,7 @@
 //! shape (same 6-part hash input: schema version, rung, model, version,
 //! engine, params-hash), including the `engine` field (Task 6).
 
-use chrono::Utc;
+use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -12,14 +12,22 @@ use crate::sources::parsers::ParseResult;
 
 /// Bump when the *shape* of the derivation hash changes, so old cache
 /// entries invalidate cleanly. Mirrors Python's `CACHE_SCHEMA_VERSION`.
+///
+/// Task 6 added `engine` (5 parts -> 6) WITHOUT bumping this: the media
+/// deriver cache has never shipped (feat/media-ingest-v1a is unmerged), so
+/// there are zero cache entries in the wild to invalidate. Once this ships,
+/// a future shape change DOES need the bump.
 const CACHE_SCHEMA_VERSION: &str = "1";
 
-/// Canonical hash of a params object. `serde_json::to_string` on a
-/// `Map<String, Value>` iterates in insertion order by default — the
-/// caller must build `params` with keys in a stable (e.g. sorted) order for
-/// this to be order-independent the way Python's `json.dumps(sort_keys=True)`
-/// is. See the params-ordering test below; do not assume `serde_json`
-/// sorts for you.
+/// Canonical hash of a params object. Without the `preserve_order` feature,
+/// `serde_json::Map<String, Value>` is backed by a `BTreeMap` and already
+/// iterates in sorted key order, so `serde_json::to_string` alone would
+/// match Python's `json.dumps(sort_keys=True)`. `sort_json_keys` below is
+/// kept anyway as a defensive, explicit sort: it stays correct even if a
+/// transitive dependency ever flips `preserve_order` on (which swaps the
+/// backing store to an insertion-order `IndexMap`). See the params-ordering
+/// test below, which is a tripwire for that feature flag, not a live
+/// adversarial case today.
 fn params_hash(params: &Value) -> String {
     let sorted = sort_json_keys(params);
     let canonical = serde_json::to_string(&sorted).expect("params must be JSON-serializable");
@@ -30,9 +38,12 @@ fn params_hash(params: &Value) -> String {
 
 /// Recursively rebuild a `Value` with object keys in sorted order, so
 /// `serde_json::to_string` output is order-independent — matching Python's
-/// `json.dumps(..., sort_keys=True)`. Made explicit rather than relying on
-/// `serde_json::Map`'s insertion-order-by-default behavior (this workspace
-/// does not enable the `preserve_order` feature's BTreeMap alternative).
+/// `json.dumps(..., sort_keys=True)`. Made explicit and defensive rather
+/// than relying on the `Map`-is-a-`BTreeMap` default: `preserve_order` is
+/// the feature that would swap `Map` to an insertion-order `IndexMap`, and
+/// this workspace does not enable it (`cargo tree -p serde_json` shows no
+/// `indexmap` in the dependency tree) — but this function keeps ordering
+/// correct even if that ever changes.
 fn sort_json_keys(v: &Value) -> Value {
     match v {
         Value::Object(m) => {
@@ -119,9 +130,11 @@ pub fn stamp_provenance(
 /// `datetime.now(timezone.utc).isoformat()`. `chrono` is already in the
 /// dependency tree transitively (`sqlx`'s `chrono` feature, pulled by the
 /// `sink` feature) and is declared as a direct dependency for this module
-/// (see `Cargo.toml`) — no new crate.
+/// (see `Cargo.toml`) — no new crate in default builds. Micros (6 fractional
+/// digits) + a `+00:00` offset (not `Z`) matches Python's isoformat() shape
+/// exactly, instead of chrono's default 9-digit nanosecond precision.
 fn rfc3339_now() -> String {
-    Utc::now().to_rfc3339()
+    Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false)
 }
 
 #[cfg(test)]
@@ -137,10 +150,31 @@ mod tests {
     }
 
     #[test]
+    fn params_hash_non_ascii_matches_python_canonical_form() {
+        // Pins params_hash's exact digest for non-ASCII params (accented +
+        // CJK label strings, as ClipTagsDeriver's user-supplied
+        // `vocabulary` would carry). serde_json always emits raw UTF-8;
+        // Python's json.dumps must be called with ensure_ascii=False to
+        // match (rather than its \uXXXX-escaping default). If a future
+        // serialiser change flips this, the digest changes and this test
+        // fails loudly instead of the two languages silently maintaining
+        // separate caches. Verified against Python's own params_hash for
+        // the identical dict (see
+        // test_derivation_provenance.py::test_params_hash_non_ascii_matches_rust_canonical_form).
+        let params = json!({"top_k": 3, "vocabulary": ["café", "猫"]});
+        assert_eq!(params_hash(&params), "e1784762871f0088");
+    }
+
+    #[test]
     fn hash_ignores_dict_key_ordering() {
+        // NOTE: without `preserve_order`, `json!`'s Map is a BTreeMap, so
+        // these two literals already build an identical sorted map before
+        // `sort_json_keys` ever runs — this test is a tripwire for the
+        // `preserve_order` feature flag flipping on (which would make `Map`
+        // an insertion-order IndexMap), not a live adversarial case today.
         let a = derivation_hash("r", "m", "1", "rust", &json!({"x": 1, "y": 2}));
         let b = derivation_hash("r", "m", "1", "rust", &json!({"y": 2, "x": 1}));
-        assert_eq!(a, b, "params_hash must be order-independent — the real adversarial case, not just 'same object twice'");
+        assert_eq!(a, b, "params_hash must be order-independent");
     }
 
     #[test]
@@ -174,6 +208,7 @@ mod tests {
             ParseResult::new("cat"), rung, model_id, model_version, engine, &params,
         );
         let d = stamped.metadata["derived"].as_object().unwrap();
+        assert_eq!(d["rung"], rung);
         assert_eq!(d["model"], model_id);
         assert_eq!(d["model_version"], model_version);
         assert_eq!(d["engine"], engine);
@@ -181,7 +216,20 @@ mod tests {
         // hash `derivation_hash` folds into its own output — recompute
         // independently and compare, proving the two functions can't
         // silently diverge on what "the params" means.
-        assert!(h.len() == 64);
+        assert_eq!(h.len(), 64);
         assert_eq!(d["params_hash"].as_str().unwrap(), params_hash(&params));
+
+        // Rebuild the tuple from the recorded record itself (not the local
+        // variables the test set up) and recompute the hash — proves the
+        // stamped record, standing alone, is sufficient to reproduce the
+        // cache key, not just that the two functions were fed equal inputs.
+        let recomputed = derivation_hash(
+            d["rung"].as_str().unwrap(),
+            d["model"].as_str().unwrap(),
+            d["model_version"].as_str().unwrap(),
+            d["engine"].as_str().unwrap(),
+            &params,
+        );
+        assert_eq!(recomputed, h);
     }
 }
