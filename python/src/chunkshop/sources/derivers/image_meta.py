@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from chunkshop.sources.derivers.provenance import stamp_provenance
+from chunkshop.sources.parsers.base import ParserError
 from chunkshop.sources.parsers.result import ParseResult
 
 _SPLIT = re.compile(r"[_\-.]+")
@@ -29,6 +30,14 @@ class ImageMetaDeriver:
         self.path_segments = path_segments
         self.segment_depth = segment_depth
 
+    def derivation_hash(self) -> str:
+        from chunkshop.sources.derivers.provenance import derivation_hash
+
+        return derivation_hash(
+            "image_meta", "deterministic", "1",
+            {"path_segments": self.path_segments, "segment_depth": self.segment_depth},
+        )
+
     def derive(self, path: Path) -> ParseResult:
         try:
             from PIL import Image
@@ -37,11 +46,14 @@ class ImageMetaDeriver:
                 "image metadata requires Pillow, normally installed with fastembed."
             ) from exc
 
-        with Image.open(path) as img:
-            width, height = img.size
-            fmt = img.format or path.suffix.lstrip(".").upper()
-            mode = img.mode
-            has_alpha = mode in ("RGBA", "LA", "PA") or "transparency" in img.info
+        try:
+            with Image.open(path) as img:
+                width, height = img.size
+                fmt = img.format or path.suffix.lstrip(".").upper()
+                mode = img.mode
+                has_alpha = mode in ("RGBA", "LA", "PA") or "transparency" in img.info
+        except Exception as exc:
+            raise ParserError(f"failed to parse image {path}: {exc}") from exc
 
         words = [humanise(path.stem)]
         if self.path_segments:

@@ -82,6 +82,38 @@ class FilesIncrementalSettings(_Base):
     detect: Literal["hash", "mtime"] = "hash"
 
 
+class ImageMetaDeriverConfig(_Base):
+    rung: Literal["image_meta"]
+    path_segments: bool = True
+    segment_depth: int = 3
+
+
+class ClipTagsDeriverConfig(_Base):
+    rung: Literal["clip_tags"]
+    vocabulary: list[str]
+    top_k: int = 3
+    min_score: float = 0.20
+    vision_model: str = "Qdrant/clip-ViT-B-32-vision"
+    text_model: str = "Qdrant/clip-ViT-B-32-text"
+
+
+DeriverConfig = Annotated[
+    Union[ImageMetaDeriverConfig, ClipTagsDeriverConfig],
+    Field(discriminator="rung"),
+]
+
+
+class DerivationCacheSettings(_Base):
+    """Memoises derived text on (content_hash, derivation_hash).
+
+    Entries contain derived text, which for some corpora is sensitive: point
+    ``root`` at an encrypted volume, or set ``enabled: false`` to keep derived
+    text only in the target database. No encryption-at-rest in v1.
+    """
+    enabled: bool = True
+    root: Optional[str] = None
+
+
 class FilesSource(_Base):
     type: Literal["files"]
     glob: str
@@ -97,6 +129,8 @@ class FilesSource(_Base):
     behaviour of indexing an empty document; it is retained only for
     backward compatibility and is not recommended.
     """
+    derive: Optional[dict[str, DeriverConfig]] = None
+    cache: DerivationCacheSettings = DerivationCacheSettings()
 
 
 class CommentExtractsSource(_Base):

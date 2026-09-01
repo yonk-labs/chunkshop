@@ -13,7 +13,7 @@ asserts no default winner.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Sequence
 
 from chunkshop.sources.derivers.image_meta import ImageMetaDeriver
 from chunkshop.sources.derivers.provenance import stamp_provenance
@@ -47,6 +47,17 @@ class ClipTagsDeriver:
         self._meta = ImageMetaDeriver()
         self._vision = None
         self._label_vectors = None
+
+    def derivation_hash(self) -> str:
+        from chunkshop.sources.derivers.provenance import derivation_hash
+
+        return derivation_hash(
+            "clip_tags",
+            f"{self.vision_model}+{self.text_model}",
+            "1",
+            {"vocabulary": self.vocabulary, "top_k": self.top_k,
+             "min_score": self.min_score},
+        )
 
     def _ensure_models(self):
         """Lazy: nothing downloads at import or install (NN-6)."""

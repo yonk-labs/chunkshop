@@ -7,6 +7,7 @@ from typing import Iterator, Optional
 
 from chunkshop.config import FilesSource as Cfg
 from chunkshop.sources.base import Document, SyncMode
+from chunkshop.sources.derivers.cache import cached_derive
 from chunkshop.sources.parsers import (
     DEFAULT_PARSERS,
     EmptyDerivationError,
@@ -52,6 +53,24 @@ class FilesSource:
                 self._parsers[ext] = text_parser
         else:
             self._parsers = dict(parsers)
+
+        # Derive config layers over the parser table: one deriver per
+        # extension listed in a pipe-separated key ("png|jpg|webp").
+        if cfg.derive:
+            from chunkshop.sources.derivers import load_deriver
+
+            for pattern, deriver_cfg in cfg.derive.items():
+                deriver = load_deriver(deriver_cfg)
+                for ext in pattern.split("|"):
+                    self._parsers[ext.strip().lower().lstrip(".")] = deriver
+
+        self._cache = None
+        if cfg.cache.enabled:
+            from chunkshop.sources.derivers.cache import DerivationCache
+
+            self._cache = DerivationCache(
+                root=Path(cfg.cache.root) if cfg.cache.root else None
+            )
 
     # --- full-resync path (unchanged behavior) ---------------------------
 
@@ -131,7 +150,16 @@ class FilesSource:
     def _document_for(self, path: Path, content_hash: Optional[str] = None) -> Optional[Document]:
         ext = path.suffix.lower().lstrip(".")
         parser = get_parser(ext, self._parsers)
-        result = call_deriver(parser, path)
+        if content_hash is None:
+            content_hash = _hash_bytes(path.read_bytes())
+        d_hash = getattr(parser, "derivation_hash", None)
+        if callable(d_hash):
+            d_hash = d_hash()
+        if d_hash is None:
+            d_hash = parser.__class__.__name__
+        result, _was_hit = cached_derive(
+            self._cache, content_hash, d_hash, lambda: call_deriver(parser, path)
+        )
         if not result.text.strip():
             mode = self.cfg.on_empty
             if mode == "error":
