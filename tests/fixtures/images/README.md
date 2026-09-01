@@ -1,27 +1,75 @@
-# Adversarial image-metadata fixtures
+# `image_meta` parity fixtures
 
-Tiny Pillow-generated images that exercise the `image_meta` rung-0 deriver's
-awkward cases — the ones where `image`-crate decoding and Pillow disagree
-unless the decoder reads the container's own colour metadata:
+Pillow-generated images covering the colour models the rung-0 `image_meta`
+deriver has to report, plus `expected.json` — **what Pillow itself says about
+each of them**.
 
-| file | what it covers |
-|---|---|
-| `swatch_palette.png` | indexed PNG (`mode="P"`), no alpha |
-| `swatch_palette_trns.png` | indexed PNG carrying a `tRNS` chunk (`has_alpha=True` without an alpha channel) |
-| `swatch_grayscale.png` | 8-bit greyscale (`mode="L"`) |
-| `swatch_rgba.png` | true RGBA (`mode="RGBA"`) |
-| `swatch_rgb.gif` | GIF — `image` always reports alpha; only the Graphic Control Extension says whether it's real |
-| `swatch_rgb.jpg` | baseline JPEG (`mode="RGB"`, never alpha) |
-| `swatch_rgb.webp` | WebP (`mode="RGB"`) |
+Pillow is the reference implementation; the Rust port is checked against these
+recorded values by
+`rust/chunkshop/src/sources/derivers/image_meta.rs`'s unit tests and
+`rust/chunkshop/tests/media_derivation_parity.rs`.
 
-Regenerate with (from the repo root):
+## Why the expectations are committed rather than computed
 
-    cd python && uv run --no-sync python ../docs/samples/images/generate_fixtures.py
+The tests these replaced built a palette PNG with the `png` crate, read it
+back with the `png` crate, and asserted a hand-written expectation. That
+proves the Rust reader is self-consistent and says nothing about whether it
+agrees with Pillow — the golden-fixture-regenerated-by-the-implementation-it-
+checks anti-pattern. Here the inputs come from Pillow and the expectations
+come from Pillow, so the only way to pass is to actually match it.
 
-They deliberately live **here** and not in `docs/samples/images/`: that
-directory is the SC-1 quickstart corpus, globbed as `*.png` by
-`docs/samples/images-keyless.yaml` and asserted on by
+`expected.json` is computed by the exact expressions
+`python/src/chunkshop/sources/derivers/image_meta.py` uses:
+
+```python
+width, height = img.size
+fmt        = img.format or path.suffix.lstrip(".").upper()
+mode       = img.mode
+has_alpha  = mode in ("RGBA", "LA", "PA") or "transparency" in img.info
+aspect     = round(width / height, 4)
+```
+
+## What each fixture is for
+
+| file | Pillow mode | why it is here |
+|---|---|---|
+| `png_rgb.png` / `png_rgba.png` | `RGB` / `RGBA` | baseline |
+| `png_l.png` / `png_la.png` | `L` / `LA` | greyscale, greyscale+alpha |
+| `png_1.png` | `1` | 1-bit; a decoder that expands to 8-bit reports `L` |
+| `png_i16.png` | `I;16` | 16-bit greyscale; `image` decodes `Luma16` and reports `L` |
+| `png_p.png` / `png_p_trns.png` | `P` | indexed, and indexed with a `tRNS` chunk (`has_alpha` with no alpha channel) |
+| `png_800x1024.png` | `RGB` | an aspect ratio that actually rounds: 0.78125 is a tie at 4 dp, and Python breaks ties to even (0.7812), not away from zero (0.7813) |
+| `png_big_palette.png` | `P` | 14432x9664 = 139 Mpx, **136 KB on disk**, 558 MB decoded as RGBA. A full decode blows `image`'s 512 MiB `max_alloc` and aborts the cell; Pillow reads the header. Palette PNGs compress ~200:1, so file size does not predict decode cost — which is why no ordinary synthetic fixture caught this |
+| `jpg_rgb.jpg` / `jpeg_rgb.jpeg` | `RGB` | both spellings of the extension |
+| `jpg_l.jpg` | `L` | single-component JPEG |
+| `webp_rgb.webp` / `webp_rgba.webp` | `RGB` / `RGBA` | WebP with and without alpha |
+| `gif_p.gif` / `gif_p_trns.gif` | `P` | `image` reports alpha for every GIF; only the Graphic Control Extension says whether it is real |
+| `bmp_1.bmp` | `1` | 2-colour palette that is the greyscale ramp — Pillow drops the palette |
+| `bmp_l.bmp` | `L` | 256-entry greyscale palette, likewise |
+| `bmp_p.bmp` | `P` | a real colour palette; `image` cannot decode this one at all |
+| `bmp_rgb.bmp` / `bmp_rgba.bmp` | `RGB` / `RGB` | note both: a 32-bit BI_RGB BMP is `RGB` in Pillow, because the fourth byte is reserved rather than alpha |
+| `tif_1.tiff` | `1` | bilevel |
+| `tif_l.tiff` / `tif_la.tiff` | `L` / `LA` | greyscale; the `LA` case is one `image` refuses (`color type Unknown(16)`) |
+| `tif_p.tiff` | `P` | palette TIFF; `image` refuses it (`Photometric interpretation RGBPalette ... unsupported`) |
+| `tif_rgb.tiff` / `tif_rgba.tiff` | `RGB` / `RGBA` | baseline |
+| `tif_cmyk.tiff` | `CMYK` | a colour model `image`'s `ColorType` cannot express |
+| `tif_i16.tiff` | `I;16` | 16-bit greyscale |
+| `tif_rgb.tif` | `RGB` | the other spelling of the extension |
+
+Every extension in `ImageMetaDeriver.supported_extensions` has at least one
+fixture, and both `generate.py` and a Rust test assert that.
+
+## Regenerating
+
+    cd python && uv run --no-sync python ../tests/fixtures/images/generate.py
+
+Deterministic — no randomness. Regenerate only when deliberately adding a
+case; regenerating to make a failing test pass would defeat the point.
+
+## Why they live here
+
+Not in `docs/samples/images/`: that directory is the SC-1 quickstart corpus,
+globbed as `*.png` by `docs/samples/images-keyless.yaml` and asserted on by
 `.github/workflows/sc1-quickstart-clock.yml`. Adding images there dilutes the
 quickstart's ranking margin down to bare RRF rank spacing — which is exactly
-what happened while these files sat in that directory. Keep test fixtures out
-of the sample corpus.
+what happened while these files sat in that directory.

@@ -7,15 +7,21 @@
 //! `params_hash`/cache keys for byte-identical config — that's BY DESIGN,
 //! not a bug, and this file must never assert the two hashes are equal).
 //!
-//! `width`/`height`/`image_format`/`image_mode`/`has_alpha` on the
-//! `sprite_knight.png` fixture used here (plain RGB PNG, no palette, no
-//! alpha) ARE value-level asserted — those five fields are exact-parity
-//! candidates per Task 9 Correction 1's measurement, and the plain-RGB
-//! fixture is exactly the case where Rust and Python already agree
-//! (`tests/fixtures/images/swatch_palette*.png` / `swatch_rgb.gif` are the
-//! adversarial cases covered by `image_meta.rs`'s own unit tests instead,
-//! since the golden fixture format here only records the key SET, not a
-//! second language's per-fixture values).
+//! All SIX rung-0 fields — `width`, `height`, `image_format`, `image_mode`,
+//! `aspect_ratio`, `has_alpha` — ARE value-level asserted here. Rung 0 is
+//! deterministic; there is no field in it whose value may legitimately
+//! differ between the ports. `aspect_ratio` in particular was omitted from
+//! these assertions for a while, and it is the ONLY rung-0 field with
+//! arithmetic in it: Python rounds half to even, Rust was rounding half away
+//! from zero, and an ordinary 800x1024 screenshot came out 0.7812 in one
+//! port and 0.7813 in the other. The fixture set below therefore includes a
+//! ratio that actually rounds — a 128x128 image, whose ratio is exactly 1.0,
+//! is the single value where no rounding happens and so cannot catch it.
+//!
+//! The wider colour-model matrix (palette / greyscale / 1-bit / 16-bit /
+//! CMYK / LA, across PNG, GIF, JPEG, WebP, BMP and TIFF) is asserted against
+//! Pillow's own recorded values in `image_meta.rs`'s unit tests, driven by
+//! `tests/fixtures/images/expected.json`.
 //!
 //! Gated on `media` for the whole file (not per-test): every test here
 //! exercises `ImageMetaDeriver`, which needs the `image`/`png`/`gif`
@@ -121,7 +127,7 @@ fn rung1_metadata_keys_match_python() {
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
     let top_k = f["rung1"]["top_k"].as_u64().unwrap() as usize;
-    let min_score = f["rung1"]["min_score"].as_f64().unwrap() as f32;
+    let min_score = f["rung1"]["min_score"].as_f64().unwrap();
 
     let d = ClipTagsDeriver::new(
         vocabulary,
@@ -201,12 +207,9 @@ fn derivation_hash_differs_by_engine_by_design() {
 
 #[test]
 fn rung0_values_match_python_for_a_plain_rgb_png() {
-    // sprite_knight.png is plain RGB, no palette, no alpha — Task 9
-    // Correction 1's measurement found Python and Rust already agree
-    // value-for-value on this shape. Pinned here as regression coverage;
-    // Python's own values were captured alongside the golden fixture via
-    // `docs/superpowers/plans/2026-09-01-rust-media-parity-plan-d.md`
-    // Task 9 Step 5's generation script (128x128 PNG, mode RGB, no alpha).
+    // sprite_knight.png is plain RGB, no palette, no alpha. Pinned here as
+    // regression coverage; Python's own values were captured alongside the
+    // golden fixture (128x128 PNG, mode RGB, no alpha).
     let result = ImageMetaDeriver::default()
         .derive(std::path::Path::new(IMG_PATH))
         .unwrap();
@@ -215,6 +218,50 @@ fn rung0_values_match_python_for_a_plain_rgb_png() {
     assert_eq!(result.metadata["image_format"], serde_json::json!("PNG"));
     assert_eq!(result.metadata["image_mode"], serde_json::json!("RGB"));
     assert_eq!(result.metadata["has_alpha"], serde_json::json!(false));
+    // A square image's ratio is exactly 1.0 — the one value that rounds to
+    // itself under every rounding rule. Asserted anyway so the field is
+    // never silently dropped again, but see the next test for the case that
+    // has actual discriminating power.
+    assert_eq!(result.metadata["aspect_ratio"], serde_json::json!(1.0));
+}
+
+/// `aspect_ratio` on a shape that really is rounded.
+///
+/// 800/1024 = 0.78125 exactly, i.e. a tie at four decimal places. Python's
+/// `round()` breaks ties to EVEN and yields 0.7812; the obvious
+/// `(x * 10000.0).round() / 10000.0` breaks them away from zero and yields
+/// 0.7813. 800x1024 is an ordinary screenshot, not an adversarial input, and
+/// the ports disagreed on it. The expected value is read from the Pillow-
+/// generated reference rather than restated, so it cannot drift from what
+/// Python actually returns.
+#[test]
+fn rung0_aspect_ratio_matches_pythons_banker_rounding() {
+    let name = "png_800x1024.png";
+    let dir = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/images"
+    ));
+    let expected: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("expected.json")).unwrap()).unwrap();
+    let want = &expected[name];
+    assert_eq!(
+        want["aspect_ratio"],
+        serde_json::json!(0.7812),
+        "the Pillow reference itself changed; regenerate it deliberately, don't \
+         relax this test"
+    );
+
+    let got = ImageMetaDeriver::default().derive(&dir.join(name)).unwrap();
+    for key in [
+        "width",
+        "height",
+        "image_format",
+        "image_mode",
+        "aspect_ratio",
+        "has_alpha",
+    ] {
+        assert_eq!(got.metadata[key], want[key], "{name}.{key}");
+    }
 }
 
 #[test]

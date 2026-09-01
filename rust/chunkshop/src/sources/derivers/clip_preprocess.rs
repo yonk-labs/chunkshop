@@ -58,6 +58,46 @@
 //! Everything downstream of geometry (`PILToNDarray`, `Rescale`, `Normalize`)
 //! is left to `fastembed-rs`; it already matches Python componentwise.
 //!
+//! # Bit depth: SATURATE, do not scale
+//!
+//! `convert_to_rgb_like_pil` clamps 16-bit greyscale samples to 255 instead of
+//! rescaling them into 0..255, and that looks wrong until you know why.
+//!
+//! PIL opens a 16-bit greyscale PNG or TIFF as mode `I;16` — 16-bit integers,
+//! not a wider colour channel — and `convert("RGB")` on an integer image
+//! CLIPS: sample 30000 becomes 255, and so does 500. `image` decodes the same
+//! file as `Luma16` and `into_rgb8()` RESCALES: 30000 becomes 117.
+//! Measured through the real ONNX vision tower (the same session on both
+//! sides, so preprocessing is the only variable) on a 256x192 synthetic
+//! depth map spanning the full u16 range, plus the identical picture
+//! pre-reduced to 8 bits as a control:
+//!
+//! | image | cosine (Rust vs Python) | angle | mean abs pixel error | pixels differing |
+//! |---|---|---|---|---|
+//! | 16-bit greyscale, rescaling (before) | 0.865687703 | 30.04° | 164 / 255 | 100.0% |
+//! | 16-bit greyscale, saturating (after) | 1.000000000 | 0.00° | 0 / 255 | 0.0% |
+//! | 8-bit greyscale control (unchanged) | 0.998849662 | 2.75° | 0 / 255 | 4.6% |
+//!
+//! EVERY pixel differed before the fix — a larger divergence than the
+//! aspect-ratio bug this module was originally written to fix. After it, the
+//! two pipelines produce byte-identical 224x224 tensors for this image.
+//!
+//! The control's residual 2.75° is NOT this bug: its worst pixel is off by a
+//! single least-significant bit, which is the known PIL-integer-resampler vs
+//! `image`-f32-resampler floor described under "What is NOT the problem"
+//! below. It is unchanged by this fix, which is the point of having it.
+//!
+//! This is not bug-compatibility with PIL for its own sake. HuggingFace's
+//! `CLIPImageProcessor` is PIL-based, so the model's training data and its
+//! reference preprocessing both saw PIL's saturating conversion. Matching PIL
+//! is matching what the vision tower was trained to expect; "correcting" it to
+//! a linear rescale would feed the model an image it has never seen.
+//!
+//! Only the greyscale-without-alpha case is special-cased. PIL loads 16-bit
+//! RGB and 16-bit greyscale+alpha through raw modes that take the HIGH BYTE
+//! (`RGB;16B`, `LA;16B`), which is a rescale, and `into_rgb8()` already agrees
+//! with that to within a least-significant bit.
+//!
 //! # Truncation, not rounding
 //!
 //! Python computes the long edge as `int(size * long / short)` — f64 division
@@ -159,16 +199,74 @@ pub fn open_for_clip(path: &Path) -> anyhow::Result<DynamicImage> {
         .map_err(|e| anyhow::anyhow!("open {}: {e}", path.display()))?
         .decode()
         .map_err(|e| anyhow::anyhow!("decode {}: {e}", path.display()))?;
-    // `ConvertToRGB` first, same order as both reference pipelines. PIL's
-    // `convert("RGB")` and `into_rgb8()` both DROP alpha rather than
-    // compositing it, so this stays byte-compatible with Python.
-    let rgb = DynamicImage::ImageRgb8(img.into_rgb8());
+    // `ConvertToRGB` first, same order as both reference pipelines.
+    let rgb = convert_to_rgb_like_pil(img);
     resize_and_center_crop(rgb, CLIP_SHORTEST_EDGE)
+}
+
+/// PIL's `convert("RGB")`.
+///
+/// Alpha: PIL and `into_rgb8()` both DROP it rather than compositing over a
+/// background, so every alpha-carrying variant is left to `into_rgb8()`.
+///
+/// Bit depth: 16-bit GREYSCALE is the one case where they disagree, and they
+/// disagree loudly. PIL calls such an image `I;16` and converts it by CLIPPING
+/// each sample to 0..=255; `into_rgb8()` rescales 0..=65535 onto 0..=255.
+/// Saturating is the behaviour the CLIP vision tower was trained against — see
+/// this module's "Bit depth" section for the measurement and the reasoning.
+fn convert_to_rgb_like_pil(img: DynamicImage) -> DynamicImage {
+    match img {
+        DynamicImage::ImageLuma16(buf) => {
+            let (w, h) = buf.dimensions();
+            let mut out = image::RgbImage::new(w, h);
+            for (dst, src) in out.pixels_mut().zip(buf.pixels()) {
+                let v = src.0[0].min(u16::from(u8::MAX)) as u8;
+                *dst = image::Rgb([v, v, v]);
+            }
+            DynamicImage::ImageRgb8(out)
+        }
+        other => DynamicImage::ImageRgb8(other.into_rgb8()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PIL clips `I;16` to 0..=255; `into_rgb8()` rescales. Both 500 and
+    /// 30000 are >= 255 and must come out 255, not 2 and 117.
+    #[test]
+    fn sixteen_bit_greyscale_saturates_like_pil_instead_of_rescaling() {
+        let mut buf = image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::new(2, 2);
+        buf.put_pixel(0, 0, image::Luma([0]));
+        buf.put_pixel(1, 0, image::Luma([200]));
+        buf.put_pixel(0, 1, image::Luma([500]));
+        buf.put_pixel(1, 1, image::Luma([30000]));
+        let out = convert_to_rgb_like_pil(DynamicImage::ImageLuma16(buf.clone())).to_rgb8();
+        assert_eq!(out.get_pixel(0, 0).0, [0, 0, 0]);
+        assert_eq!(out.get_pixel(1, 0).0, [200, 200, 200]);
+        assert_eq!(out.get_pixel(0, 1).0, [255, 255, 255]);
+        assert_eq!(out.get_pixel(1, 1).0, [255, 255, 255]);
+        // ...and the rescaling the crate would have done really is different,
+        // or the assertions above would pass for either implementation.
+        let rescaled = DynamicImage::ImageLuma16(buf).into_rgb8();
+        assert_eq!(rescaled.get_pixel(1, 1).0, [117, 117, 117]);
+    }
+
+    /// 8-bit paths are untouched — the special case must not leak into them.
+    #[test]
+    fn eight_bit_images_convert_exactly_as_before() {
+        let mut rgba = image::RgbaImage::new(1, 1);
+        rgba.put_pixel(0, 0, image::Rgba([10, 20, 30, 0]));
+        let out = convert_to_rgb_like_pil(DynamicImage::ImageRgba8(rgba)).to_rgb8();
+        // Alpha DROPPED, not composited — the colour survives a zero alpha.
+        assert_eq!(out.get_pixel(0, 0).0, [10, 20, 30]);
+
+        let mut l = image::GrayImage::new(1, 1);
+        l.put_pixel(0, 0, image::Luma([77]));
+        let out = convert_to_rgb_like_pil(DynamicImage::ImageLuma8(l)).to_rgb8();
+        assert_eq!(out.get_pixel(0, 0).0, [77, 77, 77]);
+    }
 
     #[test]
     fn a_square_image_scales_to_exactly_the_shortest_edge() {

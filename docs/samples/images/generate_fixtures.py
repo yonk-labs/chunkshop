@@ -1,16 +1,16 @@
-"""Deterministic Pillow-generated image fixtures. Writes to TWO directories.
+"""Deterministic Pillow-generated images for the SC-1 quickstart corpus.
 
-1. The SC-1 quickstart corpus, in this same directory
-   (docs/samples/images/): sprite_knight.png, chart_revenue.png,
-   screenshot_settings.png. docs/samples/images-keyless.yaml globs `*.png`
-   over this directory and .github/workflows/sc1-quickstart-clock.yml asserts
-   the sprite ranks first for "pixel art". Adding ANY image here changes what
-   that gate measures -- see tests/fixtures/images/README.md.
+Writes sprite_knight.png, chart_revenue.png and screenshot_settings.png into
+this directory. docs/samples/images-keyless.yaml globs `*.png` over it and
+.github/workflows/sc1-quickstart-clock.yml asserts the sprite ranks first for
+"pixel art", so adding ANY image here changes what that gate measures -- see
+tests/fixtures/images/README.md.
 
-2. The adversarial image_meta fixtures, in tests/fixtures/images/: the
-   swatch_* palette / tRNS / greyscale / RGBA / GIF / JPEG / WebP cases.
-   These are test inputs, not sample content, so they deliberately do NOT
-   live in the quickstart corpus.
+The `image_meta` deriver's test fixtures used to be written from here too.
+They are not any more: they live in tests/fixtures/images/ with their own
+generator, which also records what Pillow reports for each of them so the
+Rust port can be checked against Python rather than against itself. See
+tests/fixtures/images/generate.py.
 
 Regenerate with (from the repo root):
     cd python && uv run --no-sync python ../docs/samples/images/generate_fixtures.py
@@ -27,9 +27,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 # The quickstart sample corpus (this directory).
 OUT = Path(__file__).resolve().parent
-# The adversarial image_meta fixtures. Repo root is three levels up from
-# docs/samples/images/.
-FIXTURES = OUT.parents[2] / "tests" / "fixtures" / "images"
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -232,81 +229,15 @@ def make_screenshot_settings() -> Image.Image:
     return img
 
 
-# ---------------------------------------------------------------------------
-# Task 9 Correction 1 fixtures — cover the PIL `mode`/`has_alpha` value
-# space the `image_meta` deriver's rung-0 parity test measures Rust against.
-# Deliberately tiny (8x8): these exist to pin metadata VALUES, not to look
-# like real game art.
-# ---------------------------------------------------------------------------
-def make_palette_no_alpha() -> Image.Image:
-    """A plain paletted (mode "P") PNG with no tRNS chunk."""
-    img = Image.new("P", (8, 8))
-    palette = [0, 0, 0] * 256
-    palette[0:3] = [255, 0, 0]
-    palette[3:6] = [0, 255, 0]
-    img.putpalette(palette)
-    px = img.load()
-    for y in range(8):
-        for x in range(8):
-            px[x, y] = 0 if (x + y) % 2 == 0 else 1
-    return img
-
-
-def make_palette_with_trns() -> Image.Image:
-    """A paletted (mode "P") PNG with an explicit tRNS chunk — the case
-    Pillow's `has_alpha` catches via `"transparency" in img.info` even
-    though `img.mode` is "P", not "RGBA"/"LA"/"PA"."""
-    img = make_palette_no_alpha()
-    img.info["transparency"] = 0  # palette index 0 is fully transparent
-    return img
-
-
-def make_grayscale_l() -> Image.Image:
-    """Mode "L" (8-bit grayscale, no alpha)."""
-    img = Image.new("L", (8, 8), 128)
-    px = img.load()
-    for y in range(8):
-        for x in range(8):
-            px[x, y] = (x * 32) % 256
-    return img
-
-
-def make_rgba() -> Image.Image:
-    """Mode "RGBA" with real per-pixel alpha."""
-    img = Image.new("RGBA", (8, 8), (200, 30, 30, 255))
-    px = img.load()
-    for y in range(4):
-        for x in range(8):
-            px[x, y] = (200, 30, 30, 0)  # top half fully transparent
-    return img
-
-
-def make_small_rgb() -> Image.Image:
-    """Plain mode "RGB", no alpha, no palette — the baseline case."""
-    img = Image.new("RGB", (8, 8), (30, 110, 200))
-    return img
-
-
 def main() -> None:
     make_sprite_knight().save(OUT / "sprite_knight.png", optimize=True)
     make_chart_revenue().save(OUT / "chart_revenue.png", optimize=True)
     make_screenshot_settings().save(OUT / "screenshot_settings.png", optimize=True)
 
-    FIXTURES.mkdir(parents=True, exist_ok=True)
-    make_palette_no_alpha().save(FIXTURES / "swatch_palette.png")
-    make_palette_with_trns().save(FIXTURES / "swatch_palette_trns.png")
-    make_grayscale_l().save(FIXTURES / "swatch_grayscale.png")
-    make_rgba().save(FIXTURES / "swatch_rgba.png")
-    rgb = make_small_rgb()
-    rgb.save(FIXTURES / "swatch_rgb.jpg", quality=90)
-    rgb.save(FIXTURES / "swatch_rgb.webp")
-    rgb.convert("P", palette=Image.ADAPTIVE).save(FIXTURES / "swatch_rgb.gif")
-
-    for d in (OUT, FIXTURES):
-        print(f"-- {d}")
-        for p in sorted(d.iterdir()):
-            if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-                print(" ", p.name, p.stat().st_size, "bytes")
+    print(f"-- {OUT}")
+    for p in sorted(OUT.iterdir()):
+        if p.is_file() and p.suffix.lower() == ".png":
+            print(" ", p.name, p.stat().st_size, "bytes")
 
 
 if __name__ == "__main__":
