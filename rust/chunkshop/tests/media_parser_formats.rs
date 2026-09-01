@@ -62,19 +62,20 @@ fn text_file_output_is_unchanged_by_the_parser_layer() {
     assert_eq!(docs[0].id, "a");
 }
 
-// The three cases below (pptx/xlsx/docx) are UNCONDITIONAL — no
+// The two cases below (pptx/docx) are UNCONDITIONAL — no
 // `#[cfg(feature = "media")]` — because the refusal itself is unconditional
 // (see `registry.rs`'s `UNIMPLEMENTED_FORMATS`): a default (non-`media`)
-// build has no deriver for any of these formats either, so it must refuse
-// them too, not silently text-decode them. Coverage must match that
-// guarantee in both build modes.
+// build has no deriver for either format either, so it must refuse them
+// too, not silently text-decode them. Coverage must match that guarantee
+// in both build modes.
 //
-// `pdf` moved to `MEDIA_GATED_FORMATS` in Task 3 (a real deriver exists,
-// gated behind `media`), so its refusal behaviour now differs by build:
-// a non-`media` build still refuses (via `MissingFeatureError`, naming the
-// feature), but a `media` build actually derives text — see
-// `pdf_without_media_feature_refuses_naming_the_feature` and
-// `pdf_with_extractable_text_round_trips` below.
+// `pdf` moved to `MEDIA_GATED_FORMATS` in Task 3, and `xlsx` in Task 4
+// (each has a real deriver, gated behind `media`), so their refusal
+// behaviour now differs by build: a non-`media` build still refuses (via
+// `MissingFeatureError`, naming the feature), but a `media` build actually
+// derives text — see `pdf_without_media_feature_refuses_naming_the_feature`
+// / `pdf_with_extractable_text_round_trips` and their xlsx counterparts
+// below.
 
 #[test]
 fn pptx_is_refused_not_silently_decoded_as_text() {
@@ -105,13 +106,28 @@ fn pdf_without_media_feature_refuses_naming_the_feature() {
 }
 
 #[test]
-fn xlsx_is_refused_not_silently_decoded_as_text() {
-    assert_named_refusal("xlsx", "sheet.xlsx");
-}
-
-#[test]
 fn docx_is_refused_not_silently_decoded_as_text() {
     assert_named_refusal("docx", "letter.docx");
+}
+
+#[cfg(not(feature = "media"))]
+#[test]
+fn xlsx_without_media_feature_refuses_naming_the_feature() {
+    let dir = tempfile::tempdir().unwrap();
+    write_temp(dir.path(), "sheet.xlsx", NOT_UTF8);
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.xlsx", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+    };
+    let src = FilesSource::new(cfg);
+    let err = src.iter_documents().unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("--features media"),
+        "expected the error to name the feature to enable, got: {msg}"
+    );
+    assert!(msg.contains("xlsx"), "expected the error to name xlsx, got: {msg}");
 }
 
 #[cfg(feature = "media")]
@@ -135,6 +151,33 @@ fn pdf_with_extractable_text_round_trips() {
     assert_eq!(docs.len(), 1);
     assert!(
         docs[0].content.contains("Hello PDF"),
+        "got: {:?}",
+        docs[0].content
+    );
+}
+
+#[cfg(feature = "media")]
+#[test]
+fn xlsx_with_a_cell_round_trips() {
+    // Fixture generated with openpyxl (`Workbook()`, `wb.active['A1'] =
+    // 'hello xlsx'`, save) — `calamine` is read-only, so there is no
+    // writer half to generate this fixture in Rust. Round-trip verified
+    // against both openpyxl's own `iter_rows` and calamine's `XlsxDeriver`
+    // before committing.
+    const FIXTURE: &[u8] = include_bytes!("fixtures/one_cell.xlsx");
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("one_cell.xlsx");
+    std::fs::write(&p, FIXTURE).unwrap();
+
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.xlsx", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+    };
+    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    assert_eq!(docs.len(), 1);
+    assert!(
+        docs[0].content.contains("hello xlsx"),
         "got: {:?}",
         docs[0].content
     );

@@ -7,12 +7,13 @@
 //! `.superpowers/plan-d-scoping.md` §2 — `pptx-to-md`, `undoc`, and
 //! `office_oxide`'s PPTX path are all young or low-traction, and a bad pick
 //! risks 1-2 days of mid-implementation rework per scoping §5, risk 1).
-//! XLSX/DOCX have a crate lined up (`calamine`/`docx-rust`, both
-//! `media`-gated) but their derivers are Tasks 4-5, not yet landed on this
-//! branch. PDF's deriver (`pdf-extract`, `media`-gated) landed in Task 3.
-//! Every recognized binary format gets a named refusal rather than falling
-//! through to `TextDeriver` — the whole point of this parser layer is that
-//! a binary file must never be silently read as UTF-8 text.
+//! DOCX has a crate lined up (`docx-rust`, `media`-gated) but its deriver
+//! is Task 5, not yet landed on this branch. PDF's deriver (`pdf-extract`,
+//! `media`-gated) landed in Task 3; XLSX's (`calamine`, `media`-gated)
+//! landed in Task 4. Every recognized binary format gets a named refusal
+//! rather than falling through to `TextDeriver` — the whole point of this
+//! parser layer is that a binary file must never be silently read as
+//! UTF-8 text.
 //!
 //! Two distinct "not available" states, tracked as two separate lists so a
 //! format's state is explicit rather than inferred:
@@ -24,14 +25,14 @@
 //!   enable) — they must never fall through to `TextDeriver` just because
 //!   *this particular build* lacks the feature.
 //!
-//! Carry-forward for Tasks 4, 5: landing a real deriver for `xlsx`/`docx`
-//! MOVES that extension from `UNIMPLEMENTED_FORMATS` to
-//! `MEDIA_GATED_FORMATS` (never delete it outright) at the same time as
-//! adding the format's `media_deriver` match arm. Deleting outright reopens
-//! the binary-decoded-as-text hole in a non-`media` build: `media_deriver`
+//! Carry-forward for Task 5: landing a real deriver for `docx` MOVES that
+//! extension from `UNIMPLEMENTED_FORMATS` to `MEDIA_GATED_FORMATS` (never
+//! delete it outright) at the same time as adding the format's
+//! `media_deriver` match arm. Deleting outright reopens the
+//! binary-decoded-as-text hole in a non-`media` build: `media_deriver`
 //! returns `None` when the feature is off, and if the format isn't in
 //! either list any more, `get_deriver` falls all the way through to
-//! `TextDeriver`. Task 3 already did this move for `pdf`.
+//! `TextDeriver`. Tasks 3 and 4 already did this move for `pdf`/`xlsx`.
 //!
 //! HTML is the one deliberate exception: it stays OUT of both lists,
 //! falling back to `TextDeriver` in a non-`media` build. HTML source is
@@ -50,18 +51,20 @@ use super::text::TextDeriver;
 use super::{Deriver, MissingFeatureError, ParseResult, UnsupportedFormatError};
 
 /// Formats with NO Rust deriver at all, in any build. See module docs.
-const UNIMPLEMENTED_FORMATS: &[&str] = &["xlsx", "docx", "pptx"];
+const UNIMPLEMENTED_FORMATS: &[&str] = &["docx", "pptx"];
 
 /// Formats WITH a real deriver, but gated behind the `media` Cargo feature.
-/// `pdf` moved in here in Task 3 (Tasks 4-5 do the same for xlsx/docx as
-/// each deriver lands). See module docs for the move-not-delete rule.
-const MEDIA_GATED_FORMATS: &[&str] = &["pdf"];
+/// `pdf` moved in here in Task 3, `xlsx` in Task 4 (Task 5 does the same
+/// for docx as its deriver lands). See module docs for the
+/// move-not-delete rule.
+const MEDIA_GATED_FORMATS: &[&str] = &["pdf", "xlsx"];
 
 #[cfg(feature = "media")]
 fn media_deriver(ext: &str) -> Option<Box<dyn Deriver>> {
     match ext {
         "html" | "htm" => Some(Box::new(super::html::HtmlDeriver)),
         "pdf" => Some(Box::new(super::pdf::PdfDeriver)),
+        "xlsx" => Some(Box::new(super::xlsx::XlsxDeriver)),
         _ => None,
     }
 }
