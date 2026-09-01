@@ -85,26 +85,7 @@ impl Deriver for ImageMetaDeriver {
         let fmt_name = pillow_style_format_name(fmt)?;
         let (mode, has_alpha) = pillow_mode_and_alpha(path, fmt, decoded_color);
 
-        let mut words = vec![humanise(
-            path.file_stem().and_then(|s| s.to_str()).unwrap_or(""),
-        )];
-        if self.path_segments {
-            if let Some(parent) = path.parent() {
-                let segs: Vec<&str> = parent
-                    .components()
-                    .filter_map(|c| c.as_os_str().to_str())
-                    .collect();
-                let start = segs.len().saturating_sub(self.segment_depth);
-                for s in &segs[start..] {
-                    words.push(humanise(s));
-                }
-            }
-        }
-        let mut text = words
-            .into_iter()
-            .filter(|w| !w.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let mut text = self.path_text(path);
         if text.trim().is_empty() {
             text = format!("{} image", fmt_name.to_lowercase());
         }
@@ -142,6 +123,43 @@ impl Deriver for ImageMetaDeriver {
     }
 }
 
+impl ImageMetaDeriver {
+    /// The path-derived prefix of this deriver's output text.
+    ///
+    /// The single place path -> text material is computed. `derive()`
+    /// builds its output from it and `cache_key_extra()` returns it
+    /// verbatim, so the two can never drift into disagreeing about which
+    /// path material was consumed — a second, key-only re-derivation of
+    /// the same logic is exactly the duplication class that has already
+    /// produced defects on this branch.
+    ///
+    /// May be empty (a stem of all separators humanises to nothing);
+    /// `derive()` owns the non-empty fallback, which depends on the image
+    /// format rather than the path and so is not key material.
+    pub fn path_text(&self, path: &Path) -> String {
+        let mut words = vec![humanise(
+            path.file_stem().and_then(|s| s.to_str()).unwrap_or(""),
+        )];
+        if self.path_segments {
+            if let Some(parent) = path.parent() {
+                let segs: Vec<&str> = parent
+                    .components()
+                    .filter_map(|c| c.as_os_str().to_str())
+                    .collect();
+                let start = segs.len().saturating_sub(self.segment_depth);
+                for s in &segs[start..] {
+                    words.push(humanise(s));
+                }
+            }
+        }
+        words
+            .into_iter()
+            .filter(|w| !w.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 impl CacheableDeriver for ImageMetaDeriver {
     fn cache_key_parts(&self) -> (String, String, String, Value) {
         (
@@ -150,6 +168,21 @@ impl CacheableDeriver for ImageMetaDeriver {
             "1".to_string(),
             json!({"path_segments": self.path_segments, "segment_depth": self.segment_depth}),
         )
+    }
+
+    /// This deriver is NOT a pure function of its bytes.
+    ///
+    /// Its output text comes from the filename (always) and the parent
+    /// segments (only when `path_segments` is on), so byte-identical
+    /// images with different names must not share a cache entry. Returning
+    /// `path_text` — the exact material consumed under the CURRENT config,
+    /// not the path unconditionally — keeps the key as narrow as
+    /// correctness allows: with `path_segments` off the parent directory
+    /// is correctly absent from the key, and a rename that leaves the
+    /// humanised text unchanged (`a-b.png` -> `a_b.png`) still hits,
+    /// because the derived text is genuinely identical.
+    fn cache_key_extra(&self, path: &Path) -> Option<String> {
+        Some(self.path_text(path))
     }
 }
 

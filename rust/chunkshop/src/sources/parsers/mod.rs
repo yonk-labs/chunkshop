@@ -96,6 +96,34 @@ pub trait Deriver: Send + Sync {
 /// later task).
 pub trait CacheableDeriver: Deriver {
     fn cache_key_parts(&self) -> (String, String, String, Value);
+
+    /// Per-document material this deriver consumes beyond its bytes.
+    ///
+    /// THE CACHE-SOUNDNESS INVARIANT. A deriver participating in the
+    /// derivation cache must be a pure function of its file's CONTENT plus
+    /// everything it declares in the cache key. The key is
+    /// `H(content_hash, derivation_hash, cache_key_extra)` — the content
+    /// bytes, the (rung, model, version, engine, params) tuple, and
+    /// whatever per-document material the deriver names here. Anything
+    /// else a deriver reads — the filename, the parent directory, the
+    /// mtime, an environment variable — is invisible to the key, so two
+    /// files that agree on the key are served each other's output. That is
+    /// not hypothetical: it shipped as a silent data-corruption bug,
+    /// because `ImageMetaDeriver` derives its output text from the
+    /// filename while the key contained no path at all.
+    ///
+    /// This is the escape hatch, not a licence. A deriver that consumes
+    /// per-document material outside its own bytes returns a string
+    /// capturing exactly that material — and only what it actually
+    /// consumes under its CURRENT config — so it stops colliding. The
+    /// default `None` is the correct answer for any deriver that is a pure
+    /// function of content: it keeps full content-addressed sharing, so
+    /// two copies of the same PDF still derive once, which is the property
+    /// worth preserving. A deriver that wraps another must DELEGATE, or it
+    /// silently drops the inner deriver's contribution.
+    fn cache_key_extra(&self, _path: &Path) -> Option<String> {
+        None
+    }
 }
 
 /// Mirrors Python's `AmbiguousDeriverError` (Task 9 Correction 2). Two

@@ -123,7 +123,14 @@ impl FilesSource {
                 let content_hash = hash_bytes(&bytes);
                 let (rung, model_id, model_version, params) = deriver.cache_key_parts();
                 let d_hash = derivation_hash(&rung, &model_id, &model_version, "rust", &params);
-                let (r, _hit) = cached_derive(self.cache.as_ref(), &content_hash, &d_hash, || {
+                // Third component of the key: whatever per-document
+                // material this deriver consumes beyond its bytes (`None`
+                // for a pure deriver — see `CacheableDeriver`'s
+                // cache-soundness invariant). Without it,
+                // `ImageMetaDeriver` — whose text comes from the FILENAME —
+                // served byte-identical images each other's derived text.
+                let extra = deriver.cache_key_extra(&p);
+                let (r, _hit) = cached_derive(self.cache.as_ref(), &content_hash, &d_hash, extra.as_deref(), || {
                     deriver.derive(&p)
                 })?;
                 (r, Some(content_hash))

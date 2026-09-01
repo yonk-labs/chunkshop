@@ -113,15 +113,38 @@ fn home_or_fallback(home_env: Option<&str>) -> PathBuf {
 /// languages silently keep separate cache directories, which defeats the
 /// entire reason `engine` was folded into `derivation_hash` (Task 6) — so
 /// both languages can safely share one `--cache-dir`.
-pub fn relative_key_path(content_hash: &str, derivation_hash: &str) -> String {
+pub fn relative_key_path(
+    content_hash: &str,
+    derivation_hash: &str,
+    extra: Option<&str>,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content_hash.as_bytes());
     hasher.update(b"\0");
     hasher.update(derivation_hash.as_bytes());
+    // `extra` is always folded in — as the empty string when a deriver
+    // contributes nothing — so there is exactly ONE key formula rather than
+    // a two-shape scheme where a pure deriver and a deriver whose extra
+    // happens to be "" could land on different paths.
+    hasher.update(b"\0");
+    hasher.update(extra.unwrap_or("").as_bytes());
     let key = format!("{:x}", hasher.finalize());
     format!("{}/{}.json", &key[..2], key)
 }
 
+/// Memoises derivations on (content_hash, derivation_hash, extra).
+///
+/// `extra` is the deriver's own per-document cache-key contribution
+/// (`CacheableDeriver::cache_key_extra`), and it exists because
+/// content-addressing alone is only sound for a deriver that is a PURE
+/// function of (bytes, params). `ImageMetaDeriver` is not: it derives its
+/// output text from the filename and path segments, so two byte-identical
+/// images with different names must NOT share an entry. Rather than fold
+/// the path into every key — which would defeat content-addressing for the
+/// derivers that genuinely are pure, e.g. two copies of the same PDF that
+/// should derive once — each deriver declares what per-document material it
+/// actually consumes. Pure derivers contribute `None` and keep the exact
+/// sharing behaviour they had before.
 pub struct DerivationCache {
     root: PathBuf,
 }
@@ -133,12 +156,23 @@ impl DerivationCache {
         }
     }
 
-    fn path_for(&self, content_hash: &str, derivation_hash: &str) -> PathBuf {
-        self.root.join(relative_key_path(content_hash, derivation_hash))
+    fn path_for(
+        &self,
+        content_hash: &str,
+        derivation_hash: &str,
+        extra: Option<&str>,
+    ) -> PathBuf {
+        self.root
+            .join(relative_key_path(content_hash, derivation_hash, extra))
     }
 
-    pub fn get(&self, content_hash: &str, derivation_hash: &str) -> Option<ParseResult> {
-        let path = self.path_for(content_hash, derivation_hash);
+    pub fn get(
+        &self,
+        content_hash: &str,
+        derivation_hash: &str,
+        extra: Option<&str>,
+    ) -> Option<ParseResult> {
+        let path = self.path_for(content_hash, derivation_hash, extra);
         let bytes = std::fs::read(&path).ok()?;
         let payload: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
         // Missing, unreadable, malformed, OR structurally wrong (e.g. valid
@@ -163,8 +197,14 @@ impl DerivationCache {
         Some(ParseResult { text, metadata })
     }
 
-    pub fn put(&self, content_hash: &str, derivation_hash: &str, result: &ParseResult) -> anyhow::Result<()> {
-        let path = self.path_for(content_hash, derivation_hash);
+    pub fn put(
+        &self,
+        content_hash: &str,
+        derivation_hash: &str,
+        result: &ParseResult,
+        extra: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let path = self.path_for(content_hash, derivation_hash, extra);
         let dir = path.parent().expect("path_for always has a parent");
         std::fs::create_dir_all(dir)?;
         let payload = json!({"text": result.text, "metadata": result.metadata});
@@ -232,10 +272,13 @@ fn walkdir_json_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
 }
 
 /// Returns `(result, was_cache_hit)`. A `None` cache disables memoisation.
+/// `extra` is the deriver's `cache_key_extra(path)` contribution; see
+/// `DerivationCache` for why it is per-deriver rather than always the path.
 pub fn cached_derive<F>(
     cache: Option<&DerivationCache>,
     content_hash: &str,
     derivation_hash: &str,
+    extra: Option<&str>,
     compute: F,
 ) -> anyhow::Result<(ParseResult, bool)>
 where
@@ -244,11 +287,11 @@ where
     let Some(cache) = cache else {
         return Ok((compute()?, false));
     };
-    if let Some(hit) = cache.get(content_hash, derivation_hash) {
+    if let Some(hit) = cache.get(content_hash, derivation_hash, extra) {
         return Ok((hit, true));
     }
     let result = compute()?;
-    cache.put(content_hash, derivation_hash, &result)?;
+    cache.put(content_hash, derivation_hash, &result, extra)?;
     Ok((result, false))
 }
 
@@ -276,9 +319,9 @@ mod tests {
     fn miss_then_hit() {
         let tmp = tempfile::tempdir().unwrap();
         let c = cache(&tmp);
-        assert!(c.get("c1", "d1").is_none());
-        c.put("c1", "d1", &ParseResult::new("cat")).unwrap();
-        let got = c.get("c1", "d1").unwrap();
+        assert!(c.get("c1", "d1", None).is_none());
+        c.put("c1", "d1", &ParseResult::new("cat"), None).unwrap();
+        let got = c.get("c1", "d1", None).unwrap();
         assert_eq!(got.text, "cat");
     }
 
@@ -286,16 +329,16 @@ mod tests {
     fn different_derivation_hash_is_a_miss() {
         let tmp = tempfile::tempdir().unwrap();
         let c = cache(&tmp);
-        c.put("c1", "d1", &ParseResult::new("old")).unwrap();
-        assert!(c.get("c1", "d2").is_none());
+        c.put("c1", "d1", &ParseResult::new("old"), None).unwrap();
+        assert!(c.get("c1", "d2", None).is_none());
     }
 
     #[test]
     fn different_content_hash_is_a_miss() {
         let tmp = tempfile::tempdir().unwrap();
         let c = cache(&tmp);
-        c.put("c1", "d1", &ParseResult::new("old")).unwrap();
-        assert!(c.get("c2", "d1").is_none());
+        c.put("c1", "d1", &ParseResult::new("old"), None).unwrap();
+        assert!(c.get("c2", "d1", None).is_none());
     }
 
     #[test]
@@ -307,8 +350,8 @@ mod tests {
             calls.set(calls.get() + 1);
             Ok(ParseResult::new("expensive"))
         };
-        let (r1, hit1) = cached_derive(Some(&c), "c1", "d1", compute).unwrap();
-        let (r2, hit2) = cached_derive(Some(&c), "c1", "d1", compute).unwrap();
+        let (r1, hit1) = cached_derive(Some(&c), "c1", "d1", None, compute).unwrap();
+        let (r2, hit2) = cached_derive(Some(&c), "c1", "d1", None, compute).unwrap();
         assert_eq!(r1.text, "expensive");
         assert_eq!(r2.text, "expensive");
         assert!(!hit1 && hit2);
@@ -319,17 +362,17 @@ mod tests {
     fn purge_empties_the_cache() {
         let tmp = tempfile::tempdir().unwrap();
         let c = cache(&tmp);
-        c.put("c1", "d1", &ParseResult::new("x")).unwrap();
-        c.put("c2", "d1", &ParseResult::new("y")).unwrap();
+        c.put("c1", "d1", &ParseResult::new("x"), None).unwrap();
+        c.put("c2", "d1", &ParseResult::new("y"), None).unwrap();
         assert_eq!(c.purge().unwrap(), 2);
-        assert!(c.get("c1", "d1").is_none());
+        assert!(c.get("c1", "d1", None).is_none());
     }
 
     #[test]
     fn malformed_json_entry_is_a_miss() {
         let tmp = tempfile::tempdir().unwrap();
         let c = cache(&tmp);
-        c.put("c1", "d1", &ParseResult::new("x")).unwrap();
+        c.put("c1", "d1", &ParseResult::new("x"), None).unwrap();
         for entry in std::fs::read_dir(tmp.path()).unwrap() {
             let sub = entry.unwrap().path();
             if sub.is_dir() {
@@ -338,7 +381,7 @@ mod tests {
                 }
             }
         }
-        assert!(c.get("c1", "d1").is_none());
+        assert!(c.get("c1", "d1", None).is_none());
     }
 
     #[test]
@@ -350,7 +393,7 @@ mod tests {
         // panic or silently return garbage.
         let tmp = tempfile::tempdir().unwrap();
         let c = cache(&tmp);
-        c.put("c1", "d1", &ParseResult::new("x")).unwrap();
+        c.put("c1", "d1", &ParseResult::new("x"), None).unwrap();
         for entry in std::fs::read_dir(tmp.path()).unwrap() {
             let sub = entry.unwrap().path();
             if sub.is_dir() {
@@ -360,7 +403,7 @@ mod tests {
             }
         }
         assert!(
-            c.get("c1", "d1").is_none(),
+            c.get("c1", "d1", None).is_none(),
             "a syntactically valid but wrong-shaped JSON payload must be a miss, not a panic"
         );
     }
@@ -372,7 +415,7 @@ mod tests {
         // ends up an `int`); Rust must treat it as a miss.
         let tmp = tempfile::tempdir().unwrap();
         let c = cache(&tmp);
-        c.put("c1", "d1", &ParseResult::new("x")).unwrap();
+        c.put("c1", "d1", &ParseResult::new("x"), None).unwrap();
         for entry in std::fs::read_dir(tmp.path()).unwrap() {
             let sub = entry.unwrap().path();
             if sub.is_dir() {
@@ -382,7 +425,7 @@ mod tests {
             }
         }
         assert!(
-            c.get("c1", "d1").is_none(),
+            c.get("c1", "d1", None).is_none(),
             "a wrong-typed `text` field must be a miss, not an int masquerading as a String"
         );
     }
@@ -391,11 +434,54 @@ mod tests {
     fn relative_key_path_is_pinned() {
         // Literal known-good value so a future refactor of the hashing
         // breaks LOUDLY here instead of silently diverging from Python.
-        // Computed independently via: printf 'c1\x00d1' | sha256sum
+        // Computed independently via: printf 'c1\x00d1\x00' | sha256sum
         assert_eq!(
-            relative_key_path("c1", "d1"),
-            "e7/e738ae3234e369ffe2cd54b3d9c245d7624748053239a33f297973e8f0379b2c.json"
+            relative_key_path("c1", "d1", None),
+            "c0/c025b0ee86847c86d25f74d8016c44c3db6d52378e26b5679ffeda0c9f98090a.json"
         );
+        // A `None` extra and an EMPTY extra are the same key by
+        // construction: there is one formula, not two shapes.
+        assert_eq!(
+            relative_key_path("c1", "d1", None),
+            relative_key_path("c1", "d1", Some(""))
+        );
+        // printf 'c1\x00d1\x00a chart revenue' | sha256sum
+        assert_eq!(
+            relative_key_path("c1", "d1", Some("a chart revenue")),
+            "03/033455ba3ef8e3338f24e29cb3a1a2bd3f2d52aa4543ff7c6d1067d64cc219e1.json"
+        );
+    }
+
+    #[test]
+    fn different_extra_is_a_miss_on_identical_content_and_derivation() {
+        // The whole point of the third key component: same bytes, same
+        // deriver config, different per-document material -> separate
+        // entries, not one poisoned entry serving both documents.
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("a chart revenue"), Some("a chart revenue"))
+            .unwrap();
+        assert!(c.get("c1", "d1", Some("b goblin warrior")).is_none());
+        assert_eq!(
+            c.get("c1", "d1", Some("a chart revenue")).unwrap().text,
+            "a chart revenue"
+        );
+    }
+
+    #[test]
+    fn pure_derivers_still_share_one_entry() {
+        // The property being PRESERVED: with no extra, byte-identical
+        // input under the same derivation still hits. If this ever fails,
+        // the fix has been widened into "path in every key" and
+        // content-addressing is gone.
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        let (_, hit1) =
+            cached_derive(Some(&c), "c1", "d1", None, || Ok(ParseResult::new("body"))).unwrap();
+        let (r2, hit2) =
+            cached_derive(Some(&c), "c1", "d1", None, || Ok(ParseResult::new("body"))).unwrap();
+        assert!(!hit1 && hit2);
+        assert_eq!(r2.text, "body");
     }
 
     #[test]

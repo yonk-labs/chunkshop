@@ -280,9 +280,20 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
+impl ClipTagsDeriver {
+    /// The rung-0 deriver this rung builds on. Constructed in ONE place so
+    /// `derive()` and `cache_key_extra()` can never be reading a different
+    /// `ImageMetaDeriver` config from each other — the text this rung
+    /// inherits and the key material it declares must come from the same
+    /// instance. Mirrors Python's `self._meta`.
+    fn base_deriver(&self) -> ImageMetaDeriver {
+        ImageMetaDeriver::default()
+    }
+}
+
 impl Deriver for ClipTagsDeriver {
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
-        let base = ImageMetaDeriver::default().derive(path)?;
+        let base = self.base_deriver().derive(path)?;
         let scores = self.score_image(path)?;
         Ok(self.build_result(base, &scores))
     }
@@ -300,6 +311,20 @@ impl CacheableDeriver for ClipTagsDeriver {
                 "min_score": self.min_score,
             }),
         )
+    }
+
+    /// Delegated to the wrapped `ImageMetaDeriver`.
+    ///
+    /// `derive()` builds its text as `base.text + tags`, so this rung
+    /// inherits rung 0's path dependence wholesale — and with it rung 0's
+    /// collision. Without delegating, two byte-identical images with
+    /// different names would share one clip_tags entry and the second
+    /// would be served the first's filename text AND the first image's
+    /// CLIP tags. This stays delegation rather than a copy of rung 0's
+    /// path logic so the contribution tracks whatever config
+    /// `base_deriver()` returns, now or later.
+    fn cache_key_extra(&self, path: &Path) -> Option<String> {
+        self.base_deriver().cache_key_extra(path)
     }
 }
 
