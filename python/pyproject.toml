@@ -66,6 +66,13 @@ code = [
     "tree-sitter-c-sharp>=0.23",
     "tree-sitter-ruby>=0.23",
 ]
+# Media ingest. `vision` is deliberately EMPTY: CLIP image+text towers and
+# Pillow arrive with fastembed, which is already a core dependency, so the
+# keyless image path costs zero additional install weight.
+vision = []
+ocr = ["rapidocr>=3.0"]
+audio = ["faster-whisper>=1.1", "av>=13", "soundfile>=0.12"]
+media = ["chunkshop[vision,ocr,audio]"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "onnx>=1.14"]
 
 [project.scripts]
