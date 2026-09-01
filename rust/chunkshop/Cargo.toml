@@ -44,6 +44,16 @@ path = "src/bin/fqn-cli.rs"
 name = "lede_parity"
 required-features = ["lede"]
 
+[[example]]
+# Tag-agreement measurement harness for ClipTagsDeriver (not vector
+# agreement — see clip_tags.rs's module doc for why vision-tower cosine
+# divergence doesn't necessarily change which tags get selected). Prints
+# ranked (tag, score) pairs per fixture image as JSON so they can be diffed
+# against the Python reference (run_python_clip_tags.py, ad hoc, not
+# committed). Needs `media` + `embedder-hub`.
+name = "clip_tags_parity"
+required-features = ["media", "embedder-hub"]
+
 [dependencies]
 # --- Always-on core (small, used by the chunker module) ---
 anyhow = "1"
