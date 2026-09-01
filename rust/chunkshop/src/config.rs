@@ -375,7 +375,19 @@ pub enum SourceConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct InlineSourceConfig {}
 
+/// Mirrors Python `chunkshop.config.FilesSource`. Rust implements only
+/// `glob` / `id_from` / `encoding` — the media-ingest fields `derive`,
+/// `on_empty`, and `cache` (deriver pipeline + empty-derivation policy +
+/// derivation cache) have no Rust implementation, and `incremental` has no
+/// Rust implementation for the `files` source specifically (unlike `s3`,
+/// `pg_table`, and `http`, which do implement `IncrementalSource`).
+/// `deny_unknown_fields` makes Rust refuse a YAML carrying any of these
+/// fields instead of silently dropping them — a Rust user pointing at a
+/// Python-authored media/incremental config gets a clear config-load error
+/// naming the field, rather than a confusing downstream I/O failure (or,
+/// for `incremental`, silent full-resync behavior it never asked for).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FilesSourceConfig {
     pub glob: String,
     #[serde(default = "default_id_from")]
@@ -1726,6 +1738,133 @@ target:
         assert_eq!(t.promote_metadata[0].path, "heading");
         assert_eq!(t.promote_metadata[0].type_, "text");
         assert_eq!(t.promote_metadata[1].column_name(), "entities__org");
+    }
+
+    // --- FilesSourceConfig deny_unknown_fields (media-ingest field parity) --
+
+    #[test]
+    fn valid_files_source_with_glob_id_from_encoding_still_deserializes() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem, encoding: utf-8 }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("valid files source must still load");
+        let SourceConfig::Files(f) = &cfg.source else {
+            panic!("expected Files source");
+        };
+        assert_eq!(f.glob, "x");
+        assert_eq!(f.id_from, "stem");
+        assert_eq!(f.encoding, "utf-8");
+    }
+
+    #[test]
+    fn valid_files_source_with_only_glob_still_deserializes() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x" }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let cfg = load_config(&path).expect("glob-only files source must still load");
+        let SourceConfig::Files(f) = &cfg.source else {
+            panic!("expected Files source");
+        };
+        assert_eq!(f.glob, "x");
+        // Defaults still apply.
+        assert_eq!(f.id_from, "stem");
+        assert_eq!(f.encoding, "utf-8");
+    }
+
+    #[test]
+    fn rejects_files_source_derive_field() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    text:
+      rung: image_meta
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("derive"),
+            "expected error to name the unsupported `derive` field, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_files_source_on_empty_field() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", on_empty: skip }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("on_empty"),
+            "expected error to name the unsupported `on_empty` field, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_files_source_cache_field() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  cache:
+    enabled: false
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("cache"),
+            "expected error to name the unsupported `cache` field, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_files_source_incremental_field() {
+        // Rust does not implement `IncrementalSource` for the `files` source
+        // (only s3/pg_table/http). Before this test, a `files` + `incremental`
+        // YAML silently ran full-resync every time instead of erroring — this
+        // is a deliberate behavior change: refusing beats silently ignoring a
+        // sync policy Rust cannot honor.
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  incremental:
+    cursor_path: "/tmp/cursor.json"
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let path = write_yaml(yaml);
+        let err = format!("{:#}", load_config(&path).unwrap_err());
+        assert!(
+            err.contains("incremental"),
+            "expected error to name the unsupported `incremental` field, got: {err}"
+        );
     }
 
     #[test]
