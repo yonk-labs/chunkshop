@@ -7,7 +7,8 @@
 //! available (see `sources::mod`'s doc comment); only the format-specific
 //! parser submodules under `parsers/` are gated. Following `parsers/mod.rs`'s
 //! established convention, a submodule here is declared only by the task
-//! that creates its file — `cache` (Task 7), `image_meta` (Task 9), and
-//! `clip_tags` (a later task) are not declared yet.
+//! that creates its file — `image_meta` (Task 9) and `clip_tags` (a later
+//! task) are not declared yet.
 
+pub mod cache;
 pub mod provenance;

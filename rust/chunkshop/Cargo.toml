@@ -67,6 +67,14 @@ tracing = "0.1"
 # Cargo.lock via sqlx); `--no-default-features` does newly compile it since
 # sqlx (and its transitive chrono) is excluded there.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Task 7 (DerivationCache): atomic cache-entry writes via
+# `tempfile::Builder::tempfile_in` + `.persist()` (same directory as the
+# final path, so the rename is atomic) — `raw_store/local.rs`'s `put` is a
+# direct `std::fs::write`, NOT atomic, so this deliberately does not reuse
+# that pattern. Promoted here from `[dev-dependencies]` (same version pin);
+# it remains available to test code as an ordinary dependency, so nothing
+# in the existing test suite breaks.
+tempfile = "3"
 
 # --- Bin-only (kept always-on for diff minimality; clap + tracing-subscriber
 # are tiny relative to the heavy deps below) ---
@@ -164,7 +172,6 @@ tree-sitter-rust       = { version = "0.24", optional = true }
 # by `chunkshop::semantic` and `chunkshop::oversize` from inside integration
 # tests.
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
-tempfile = "3"
 # RM-B Task 1: tests/sync_primitives.rs drives the IncrementalSource and
 # PrunableSource futures via futures::executor::block_on (no tokio runtime
 # needed for the smoke path). Declared in dev-deps so the test compiles

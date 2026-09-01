@@ -1,6 +1,7 @@
 //! Cross-language check: does Rust's derivation_hash agree with Python's for
 //! identical inputs? The cache key IS the provenance record, so a divergence
 //! here means the two implementations silently maintain separate caches.
+use chunkshop::sources::derivers::cache::relative_key_path;
 use chunkshop::sources::derivers::provenance::derivation_hash;
 use serde_json::json;
 
@@ -67,5 +68,35 @@ fn main() {
     println!(
         "rust-emoji    {}",
         derivation_hash("clip_tags", "Qdrant/clip-ViT-B-32", "1.2.3", "fastembed-rs", &emoji)
+    );
+
+    // Correction 2: the cache PATH KEY itself
+    // (`sha256(content_hash + "\0" + derivation_hash)`, `key[..2]/key.json`
+    // layout) — the most parity-critical line in Task 7. If this differs
+    // from Python's for identical inputs, the two languages silently
+    // maintain SEPARATE cache directories even when derivation_hash agrees,
+    // which is exactly the scenario `engine` was folded into
+    // derivation_hash (Task 6) to prevent. Companion cases, same order,
+    // same labels (minus the "rust-"/"python-" prefix), live in
+    // `python/scripts/hash_parity_probe.py` so the two outputs diff
+    // line-for-line.
+    println!(
+        "rust-cachekey-simple    {}",
+        relative_key_path("c1", "d1")
+    );
+    println!(
+        "rust-cachekey-empty     {}",
+        relative_key_path("", "")
+    );
+    println!(
+        "rust-cachekey-nonascii  {}",
+        relative_key_path("café", "猫")
+    );
+    println!(
+        "rust-cachekey-shalike   {}",
+        relative_key_path(
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+            "e159c4e35c8cf84439ecaf417477d67316c5607a367f773753ae76c54cdf0d1d"
+        )
     );
 }
