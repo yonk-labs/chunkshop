@@ -48,95 +48,130 @@ clip_text        ~4e-8   PASS (tol 1e-6)
 text_bge_int8    ~5e-7   PASS (tol 1e-6)
 ```
 
-### ⚠️ CLIP **vision** tower does NOT meet bit-level parity — measured 2026-09-01
+### ✅ CLIP **vision** tower — upstream `fastembed-rs` bug, FIXED 2026-09-01
 
-All three models are now checked. The vision tower is the outlier, and it changes what
-SC-12 can honestly claim:
+**Status: fixed in chunkshop.** All three models now meet SC-12. The section below records
+what the bug actually was, because two earlier write-ups in this file got the cause wrong
+and the wrong cause was propagated into SPEC.md and into the parity test's bars.
 
-| model | max abs Δ | verdict at 1e-6 |
+| model | max abs Δ | verdict |
 |---|---|---|
-| `Qdrant/clip-ViT-B-32-text` | 4e-8 | ✅ pass |
-| `Xenova/bge-base-en-v1.5-int8` | 1e-8 | ✅ pass |
-| **`Qdrant/clip-ViT-B-32-vision`** | **6.8e-4** | ❌ **fails by ~700x** |
+| `Qdrant/clip-ViT-B-32-text` | 1.8e-7 | ✅ pass at `1e-6` |
+| `Xenova/bge-base-en-v1.5-int8` | 5e-7 | ✅ pass at `1e-6` |
+| `Qdrant/clip-ViT-B-32-vision` | 9.3e-4 | ✅ pass at `cosine ≥ 0.99998` (does not meet `1e-6`) |
 
-Full-vector comparison on `docs/samples/images/sprite_knight.png`:
+#### The real root cause: `resize_exact` ignores `shortest_edge`'s semantics
 
+`preprocessor_config.json` for the vision tower says `size: {"shortest_edge": 224}` +
+`crop_size: 224x224`. HuggingFace `CLIPImageProcessor` semantics for `shortest_edge`:
+scale so the SHORTEST edge is 224 **preserving aspect ratio**, then center-crop 224x224.
+Python `fastembed` does exactly that (`fastembed/image/transform/functional.py::resize`,
+`new_long = int(size * long / short)`).
+
+`fastembed-rs` 5.13.3 does not:
+
+```rust
+// src/image_embedding/utils.rs:215  — shortest_edge 224 becomes a SQUARE target
+let size = (shortest_edge as u32, shortest_edge as u32);
+// src/image_embedding/utils.rs:51   — applied with a non-aspect-preserving resize
+let image = image.resize_exact(self.size.0, self.size.1, self.resample);
 ```
-COSINE(py, rust) : 0.9999893129
-angle            : 0.265 degrees
-mean |delta|     : 1.6e-4      L2(py-rust) : 4.6e-3
-```
 
-**This is not float rounding** — the text towers agree at 1e-8 on the same runtime. It is
-**verified image preprocessing divergence**, not a hypothesis: `fastembed-rs` 5.13.3's
-`src/image_embedding/utils.rs::load_preprocessor`, in the `"CLIPImageProcessor" =>` match
-arm, hardcodes `FilterType::CatmullRom` for the resize step regardless of what
-`preprocessor_config.json`'s `resample` field specifies, while Python's PIL path respects
-HF's CLIP default (`PILImageResampling.BICUBIC`). Both are bicubic-family filters but
-different implementations (different kernel support width and edge handling) — a
-decode-and-resample library difference, not an inference difference. Confirmed by reading
-the vendored crate source (`~/.cargo/registry/src/*/fastembed-5.13.3/src/image_embedding/utils.rs`).
+`resize_exact` squashes any image to 224x224, which also makes the following center-crop a
+no-op. The two implementations therefore see a **different field of view** — not a different
+resampling of the same view.
 
-**Consequences for the plan — do not paper over these:**
-1. SC-12's bit-level clause **cannot** be stated uniformly. It holds for both text models
-   (`1e-6`); for the vision tower the honest criterion is **cosine ≥ 0.9999**, with the
-   preprocessing divergence documented as a known, measured difference.
-2. chunkshop's standing promise that "vectors from any implementation are interchangeable"
-   is true *in practice* for CLIP vision (0.265 degrees) but **not exactly**. In a dense
-   corpus — e.g. gamelib's 113k assets — candidate pairs separated by less than 0.265
-   degrees would order differently between implementations. Rare, real, and worth one line
-   in the docs rather than a claim that overreaches.
-3. **Resolved by Plan D Task 10 (2026-09-01).** Root cause pinned, not guessed: `fastembed-rs`
-   5.13.3's `load_preprocessor` hardcodes `FilterType::CatmullRom` for the CLIP vision
-   preprocessor's resize step, diverging from Python PIL's `BICUBIC` default. Closing the
-   gap for real would mean bypassing `fastembed-rs`'s built-in `ImageEmbedding::try_new`
-   preprocessing and hand-rolling a bit-exact resize/crop/normalize pipeline into ONNX
-   directly (comparable in size to `embedder.rs`'s `UserDefinedRunner` for the BGE int8
-   text path), plus a patch or fork of `fastembed-rs` itself to fix `load_preprocessor` for
-   everyone — out of scope. Decision: **amend SC-12** for the vision tower specifically
-   (`cosine ≥ 0.9999`) rather than chase bit-parity against an upstream crate's fixed
-   preprocessing choice — the same shape of amendment SPEC.md already carries for the ASR
-   engine divergence (Python CTranslate2 vs Rust whisper-rs/sherpa-onnx). See
-   `spec/chunkshop-media-ingest/SPEC.md`'s SC-12 row for the amended text.
+**It is aspect-ratio-dependent, NOT downscale-dependent.** For a square image
+`resize_exact(224,224)` happens to *be* the aspect-preserving answer, so square images were
+always correct in either direction. Measured through the real ONNX vision tower, same
+`FilterType::CatmullRom` on both sides, only the geometry differing:
+
+| image | source | shape | squash (buggy) | aspect-correct (fixed) |
+|---|---|---|---|---|
+| `sprite_knight.png` | 128x128 | square, upscaled | 0.999989313 (0.265°) | 0.999989313 (0.265°) |
+| `chart_revenue.png` | 320x220 | non-square | 0.973478593 (13.225°) | 0.999991164 (0.241°) |
+| `screenshot_settings.png` | 360x260 | non-square | 0.897173546 (26.211°) | 0.999991266 (0.239°) |
+
+The square fixture is **unchanged** by the fix; the two non-square ones improve ~55x in
+angle. Synthetic crops of `screenshot_settings.png` put the squash at **7.1°** at an aspect
+ratio as mild as **1.04**, so this was never an extreme-shape-only problem.
+
+#### What was NOT the cause: the filter
+
+Two earlier passes recorded the cause as "`load_preprocessor` hardcodes
+`FilterType::CatmullRom`, ignoring `preprocessor_config.json`'s `"resample": 3` = PIL
+`BICUBIC`". **That is wrong.** `CatmullRom` *is* PIL's `BICUBIC` — the same Keys cubic with
+a = −0.5. At matched dimensions the two agree bit-for-bit on 96.6–98.8% of pixels, mean abs
+error 0.013–0.044 out of 255. The hardcoding is a latent robustness issue for a model whose
+config asks for a different filter, but it was never what moved these vectors.
+**Do not change the filter.**
+
+The second earlier pass then read the same three numbers as "upscale is fine, downscale is
+broken". Also wrong — a coincidence of this fixture set, in which the square image is also
+the small one.
+
+#### The fix chunkshop applied
+
+`rust/chunkshop/src/sources/derivers/clip_preprocess.rs` does CLIP's geometry itself —
+RGB conversion, aspect-preserving resize to a 224 shortest edge (with Python's `int()`
+**truncation**, not rounding), 224x224 center crop — and `ClipTagsDeriver::score_image`
+hands the already-224x224 image to `ImageEmbedding::embed_images` instead of handing a path
+to `ImageEmbedding::embed`. `fastembed-rs`'s own resize and crop then run on a 224x224
+input, where both are provable identities: `image` 0.25.10's `imageops::resize`
+short-circuits to a buffer copy when the target dimensions equal the source dimensions
+(`src/imageops/sample.rs:985`), so the resampler never runs a second time. Everything after
+geometry (`PILToNDarray`, `Rescale`, `Normalize`) is left to `fastembed-rs`, which already
+matched Python componentwise.
+
+Truncation is load-bearing: the sibling tool `ross` rounds the long edge instead
+(326 vs 325 on `chart_revenue.png`), and that one pixel costs **4.06°**.
+
+#### What remains, and why it is a floor
+
+6.8e-4–9.3e-4 max abs per component, 0.24–0.27°. Cause: **sub-LSB rounding inside PIL's
+fixed-point 8-bit resampler** versus `image`'s f32 one. Not a filter difference and not an
+inference difference (the text towers agree at 1.8e-7 on the same runtime). Closing it would
+mean reimplementing Pillow's integer kernel — not worth it. SC-12's vision clause is
+therefore `cosine ≥ 0.99998`, **uniformly for every image**, which sits 1.37x above that
+floor.
+
+Consequence for the "vectors from any implementation are interchangeable" promise: for CLIP
+vision it is true to within 0.27°, in both languages, for any image shape. Candidate pairs
+separated by less than that could still order differently between implementations — rare,
+real, and worth one line in the docs rather than a claim that overreaches. (The pre-fix
+13–26° version of this caveat is retracted; it was measuring the bug, not the floor.)
+
+#### ⚠️ Upstream: this is a `fastembed-rs` bug worth reporting
+
+`resize_exact` at `utils.rs:51` combined with the square target built at `:215` mis-implements
+`CLIPImageProcessor`'s `shortest_edge` for **every** `fastembed-rs` user embedding a
+non-square image with any CLIP-family model — they are silently getting a different field of
+view from the Python reference implementation and from every HF-based pipeline. Worth an
+upstream issue/PR. Noted here only; **nothing has been filed.**
+
+#### ⚠️ Incidental finding: int8 vision models amplify sub-LSB pixel noise ~300x
+
+Measured during the same investigation, and it matters for future rungs: through an **int8**
+vision model, byte-identical input tensors still diverged by **6.89°**. Quantization
+amplifies sub-LSB pixel differences by roughly **300x** relative to the fp32 tower's 0.24°.
+Any parity tolerance for a quantized vision tower — ColPali, an int8 CLIP, a quantized
+late-interaction arm — must budget for that **separately from preprocessing**. A tolerance
+derived from the fp32 CLIP numbers above will not transfer.
+
+#### Regression coverage
+
+`rust/chunkshop/tests/clip_embedding_parity.rs` applies ONE bar (`cosine ≥ 0.99998`,
+max abs ≤ 2e-3) to all three fixtures — the earlier per-image floors (0.9734, 0.8971) are
+gone; they encoded the bug. The test drives the shipped `open_for_clip` path, not a
+test-only reimplementation, and its failure modes were injected and measured rather than
+reasoned about: reverting to `embed(path)` → 13.23°, `.round()` instead of truncation →
+4.06°, a one-pixel crop offset → 4.04°, `Triangle` → 5.86°, `Lanczos3` → 5.37°, `Nearest` →
+13.51°. All fail the bar by 11–37x. Fixtures come from
+`tests/parity/generate_clip_full_vectors.py` (Python `fastembed`) into
+`rust/chunkshop/tests/parity-fixtures/clip_{text,vision}_full_reference.bin` and are never
+regenerated from the Rust side.
 
 Probe: `rust/chunkshop/examples/parity_probe.rs` (set `PARITY_FULL=1` to dump full vectors).
-Reference: `tests/parity/embedding-reference.json`, regenerated by the script beside it.
-
-#### ⚠️⚠️ AMENDMENT NEEDED: `cosine ≥ 0.9999` holds only for UPSCALED images — measured 2026-09-01 (Plan D Task 13)
-
-The `0.9999` figure above was measured on exactly one image: `sprite_knight.png`, 128x128,
-which CLIP's 224x224 preprocessing **upscales**. Plan D Task 13's parity test measured two
-more fixtures, both larger than 224 and therefore **downscaled**, and the divergence is
-two orders of magnitude worse:
-
-| image | source size | resize direction | cosine | angle | max abs Δ |
-|---|---|---|---|---|---|
-| `sprite_knight.png` | 128x128 | **up**scale | 0.999989313 | 0.265° | 6.77e-4 |
-| `chart_revenue.png` | 320x220 | **down**scale | 0.973478593 | 13.2° | 4.97e-2 |
-| `screenshot_settings.png` | 360x260 | **down**scale | 0.897173546 | 26.2° | 1.04e-1 |
-
-Same root cause (`load_preprocessor` hardcodes `FilterType::CatmullRom`, ignoring
-`preprocessor_config.json`'s `"resample": 3` = PIL `BICUBIC`); the two kernels agree closely
-when interpolating up and diverge sharply when decimating down.
-
-**What this changes:**
-1. SC-12's vision clause (`cosine ≥ 0.9999`) is **not** generally true. It is true for the
-   one upscaled fixture it was calibrated on. SPEC.md's SC-12 row and consequence #2 above
-   both need amending — this doc records the measurement; the spec change is a separate,
-   deliberate decision, not something Task 13 made on its own.
-2. Consequence #2 above ("true *in practice*… 0.265 degrees… rare, real") **understates the
-   problem by ~100x** for real-world imagery. At 13–26° apart, Python-produced and
-   Rust-produced CLIP vision vectors are not interchangeable in a shared table: nearest-
-   neighbour ordering will differ routinely, not rarely. Any corpus of photographs,
-   screenshots, or renders — i.e. essentially every real image corpus — lands in the
-   downscale regime.
-3. Text towers are unaffected (`clip-ViT-B-32-text` measured 1.8e-7 max abs Δ from Rust in
-   the same run — see below).
-
-Regression coverage: `rust/chunkshop/tests/clip_embedding_parity.rs` pins each of the three
-measurements as its own floor, so a widening gap fails loudly instead of being absorbed by a
-single lenient number. Fixtures generated by `tests/parity/generate_clip_full_vectors.py`
-(Python `fastembed`) into `rust/chunkshop/tests/parity-fixtures/clip_{text,vision}_full_reference.bin`.
 
 #### Re-measured text-tower delta, 2026-09-01 (Plan D Task 13)
 
@@ -179,11 +214,12 @@ Bigger than it looks. Rust has **no parser layer at all** today
 - [x] SC-12 parity tests: bit-level for embedding, contract-level for derivation — `tests/clip_embedding_parity.rs` (Task 13), `tests/media_derivation_parity.rs` (Tasks 9 + 14)
 - [x] *Interim:* `deny_unknown_fields` on `FilesSourceConfig` so Rust fails loudly meanwhile
 
-**M2 closed 2026-09-01 (Plan D Tasks 13 + 14).** ⚠️ The release gate in `DECISIONS.md`
-is NOT automatically clear: Task 13's measurements show SC-12's vision-tower clause
-(`cosine ≥ 0.9999`) is only true for upscaled images — see the amendment-needed section
-above. That is a spec decision, not something the parity tasks could settle on their own.
-Re-evaluate the gate with that finding in hand.
+**M2 closed 2026-09-01 (Plan D Tasks 13 + 14).** The vision-tower blocker Task 13 surfaced
+was **root-caused and fixed** the same day: it was an upstream `fastembed-rs` aspect-ratio
+bug, not a filter difference and not a downscale regime — see the CLIP vision section above.
+chunkshop now preprocesses around it, SC-12's vision clause is a single
+`cosine ≥ 0.99998` that holds for every image shape, and the release gate in `DECISIONS.md`
+is clear on this axis.
 
 **Also surfaced, own follow-up:** Rust implements `IncrementalSource` for s3 /
 pg_table / http but **not files** — a `files` + `incremental:` YAML has been
@@ -323,11 +359,13 @@ Tasks 9/11/12 proceed unchanged with in-process `fastembed-rs`.
    per NN-5 (never a dead end) when they are absent, and must not be reachable
    by a zero-config default path.
 4. **SC-12 scoping caveat.** ross drives `ort` directly, not `fastembed-rs`, and
-   does its own preprocessing. The SC-12 vision-tower amendment above pins its
-   looser `cosine >= 0.9999` bar to `fastembed-rs`'s hardcoded
-   `FilterType::CatmullRom`. That stays correct while the shipped image path is
-   fastembed. If ross ever becomes that path, the cause must be re-measured, not
-   carried over.
+   does its own preprocessing — and it **rounds** the CLIP long edge where
+   Python truncates (326 vs 325 on `chart_revenue.png`, worth 4.06°). So ross
+   does NOT currently produce vectors interchangeable with chunkshop's or
+   Python's. SC-12's `cosine ≥ 0.99998` vision bar is scoped to the shipped
+   fastembed path plus `clip_preprocess`'s geometry. If ross ever becomes that
+   path, its preprocessing must be measured against Python directly — not
+   assumed to inherit this bar.
 5. **Maturity gate.** v0.1.0, 3 commits, no `lib.rs`. Revisit linking-vs-shelling
    only if a library surface appears; until then subprocess is the only option
    and also the one CLAUDE.md's "siblings are user-wired via config" rule wants.

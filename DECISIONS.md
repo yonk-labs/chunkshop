@@ -85,13 +85,20 @@ file to any OpenAI-compatible endpoint. `--no-llm --clap --clip` needs no networ
 - It is *better* on **NN-6** (text-only users pay nothing) — a subprocess
   dependency costs them literally zero compile-time and runtime weight.
 
-**Consequence to watch.** ross drives `ort` directly, **not** `fastembed-rs`, so
-it does its own image preprocessing. Task 10's SC-12 amendment pins the vision
-tower's looser `cosine >= 0.9999` bar specifically to *`fastembed-rs`'s
-hardcoded `FilterType::CatmullRom`*. That amendment stays correct under this
-decision, because the shipped path remains fastembed. If ross ever becomes the
-image path, the amendment's stated cause must be re-derived — ross's
-preprocessing may match PIL, or diverge differently.
+**Consequence to watch.** *(Note corrected 2026-09-01 — the decision above is
+unchanged; only this attached factual note was wrong.)* ross drives `ort`
+directly, **not** `fastembed-rs`, so it does its own image preprocessing.
+Task 10's original framing — a looser `cosine >= 0.9999` bar caused by
+`fastembed-rs`'s hardcoded `FilterType::CatmullRom` — was **misdiagnosed on
+both counts**. `CatmullRom` *is* PIL's `BICUBIC`; the real cause was
+`resize_exact` ignoring `size.shortest_edge`'s aspect-preserving semantics
+(`utils.rs:51`/`:215`), an upstream bug chunkshop now preprocesses around. SC-12's
+vision bar is now `cosine >= 0.99998` uniformly, for every image shape — see
+MEDIA-INGEST-ROADMAP.md. The consequence for THIS decision is sharper than
+before: ross **rounds** the CLIP long edge where Python truncates (326 vs 325 on
+`chart_revenue.png`, worth 4.06°), so ross's vectors are *not* interchangeable
+with chunkshop's today. If ross ever becomes the image path, its preprocessing
+must be measured against Python directly, not assumed to inherit this bar.
 
 **Follow-up (not scheduled).** A `ross` rung-5 deriver, and the audio question
 it raises: chunkshop has no CLAP/audio tagger in any plan, and ross already does.
