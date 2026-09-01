@@ -33,9 +33,19 @@ silently full-resyncing on Rust since v0.8.3.
 
 - [ ] **F4** OCR rung — RapidOCR (ONNX, rides the runtime chunkshop already ships)
 - [ ] **F6** Remote VLM captioning — structured `json_schema` output → `promote_metadata` columns.
-      **Endpoint confirmed working for VISION only** (see the audio finding below): `192.168.1.189:8082`, models
-      `mlx-community/gemma-4-e4b-it-4bit` and `gemma-4-E2B-it-qat-4bit`
-      (2-3s, accurate on a synthetic test image).
+      **Endpoint confirmed working for VISION** (audio is NOT — see below):
+      `192.168.1.189:8082`, models `mlx-community/gemma-4-e4b-it-4bit` and
+      `gemma-4-E2B-it-qat-4bit`, 2-3s per image.
+      Verified 2026-09-01 with a **discrimination control**, not a single sample —
+      four visually distinct images, four correct and different answers:
+
+          blue/white checkerboard -> "a vibrant blue and white checkered pattern"
+          solid red               -> "a solid, vibrant red background with no discernible pattern"
+          6 rainbow stripes       -> "the Pride flag with horizontal stripes of various colors"
+          black diagonal on white -> "a simple black diagonal line on a white background"
+
+      The control matters: the same endpoint's *audio* path passes a naive single-sample
+      test and fails the control (below). Run the control before trusting any new endpoint.
       ⚠️ `lmstudio-community/gemma-4-E4B-it-MLX-4bit` fails to load server-side.
       ⚠️ Reasoning models return `content: None` at default settings — must raise, never
       write an empty caption (see SPEC D4).
