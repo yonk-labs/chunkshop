@@ -171,13 +171,19 @@ Bigger than it looks. Rust has **no parser layer at all** today
 `std::fs::read_to_string`, no extension dispatch), so the SP-3 parser layer
 (pdf/docx/pptx/xlsx/html) must land before any media rung.
 
-- [ ] Rust parser/extension-dispatch layer (the missing SP-3 foundation)
-- [ ] `Deriver` equivalent + `ParseResult` (text + metadata)
-- [ ] `derive` / `on_empty` / `cache` modelled in `FilesSourceConfig`
-- [ ] Provenance + derivation cache (mirror the `(content_hash, derivation_hash)` key)
-- [ ] CLIP via `fastembed-rs` — **`image-models` is already enabled**, `rust/chunkshop/Cargo.toml:76`
-- [ ] SC-12 parity tests: bit-level for embedding, contract-level for derivation
+- [x] Rust parser/extension-dispatch layer (the missing SP-3 foundation) — `rust/chunkshop/src/sources/parsers/{registry,pdf,docx,xlsx,html,text}.rs`
+- [x] `Deriver` equivalent + `ParseResult` (text + metadata) — `sources/parsers/mod.rs`
+- [x] `derive` / `on_empty` / `cache` modelled in `FilesSourceConfig` — `config.rs:442-470`
+- [x] Provenance + derivation cache (mirror the `(content_hash, derivation_hash)` key) — `sources/derivers/{provenance,cache}.rs`
+- [x] CLIP via `fastembed-rs` — `sources/derivers/clip_tags.rs`
+- [x] SC-12 parity tests: bit-level for embedding, contract-level for derivation — `tests/clip_embedding_parity.rs` (Task 13), `tests/media_derivation_parity.rs` (Tasks 9 + 14)
 - [x] *Interim:* `deny_unknown_fields` on `FilesSourceConfig` so Rust fails loudly meanwhile
+
+**M2 closed 2026-09-01 (Plan D Tasks 13 + 14).** ⚠️ The release gate in `DECISIONS.md`
+is NOT automatically clear: Task 13's measurements show SC-12's vision-tower clause
+(`cosine ≥ 0.9999`) is only true for upscaled images — see the amendment-needed section
+above. That is a spec decision, not something the parity tasks could settle on their own.
+Re-evaluate the gate with that finding in hand.
 
 **Also surfaced, own follow-up:** Rust implements `IncrementalSource` for s3 /
 pg_table / http but **not files** — a `files` + `incremental:` YAML has been

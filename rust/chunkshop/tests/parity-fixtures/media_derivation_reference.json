@@ -1,21 +1,57 @@
 {
-  "metadata_keys": [
-    "aspect_ratio",
-    "content_origin",
-    "derived",
-    "derived_rung",
-    "has_alpha",
-    "height",
-    "image_format",
-    "image_mode",
-    "width"
-  ],
-  "derived_keys": [
-    "engine",
-    "model",
-    "model_version",
-    "params_hash",
-    "rung",
-    "ts"
-  ]
+  "_comment": "Golden fixture for rust/chunkshop/tests/media_derivation_parity.rs. KEY SETS ONLY, never values that legitimately differ between implementations: derived.ts is a timestamp, derived.model_version is the host fastembed version (python 0.8.0 vs rust crate 5.13.3), and derived.engine / the derivation hash differ BY DESIGN (engine participates in the hash so both languages can share one cache directory without masquerading as each other). Regenerate with the snippet in Plan D Task 14 Step 1.",
+  "image_fixture": "docs/samples/images/sprite_knight.png",
+  "rung0": {
+    "deriver": "ImageMetaDeriver",
+    "metadata_keys": [
+      "aspect_ratio",
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "has_alpha",
+      "height",
+      "image_format",
+      "image_mode",
+      "width"
+    ],
+    "derived_keys": [
+      "engine",
+      "model",
+      "model_version",
+      "params_hash",
+      "rung",
+      "ts"
+    ]
+  },
+  "rung1": {
+    "deriver": "ClipTagsDeriver",
+    "vocabulary": [
+      "a knight sprite",
+      "a landscape photo",
+      "a chart"
+    ],
+    "top_k": 3,
+    "min_score": 0.2,
+    "metadata_keys": [
+      "aspect_ratio",
+      "clip_scores",
+      "clip_tags",
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "has_alpha",
+      "height",
+      "image_format",
+      "image_mode",
+      "width"
+    ],
+    "derived_keys": [
+      "engine",
+      "model",
+      "model_version",
+      "params_hash",
+      "rung",
+      "ts"
+    ]
+  }
 }
