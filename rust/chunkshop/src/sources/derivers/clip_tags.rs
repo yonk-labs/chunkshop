@@ -513,6 +513,25 @@ mod tests {
         let expected =
             super::super::provenance::derivation_hash(&rung, &model, &version, "rust", &params);
         assert_eq!(recomputed, expected);
+
+        // ...and the PARAMS too. Both lines above feed `cache_key_parts()`'s
+        // own `params` into each side, so `build_result`'s separate literal
+        // never participates in the comparison. `params_hash` read off the
+        // record is the only component that can expose the two literals
+        // drifting apart — the same hole `image_meta.rs`'s
+        // `derivation_hash_matches_what_derive_stamped_including_params`
+        // closes for rung 0.
+        assert_eq!(
+            super::super::provenance::hash_from_parts(
+                md["derived"]["rung"].as_str().unwrap(),
+                md["derived"]["model"].as_str().unwrap(),
+                md["derived"]["model_version"].as_str().unwrap(),
+                md["derived"]["engine"].as_str().unwrap(),
+                md["derived"]["params_hash"].as_str().unwrap(),
+            ),
+            expected,
+            "cache_key_parts() and the params stamped by build_result() have drifted"
+        );
     }
 
     #[test]

@@ -91,13 +91,32 @@ pub fn derivation_hash(
     engine: &str,
     params: &Value,
 ) -> String {
+    hash_from_parts(rung, model_id, model_version, engine, &params_hash(params))
+}
+
+/// The hash assembly itself, taking an ALREADY-COMPUTED `params_hash`.
+///
+/// Split out so a test can rebuild the hash from a stamped provenance record
+/// — which carries `params_hash`, not the params themselves — without
+/// restating the join. That matters because `derivation_hash` and
+/// `stamp_provenance` are called with two SEPARATE params literals at every
+/// deriver's call site; a test that supplies its own third literal cannot see
+/// them drift apart, while one that feeds the recorded `params_hash` back
+/// through here can.
+pub fn hash_from_parts(
+    rung: &str,
+    model_id: &str,
+    model_version: &str,
+    engine: &str,
+    params_hash: &str,
+) -> String {
     let parts = [
         CACHE_SCHEMA_VERSION,
         rung,
         model_id,
         model_version,
         engine,
-        &params_hash(params),
+        params_hash,
     ];
     let mut hasher = Sha256::new();
     hasher.update(parts.join("\0").as_bytes());

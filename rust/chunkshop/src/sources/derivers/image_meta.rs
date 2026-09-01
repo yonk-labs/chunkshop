@@ -1133,4 +1133,97 @@ mod tests {
         );
         assert_eq!(expected_hash, recomputed);
     }
+
+    /// Rebuild the derivation hash entirely from a stamped provenance
+    /// record.
+    fn hash_of_record(md: &serde_json::Map<String, Value>) -> String {
+        let d = &md["derived"];
+        super::super::provenance::hash_from_parts(
+            d["rung"].as_str().unwrap(),
+            d["model"].as_str().unwrap(),
+            d["model_version"].as_str().unwrap(),
+            d["engine"].as_str().unwrap(),
+            d["params_hash"].as_str().unwrap(),
+        )
+    }
+
+    /// The params-drift tripwire.
+    ///
+    /// `ImageMetaDeriver` states its params TWICE — once in
+    /// `cache_key_parts()` (which keys the cache) and once in the
+    /// `stamp_provenance` call inside `derive()` (which records what
+    /// produced the output). They agree today. If someone added a param to
+    /// one and not the other, the cache key would stop tracking a parameter
+    /// that changes the output, and a config change would silently be
+    /// served stale entries. `clip_tags` has had an agreement test since it
+    /// shipped; rung 0 had none.
+    ///
+    /// `cache_key_parts_match_the_stamped_provenance_tuple` above is NOT
+    /// this test: it feeds `cache_key_parts()`'s own `params` into BOTH
+    /// sides of its comparison, so `derive()`'s separate literal never
+    /// participates. The only component that can expose the drift is
+    /// `params_hash`, and it must come from the record.
+    ///
+    /// Non-default configs are included deliberately: a literal that
+    /// hardcoded a default instead of reading `self` would pass at
+    /// `(true, 3)` and fail at the others.
+    #[test]
+    fn derivation_hash_matches_what_derive_stamped_including_params() {
+        for (path_segments, segment_depth) in [(true, 3), (false, 2), (true, 1)] {
+            let d = ImageMetaDeriver {
+                path_segments,
+                segment_depth,
+            };
+            let (rung, model, version, params) = d.cache_key_parts();
+            let key_side =
+                super::super::provenance::derivation_hash(&rung, &model, &version, "rust", &params);
+
+            let md = d.derive(&fixture("png_rgb.png")).unwrap().metadata;
+            assert_eq!(
+                hash_of_record(&md),
+                key_side,
+                "cache_key_parts() and the provenance stamped by derive() disagree at \
+                 (path_segments={path_segments}, segment_depth={segment_depth}) — the two \
+                 params literals in image_meta.rs have drifted, so the cache key no longer \
+                 tracks everything that changes the output"
+            );
+            // The stamp must describe THIS deriver, not a default-constructed
+            // one; without this the assertion above would still pass if both
+            // sides ignored `self` in the same way.
+            assert_eq!(md["derived"]["engine"], json!("rust"));
+            assert_eq!(md["derived"]["rung"], json!("image_meta"));
+        }
+    }
+
+    /// Proof that the tripwire above is not vacuous: a params_hash that does
+    /// NOT come from this deriver's params must make it red. If the
+    /// comparison could not see a changed params_hash, it would be
+    /// decoration.
+    #[test]
+    fn the_params_tripwire_actually_fires_on_drift() {
+        let d = ImageMetaDeriver::default();
+        let (rung, model, version, params) = d.cache_key_parts();
+        let key_side =
+            super::super::provenance::derivation_hash(&rung, &model, &version, "rust", &params);
+
+        let mut md = d.derive(&fixture("png_rgb.png")).unwrap().metadata;
+        assert_eq!(hash_of_record(&md), key_side, "baseline must agree");
+
+        // Exactly the defect being guarded against: `derive()` stamping a
+        // params set `cache_key_parts()` knows nothing about.
+        let drifted = super::super::provenance::derivation_hash(
+            &rung,
+            &model,
+            &version,
+            "rust",
+            &json!({"path_segments": true, "segment_depth": 3, "sneaky_new_param": true}),
+        );
+        assert_ne!(drifted, key_side, "an extra param must change the hash");
+
+        md["derived"]
+            .as_object_mut()
+            .unwrap()
+            .insert("params_hash".to_string(), json!("0000000000000000"));
+        assert_ne!(hash_of_record(&md), key_side);
+    }
 }

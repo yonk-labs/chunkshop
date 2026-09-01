@@ -118,6 +118,25 @@ def test_derivation_hash_matches_what_stamp_provenance_records(images, monkeypat
     )
     assert recomputed == hash_, "derivation_hash() must exactly match what was recorded"
 
+    # ...and the PARAMS too. The assertion above restates the params as a
+    # third literal, so it agrees with whichever side happens to match it and
+    # cannot see `derivation_hash()` and `stamp_provenance()` drift apart.
+    # `params_hash` read off the record is the only component that can. Same
+    # hole `test_deriver_image_meta.py`'s tripwire closes for rung 0.
+    from chunkshop.sources.derivers.provenance import _hash_from_parts
+
+    rec = result.metadata["derived"]
+    assert (
+        _hash_from_parts(
+            rec["rung"],
+            rec["model"],
+            rec["model_version"],
+            rec["engine"],
+            rec["params_hash"],
+        )
+        == hash_
+    ), "derivation_hash() and the params stamped by derive() have drifted"
+
 
 def test_model_version_falls_back_to_unknown_on_lookup_failure(monkeypatch):
     """A broken/absent metadata lookup must degrade, never crash."""
