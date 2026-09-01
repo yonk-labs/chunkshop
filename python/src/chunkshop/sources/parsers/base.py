@@ -1,7 +1,12 @@
-"""Per-extension file parsers. parse(path) returns the extracted text body;
-FilesSource wraps that into a Document. Parsers raise ParserError on a file
-they recognize but cannot read, and a RuntimeError with an install hint when
-their optional library is missing."""
+"""Per-extension file parsers and derivers. FileParser.parse(path) and
+Deriver.derive(path) both extract a file's content; FilesSource wraps the
+result into a Document. A deriver may return a bare str (the legacy
+FileParser contract) or a ParseResult carrying text plus metadata (e.g.
+image dimensions, model provenance) — call_deriver normalises either into a
+ParseResult and prefers .derive() over .parse() when an object implements
+both. Parsers/derivers raise ParserError on a file they recognize but cannot
+read, and a RuntimeError with an install hint when their optional library is
+missing."""
 
 from __future__ import annotations
 

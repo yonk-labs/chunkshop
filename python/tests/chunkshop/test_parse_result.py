@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from chunkshop.sources.parsers.base import call_deriver
 from chunkshop.sources.parsers.result import ParseResult, normalize_parse_result
 
 
@@ -31,9 +32,6 @@ def test_normalize_passes_through_a_parse_result():
 def test_normalize_rejects_other_types():
     with pytest.raises(TypeError, match="str or ParseResult"):
         normalize_parse_result(42)
-
-
-from chunkshop.sources.parsers.base import Deriver, call_deriver
 
 
 def test_legacy_parse_only_object_still_works(tmp_path):
@@ -72,3 +70,24 @@ def test_object_with_neither_method_is_rejected(tmp_path):
 
     with pytest.raises(TypeError, match="neither"):
         call_deriver(Broken(), tmp_path / "a.weird")
+
+
+def test_derive_is_preferred_over_parse_when_both_exist(tmp_path):
+    """Binding global constraint: call_deriver must prefer .derive() over
+    .parse() when an object implements both. The two methods return clearly
+    distinguishable values so a reversed operand order fails loudly."""
+
+    class Both:
+        supported_extensions = ["weird"]
+
+        def derive(self, path: Path) -> ParseResult:
+            return ParseResult(text="FROM DERIVE", metadata={"via": "derive"})
+
+        def parse(self, path: Path) -> str:
+            return "FROM PARSE"
+
+    p = tmp_path / "a.weird"
+    p.write_text("x", encoding="utf-8")
+    result = call_deriver(Both(), p)
+    assert result.text == "FROM DERIVE"
+    assert result.metadata == {"via": "derive"}
