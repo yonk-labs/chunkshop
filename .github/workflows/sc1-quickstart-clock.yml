@@ -34,24 +34,73 @@ jobs:
         run: |
           start=$(date +%s)
           chunkshop ingest --config docs/samples/images-keyless.yaml
+          # -k 3 (not 1): the corpus only has 3 images, so this is still the
+          # whole result set, but it lets the failure path below print every
+          # hit instead of an undiagnosable single-row red gate.
           chunkshop search --config docs/samples/images-keyless.yaml \
-            --query "pixel art" --k 1 --include-facts --json > result.json
+            --query "pixel art" --k 3 --include-facts --json > result.json
           elapsed=$(( $(date +%s) - start ))
           echo "elapsed: ${elapsed}s (budget 300s, includes model download)"
           test "$elapsed" -lt 300 || { echo "FAIL: SC-1 budget exceeded"; exit 1; }
 
+      # Real measured semantic margin (bge-base-en-v1.5-int8, cosine, query
+      # "pixel art" vs. each image's derived embedded_content — the same
+      # texts and model this gate actually searches over):
+      #   sprite_knight.png:        0.803519  (rank 1 — the expected winner)
+      #   screenshot_settings.png:  0.586941  (rank 2)
+      #   chart_revenue.png:        0.574639  (rank 3)
+      # Margin between rank 1 and rank 2 is ~0.217 cosine — genuine headroom,
+      # not the mechanical ~0.016 RRF rank-contribution spacing (1/(60+rank))
+      # a prior analysis mistook for the margin. Recompute by embedding the
+      # query and each row's `embedded_content` with the cell's configured
+      # embedder and taking cosine similarity, if the fixtures ever change.
+      #
       # "pixel art" appears only in the clip_tags vocabulary above, never in a
-      # filename or path segment — so this only passes if CLIP tagging actually
-      # ran. (A query like "a game sprite" would pass off the filename alone,
-      # via the FTS leg, even if derivation silently produced no tags.)
-      - name: Assert the right image ranked first
+      # filename or path segment — so the rank assertion below only passes if
+      # CLIP tagging actually ran. (A query like "a game sprite" would pass
+      # off the filename alone, via the FTS leg, even if derivation silently
+      # produced no tags.) The clip_tags assertion is leg-independent proof
+      # of the same thing: it proves CLIP chose the right label, which the
+      # rank assertion alone does not.
+      - name: Assert the right image ranked first, with the right CLIP tag
         run: |
           python - <<'EOF'
           import json, sys
           data = json.load(open("result.json"))
           hits = data["chunks"]
-          top = (hits[0]["metadata"].get("source_path", "") if hits else "")
-          if "sprite" not in top:
-              sys.exit(f"FAIL: expected a sprite first, got {top!r}")
-          print("top hit:", top)
+
+          def dump_hits():
+              for i, h in enumerate(hits):
+                  md = h.get("metadata", {})
+                  print(
+                      f"  #{i + 1}: source_path={md.get('source_path')!r} "
+                      f"score={h.get('score')!r} "
+                      f"clip_tags={md.get('clip_tags')!r}"
+                  )
+
+          if not hits:
+              print("FAIL: no hits returned")
+              dump_hits()
+              sys.exit(1)
+
+          top_meta = hits[0].get("metadata", {})
+          top_path = top_meta.get("source_path", "")
+          top_tags = top_meta.get("clip_tags", [])
+          failures = []
+          if "sprite" not in top_path:
+              failures.append(f"expected a sprite first, got source_path={top_path!r}")
+          if "a game sprite or pixel art" not in top_tags:
+              failures.append(
+                  f"expected clip_tags to contain 'a game sprite or pixel art', got {top_tags!r}"
+              )
+
+          if failures:
+              print("FAIL:")
+              for f in failures:
+                  print(f"  - {f}")
+              print("all hits:")
+              dump_hits()
+              sys.exit(1)
+
+          print("top hit:", top_path, "tags:", top_tags)
           EOF

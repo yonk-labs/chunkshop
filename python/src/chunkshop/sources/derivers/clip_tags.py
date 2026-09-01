@@ -48,13 +48,31 @@ class ClipTagsDeriver:
         self._vision = None
         self._label_vectors = None
 
+    @staticmethod
+    def _model_version() -> str:
+        """The installed fastembed version, part of the cache key.
+
+        A fastembed upgrade can change the ONNX weights behind a model id
+        (e.g. `Qdrant/clip-ViT-B-32-vision`) without changing that id, which
+        would otherwise serve stale cached tags indefinitely — exactly the
+        failure the provenance spine exists to prevent. Falls back to
+        "unknown" (never raises) so a lookup failure degrades to "always
+        re-derive" rather than crashing the deriver.
+        """
+        import importlib.metadata
+
+        try:
+            return importlib.metadata.version("fastembed")
+        except importlib.metadata.PackageNotFoundError:
+            return "unknown"
+
     def derivation_hash(self) -> str:
         from chunkshop.sources.derivers.provenance import derivation_hash
 
         return derivation_hash(
             "clip_tags",
             f"{self.vision_model}+{self.text_model}",
-            "1",
+            self._model_version(),
             {"vocabulary": self.vocabulary, "top_k": self.top_k,
              "min_score": self.min_score},
         )
@@ -100,7 +118,7 @@ class ClipTagsDeriver:
             result,
             rung="clip_tags",
             model_id=f"{self.vision_model}+{self.text_model}",
-            model_version="1",
+            model_version=self._model_version(),
             params={
                 "vocabulary": self.vocabulary,
                 "top_k": self.top_k,
