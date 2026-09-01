@@ -35,11 +35,15 @@ jobs:
           start=$(date +%s)
           chunkshop ingest --config docs/samples/images-keyless.yaml
           chunkshop search --config docs/samples/images-keyless.yaml \
-            --query "a game sprite" --k 1 --include-facts --json > result.json
+            --query "pixel art" --k 1 --include-facts --json > result.json
           elapsed=$(( $(date +%s) - start ))
           echo "elapsed: ${elapsed}s (budget 300s, includes model download)"
           test "$elapsed" -lt 300 || { echo "FAIL: SC-1 budget exceeded"; exit 1; }
 
+      # "pixel art" appears only in the clip_tags vocabulary above, never in a
+      # filename or path segment — so this only passes if CLIP tagging actually
+      # ran. (A query like "a game sprite" would pass off the filename alone,
+      # via the FTS leg, even if derivation silently produced no tags.)
       - name: Assert the right image ranked first
         run: |
           python - <<'EOF'

@@ -206,18 +206,25 @@ target:
 <!-- END images-keyless -->
 
 ```bash
-pip install chunkshop[sqlite]    # storage backend only — NO media extra, no key, no GPU
+# Run from a repo clone — the sample images and YAML below ship in the
+# repo, not the published wheel.
+git clone https://github.com/yonk-labs/chunkshop && cd chunkshop
+pip install './python[sqlite]'    # storage backend only — NO media extra, no key, no GPU
 export SQLITE_PATH=/tmp/chunkshop-images.db
 chunkshop ingest --config docs/samples/images-keyless.yaml
 chunkshop search --config docs/samples/images-keyless.yaml \
-  --query "a game sprite" --k 1 --include-facts
+  --query "pixel art" --k 1 --include-facts
 ```
 
 `docs/samples/images/` ships three tiny fixture PNGs (a pixel-art sprite, a
-line chart, and a settings-screen mockup) so the quickstart above is
-runnable as printed. CI (`.github/workflows/sc1-quickstart-clock.yml`) runs
-this exact YAML on a clock every push, on a base install, and asserts the
-sprite ranks first for `"a game sprite"` — so this claim can't quietly rot.
+line chart, and a settings-screen mockup), plus the Pillow script that
+generated them, so the quickstart above is runnable as printed from a repo
+clone. `"pixel art"` appears only in the CLIP vocabulary above, never in a
+filename or path segment — so a correct top hit proves the CLIP tagging
+rung actually ran, not just that a filename happened to match. CI
+(`.github/workflows/sc1-quickstart-clock.yml`) runs this exact YAML on a
+clock every push, on a base install, and asserts the sprite ranks first for
+`"pixel art"` — so this claim can't quietly rot.
 
 `--include-facts` is there because SQLite's `where` builder doesn't yet
 support the fact-row exclusion filter `chunkshop search` applies by default
