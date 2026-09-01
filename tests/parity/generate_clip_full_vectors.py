@@ -54,15 +54,21 @@ TEXTS = [
     "a game sprite or pixel art",          # index 0 — the parity subject
     "quarterly revenue chart, bar graph",  # index 1 — negative control
 ]
-# Image size is load-bearing here, not incidental. `sprite_knight.png` is
-# 128x128, so CLIP's 224x224 preprocessing UPSCALES it; the other two are
-# larger than 224 and get DOWNSCALED. The PIL-vs-fastembed-rs resize-filter
-# divergence behaves very differently in those two directions — see the
-# measurements pinned in `rust/chunkshop/tests/clip_embedding_parity.rs`.
+# Image SHAPE is load-bearing here, not incidental — and it is the aspect
+# ratio that matters, not the scale direction. `sprite_knight.png` is square,
+# the other two are not. `fastembed-rs` 5.13.3 mis-implements CLIP's
+# `size.shortest_edge` (it squashes with `resize_exact` instead of scaling the
+# shortest edge and center-cropping), which is invisible on a square image and
+# worth up to 26 degrees of embedding angle on a non-square one. A vision
+# parity suite of square images only cannot see that bug class at all. See
+# `rust/chunkshop/tests/clip_embedding_parity.rs` for the measurements and the
+# fix. (An earlier version of this comment read the same three numbers as
+# "upscale is fine, downscale is broken" — that was a coincidence of this
+# fixture set, since the square one also happens to be the small one.)
 IMAGE_PATHS = [
-    IMAGES / "sprite_knight.png",       # index 0 — 128x128, upscaled
-    IMAGES / "chart_revenue.png",       # index 1 — 320x220, downscaled; also the negative control
-    IMAGES / "screenshot_settings.png", # index 2 — 360x260, downscaled
+    IMAGES / "sprite_knight.png",       # index 0 — 128x128, SQUARE
+    IMAGES / "chart_revenue.png",       # index 1 — 320x220, non-square; also the negative control
+    IMAGES / "screenshot_settings.png", # index 2 — 360x260, non-square
 ]
 
 # Reuse the cache the Rust side already populated (HF-hub snapshot layout,

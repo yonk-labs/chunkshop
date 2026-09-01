@@ -1,45 +1,58 @@
 //! SC-12 bit-level parity for BOTH CLIP towers, against Python `fastembed`
 //! reference vectors.
 //!
-//! The two towers get DIFFERENT bars, per the SC-12 amendment in
-//! `spec/chunkshop-media-ingest/SPEC.md` (Task 10):
+//! The two towers get DIFFERENT bars, per SC-12 in
+//! `spec/chunkshop-media-ingest/SPEC.md`:
 //!
-//! - **Text tower: tight.** `1e-6` per-component absolute. Text tokenization
-//!   and the text encoder are deterministic across the two ORT builds; the
-//!   measured divergence at implementation time was ~1e-8, so this bar has
-//!   ~100x headroom and is a real regression detector, not a rubber stamp.
-//! - **Vision tower: `cosine >= 0.9999`.** NOT `1e-6` — that would fail, and
-//!   the failure is already understood and accounted for: `fastembed-rs`
-//!   hardcodes a different resize filter than PIL in its image preprocessing
-//!   (see `docs/superpowers/plans/MEDIA-INGEST-ROADMAP.md`). That is a
-//!   PREPROCESSING divergence, not an inference difference.
+//! - **Text tower: `1e-6` per-component absolute.** Text tokenization and the
+//!   text encoder are deterministic across the two ORT builds; the measured
+//!   divergence is ~1.8e-7, so this bar has ~5x headroom and is a real
+//!   regression detector, not a rubber stamp.
+//! - **Vision tower: `cosine >= 0.99998`, uniformly, for every image.** Tighter
+//!   than the `1e-6` per-component bar the text tower meets, but a single bar
+//!   that holds for square AND non-square images alike — no per-image
+//!   exemptions.
 //!
-//! # FINDING (2026-09-01): the vision divergence is image-size dependent
+//! # Why the vision tower does not reach 1e-6 (and what was fixed)
 //!
-//! SC-12's `cosine >= 0.9999` was calibrated on ONE image — `sprite_knight.png`,
-//! 128x128, which CLIP's 224x224 preprocessing UPSCALES. Measured across three
-//! fixtures with this test:
+//! Until 2026-09-01 this test carried three DIFFERENT per-image floors, one
+//! pinned just under each measurement, the worst of them `cosine >= 0.8971`.
+//! Those bars encoded a bug rather than a tolerance.
 //!
-//! | image | source | direction | cosine | angle | max abs delta |
-//! |---|---|---|---|---|---|
-//! | `sprite_knight.png` | 128x128 | upscale | 0.999989313 | 0.265 deg | 6.77e-4 |
-//! | `chart_revenue.png` | 320x220 | downscale | 0.973478593 | 13.2 deg | 4.97e-2 |
-//! | `screenshot_settings.png` | 360x260 | downscale | 0.897173546 | 26.2 deg | 1.04e-1 |
+//! The bug: `fastembed-rs` 5.13.3 mis-implements CLIP's `size.shortest_edge`.
+//! `src/image_embedding/utils.rs:215` turns `{"shortest_edge": 224}` into a
+//! square target `(224, 224)` and `:51` applies it with `resize_exact`, which
+//! does NOT preserve aspect ratio — so a non-square image is squashed and the
+//! following center-crop becomes a no-op. Python scales the SHORTEST edge to
+//! 224 preserving aspect ratio and then crops. Different field of view, not a
+//! different resampling of the same view.
 //!
-//! The amended bar holds ONLY for the upscale case. On downscale — which is
-//! what every real-world image larger than 224px does — the two
-//! implementations disagree by 13-26 degrees. `preprocessor_config.json`
-//! asks for `"resample": 3` (PIL `BICUBIC`); `fastembed-rs` 5.13.3's
-//! `load_preprocessor` ignores that field and hardcodes
-//! `FilterType::CatmullRom`, and the two kernels' downscale behaviour is
-//! where they part company.
+//! chunkshop now does that geometry itself
+//! (`chunkshop::sources::derivers::clip_preprocess`) and hands `fastembed-rs`
+//! an already-224x224 image, on which its own resize and crop are provable
+//! identities. Measured through the real `Qdrant/clip-ViT-B-32-vision` ONNX,
+//! same `FilterType::CatmullRom` on both sides, only the geometry differing:
 //!
-//! Consequence: CLIP **vision** vectors from the Python and Rust
-//! implementations are NOT interchangeable for realistically-sized images.
-//! This is a stronger statement than SPEC.md's SC-12 row and
-//! MEDIA-INGEST-ROADMAP.md currently make; both were written from the
-//! sprite-only measurement. The per-image bars below record what is actually
-//! true rather than repeating one number that only holds for one fixture.
+//! | image | source | squash (old) | aspect-correct (now) |
+//! |---|---|---|---|
+//! | `sprite_knight.png` | 128x128 | 0.999989313 (0.265 deg) | 0.999989313 (0.265 deg) |
+//! | `chart_revenue.png` | 320x220 | 0.973478593 (13.225 deg) | 0.999991164 (0.241 deg) |
+//! | `screenshot_settings.png` | 360x260 | 0.897173546 (26.211 deg) | 0.999991266 (0.239 deg) |
+//!
+//! Note the shape of that table: the bug was **aspect-ratio-dependent, not
+//! downscale-dependent**. The square 128x128 fixture was always fine — for a
+//! square image `resize_exact(224,224)` happens to BE the aspect-preserving
+//! answer — and it is unchanged by the fix. The earlier "upscale is fine,
+//! downscale is broken" reading of these same three numbers was a
+//! coincidence of the fixture set.
+//!
+//! What remains is ~6.8e-4 to ~9.3e-4 max abs per component: sub-LSB rounding
+//! inside PIL's fixed-point 8-bit resampler versus `image`'s f32 one. NOT a
+//! filter difference (`CatmullRom` IS PIL's `BICUBIC` — the same Keys cubic
+//! with a = -0.5; at matched dimensions they agree bit-for-bit on 96.6-98.8%
+//! of pixels) and NOT an inference difference (the text towers agree at 1.8e-7
+//! on the same runtime). Closing it would mean reimplementing Pillow's integer
+//! kernel. **Do not change the filter, and do not loosen the bar.**
 //!
 //! # What makes each of these tests go red
 //!
@@ -47,15 +60,31 @@
 //! generated by the code path it checks: `tests/parity/generate_clip_full_vectors.py`
 //! runs PYTHON's `fastembed`, the tests below run Rust's `fastembed-rs`.
 //!
-//! Concretely, these go red on: a `fastembed`/`ort` bump that changes the
-//! CLIP ONNX weights behind the stock model ids; a change to which tower a
-//! model id resolves to; a tokenizer or normalization change; a change to
-//! image preprocessing (resize filter, crop, mean/std) that widens the
-//! already-known gap; and any edit that swaps the towers or the fixtures.
+//! The vision test's failure modes were not reasoned about — each one was
+//! injected and measured (2026-09-01, worst fixture, against a bar of 0.99998
+//! = 0.362 deg):
 //!
-//! Each test also carries a NEGATIVE CONTROL: each fixture holds two
+//! | injected regression | cosine | angle |
+//! |---|---|---|
+//! | revert to `ImageEmbedding::embed(path)` (the squash) | 0.973479 | 13.23 deg |
+//! | `.round()` instead of truncation in `target_size` (what `ross` does) | 0.997491 | 4.06 deg |
+//! | center-crop offset off by one pixel | 0.997513 | 4.04 deg |
+//! | `FilterType::Triangle` | 0.994776 | 5.86 deg |
+//! | `FilterType::Lanczos3` | 0.995616 | 5.37 deg |
+//! | `FilterType::Nearest` | 0.972329 | 13.51 deg |
+//!
+//! The squash is worth 7.1 deg at an aspect ratio as mild as 1.04 (measured on
+//! synthetic crops of `screenshot_settings.png`), so this is not a bug class
+//! that only shows up on extreme shapes.
+//!
+//! Beyond those: a `fastembed`/`ort`/`image` bump that changes the CLIP ONNX
+//! weights or the resampler behind the stock model ids, and any edit that
+//! swaps the towers or the fixtures. The text test goes red on a tokenizer,
+//! normalization, or weight change.
+//!
+//! Each test also carries a NEGATIVE CONTROL: each fixture holds multiple
 //! vectors, and the test asserts the subject matches its own reference AND
-//! does *not* match the other one. A degenerate comparison (both sides
+//! does *not* match a different one. A degenerate comparison (both sides
 //! reading the same buffer, a tolerance so wide everything passes, a
 //! silently-empty vector) fails the control even when it would sail through
 //! the positive assertion. Without that, "passes" and "cannot fail" look
@@ -71,10 +100,11 @@
 //!
 //! `fixtures_are_wellformed_and_the_negative_control_is_real` is NOT ignored:
 //! it needs no model and guards the fixtures themselves in every CI run.
-#![cfg(feature = "embedder-hub")]
+#![cfg(all(feature = "media", feature = "embedder-hub"))]
 
 use std::path::PathBuf;
 
+use chunkshop::sources::derivers::clip_preprocess::open_for_clip;
 use fastembed::{
     EmbeddingModel, ImageEmbedding, ImageEmbeddingModel, ImageInitOptions, TextEmbedding,
     TextInitOptions,
@@ -87,35 +117,49 @@ const TEXTS: [&str; 2] = [
     "quarterly revenue chart, bar graph",
 ];
 
-/// Per-image parity bars, in the same order as `IMAGE_PATHS` in
-/// `tests/parity/generate_clip_full_vectors.py`.
+/// ONE bar for the vision tower, applied to every fixture — square and
+/// non-square, upscaled and downscaled alike.
 ///
-/// `(file, min_cosine_similarity, max_abs_diff_cap)`.
+/// `MIN_VISION_COSINE` sits ~1.1e-5 below the WORST of the three post-fix
+/// measurements (0.999989313, `sprite_knight.png`). In angle that is a
+/// failure threshold of 0.362 deg against a worst measurement of 0.265 deg —
+/// enough headroom for ORT/platform jitter, and nowhere near enough to
+/// absorb a real regression: the aspect-ratio bug this replaced produced
+/// 13.2 and 26.2 deg (36x and 72x past the bar), and a one-pixel
+/// round-instead-of-truncate slip in the long-edge computation produces
+/// 4.06 deg (~17x past it).
 ///
-/// These are NOT one bar repeated: the vision divergence is strongly
-/// image-dependent, and pretending otherwise is how a parity test ends up
-/// green on the only case it was ever calibrated against. See
-/// `clip_vision_tower_matches_python_within_amended_tolerance` for the
-/// measurements and what they mean.
-const VISION_CASES: [(&str, f64, f32); 3] = [
-    // Upscaled to 224 (128x128 source). This is the case SC-12's amended
-    // `cosine >= 0.9999` was calibrated on, and it holds here.
-    ("sprite_knight.png", 0.9999, 5e-3),
-    // Downscaled to 224 (320x220 source). Measured cosine 0.97347859,
-    // max_abs 4.973968e-2 — three orders of magnitude worse than the
-    // upscaled case. Pinned just below the measurement as a REGRESSION
-    // guard, not as a sanctioned tolerance.
-    ("chart_revenue.png", 0.9734, 5.1e-2),
-    // Downscaled to 224 (360x260 source). Measured cosine 0.89717355,
-    // max_abs 1.039070e-1 — a 26.2 degree angle between the two
-    // implementations' embeddings of the SAME image. Pinned just below the
-    // measurement, same regression-guard role.
-    ("screenshot_settings.png", 0.8971, 1.05e-1),
-];
+/// Deliberately NOT `0.9999`. Every geometry regression in the module-doc
+/// table above is caught by both numbers, so that is not the argument. The argument is that
+/// `0.9999` permits 0.81 deg — 3.1x the residual we can actually explain —
+/// so it would silently absorb a TRIPLING of the resampler floor (an `image`
+/// or Pillow precision change, say) while still reading green. It is also the
+/// number the pre-fix spec carried, calibrated against the bug; keeping it
+/// would record none of the ~55x angle improvement the fix produced on the
+/// two non-square fixtures.
+///
+/// Deliberately NOT `0.999989`, which pins the measurement itself and would
+/// go red on ordinary numerical jitter across ORT builds and platforms.
+const MIN_VISION_COSINE: f64 = 0.99998;
+
+/// Second, independent axis. Cosine on a 512-dim vector is insensitive to a
+/// handful of large per-component errors, so cap those too. Worst post-fix
+/// measurement is 9.277761e-4 (`chart_revenue.png`); this is ~2.2x that.
+const MAX_VISION_ABS_DIFF: f32 = 2e-3;
 
 /// Index 0 is the vision parity subject; index 1 doubles as its negative
-/// control.
-const IMAGE_NAMES: [&str; 3] = [VISION_CASES[0].0, VISION_CASES[1].0, VISION_CASES[2].0];
+/// control. Same order as `IMAGE_PATHS` in
+/// `tests/parity/generate_clip_full_vectors.py`.
+///
+/// The three fixtures span the failure mode deliberately: one square
+/// (128x128, which the old squash path handled correctly by accident) and two
+/// non-square (320x220, 360x260, which it did not). A vision-parity suite of
+/// square images only cannot see this bug class at all.
+const IMAGE_NAMES: [&str; 3] = [
+    "sprite_knight.png",
+    "chart_revenue.png",
+    "screenshot_settings.png",
+];
 
 fn fixtures_dir() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -296,7 +340,7 @@ fn clip_text_tower_matches_python_within_1e6() {
 
 #[test]
 #[ignore = "downloads/loads ~0.3GB of CLIP vision weights; run manually with --ignored"]
-fn clip_vision_tower_matches_python_within_amended_tolerance() {
+fn clip_vision_tower_matches_python_within_1e_minus_5_cosine() {
     pin_threads();
     let (n, dim, expected) = read_reference("clip_vision_full_reference.bin");
     assert_eq!(n, IMAGE_NAMES.len(), "fixture rows must match IMAGE_NAMES");
@@ -310,35 +354,47 @@ fn clip_vision_tower_matches_python_within_amended_tolerance() {
         .with_cache_dir(cache_dir())
         .with_show_download_progress(false);
     let mut model = ImageEmbedding::try_new(opts).expect("load CLIP vision tower");
+
+    // The load-bearing line. `model.embed(paths)` — fastembed-rs's own path —
+    // would squash the aspect ratio (utils.rs:51/:215) and blow the bar on
+    // both non-square fixtures. `open_for_clip` is exactly what
+    // `ClipTagsDeriver::score_image` calls, so this test exercises the
+    // shipped path rather than a test-only reimplementation of it.
+    let imgs = paths
+        .iter()
+        .map(|p| open_for_clip(p).expect("CLIP preprocessing must succeed"))
+        .collect::<Vec<_>>();
     let actual = model
-        .embed(paths.clone(), Some(1))
+        .embed_images(imgs)
         .expect("CLIP vision tower must embed");
     assert_eq!(actual.len(), n);
 
-    for (i, (name, min_cos, max_mad)) in VISION_CASES.iter().enumerate() {
+    for (i, name) in IMAGE_NAMES.iter().enumerate() {
         let exp = row(&expected, dim, i);
         assert_eq!(actual[i].len(), dim, "row {i} dim mismatch");
         let cos = cosine_similarity(&actual[i], exp);
         let mad = max_abs_diff(&actual[i], exp);
-        eprintln!("clip vision[{i}] ({name}): cosine_sim={cos:.12} max_abs_diff={mad:.6e}");
-        // Floor. For sprite_knight this IS the SC-12 amended bar; for the
-        // downscaled images it is a regression pin just under the measured
-        // value. Either way, a widening divergence trips it — the fix is to
-        // find the cause (a changed resize filter, crop, or normalization),
-        // never to move the number.
-        assert!(
-            cos >= *min_cos,
-            "clip vision[{i}] ({name}): cosine similarity {cos} is below its pinned \
-             floor {min_cos}. This is a NEW divergence on top of the already-known \
-             PIL-vs-fastembed-rs preprocessing gap — investigate, do not loosen."
+        let deg = cos.clamp(-1.0, 1.0).acos().to_degrees();
+        eprintln!(
+            "clip vision[{i}] ({name}): cosine_sim={cos:.12} angle={deg:.4}deg max_abs_diff={mad:.6e}"
         );
-        // Second, independent axis: cosine on a 512-dim vector is insensitive
-        // to a handful of large per-component errors, so cap those too.
         assert!(
-            mad <= *max_mad,
-            "clip vision[{i}] ({name}): max abs diff {mad:.6e} exceeds its pinned cap \
-             {max_mad:.6e}. Cosine can still look fine while individual components \
-             drift — that is the preprocessing gap widening."
+            cos >= MIN_VISION_COSINE,
+            "clip vision[{i}] ({name}): cosine similarity {cos} ({deg:.4} deg) is below \
+             the SC-12 vision bar {MIN_VISION_COSINE}. The residual against Python is \
+             supposed to be sub-LSB resampler rounding only (~0.24-0.27 deg). A number \
+             this far out means the GEOMETRY diverged again — check that \
+             `clip_preprocess` still scales the shortest edge to 224 preserving aspect \
+             ratio, truncates (never rounds) the long edge, center-crops, and converts \
+             to RGB before resizing; and that this test still goes through \
+             `embed_images(open_for_clip(..))` rather than `embed(path)`. \
+             Investigate, do not loosen."
+        );
+        assert!(
+            mad <= MAX_VISION_ABS_DIFF,
+            "clip vision[{i}] ({name}): max abs diff {mad:.6e} exceeds \
+             {MAX_VISION_ABS_DIFF:.6e}. Cosine can still look fine while individual \
+             components drift — same investigation as above."
         );
     }
 
@@ -350,7 +406,7 @@ fn clip_vision_tower_matches_python_within_amended_tolerance() {
         control_cos < 0.99,
         "negative control: {} embeds to within cosine {control_cos} of the \
          reference for {} — the comparison cannot tell the two images apart, so \
-         the 0.9999 floor above proves nothing.",
+         the {MIN_VISION_COSINE} floor above proves nothing.",
         IMAGE_NAMES[0],
         IMAGE_NAMES[1]
     );

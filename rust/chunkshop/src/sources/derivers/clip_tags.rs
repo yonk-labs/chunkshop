@@ -27,6 +27,17 @@
 //! derivation at all (NN-3). Same reject-loudly discipline this port applies
 //! to every other Python capability Rust lacks.
 //!
+//! # Image preprocessing is chunkshop's, not `fastembed-rs`'s
+//!
+//! `score_image` below calls `clip_preprocess::open_for_clip` and then
+//! `ImageEmbedding::embed_images`, rather than handing a path to
+//! `ImageEmbedding::embed`. `fastembed-rs` 5.13.3 mis-implements CLIP's
+//! `size.shortest_edge` semantics (`resize_exact` squashes the aspect ratio
+//! instead of scaling the shortest edge and center-cropping), which moved the
+//! vision-tower embedding by up to 26 degrees against Python on non-square
+//! images. The fix and its measurements live in `clip_preprocess`'s module
+//! doc. Do not "simplify" this back to `vision.embed(path)`.
+//!
 //! # Accepted value-level divergences from Python (do not "fix" these)
 //!
 //! - **Tie ordering.** Python uses `np.argsort(scores)[::-1][:top_k]`.
@@ -55,6 +66,7 @@ use fastembed::{
 };
 use serde_json::{json, Value};
 
+use super::clip_preprocess::open_for_clip;
 use super::image_meta::ImageMetaDeriver;
 use super::provenance::stamp_provenance;
 use crate::sources::parsers::{CacheableDeriver, Deriver, ParseResult};
@@ -173,8 +185,16 @@ impl ClipTagsDeriver {
         self.ensure_models(&mut guard)?;
         let models = guard.as_mut().expect("ensure_models populated the slot");
 
-        let path_str = path.to_string_lossy().to_string();
-        let vecs = models.vision.embed(vec![path_str], None)?;
+        // NOT `vision.embed(path)`. `fastembed-rs` 5.13.3's own path applies
+        // `resize_exact(224, 224)`, which squashes a non-square image instead
+        // of scaling its shortest edge to 224 and center-cropping — a
+        // different field of view from Python, worth up to 26 degrees of
+        // embedding angle. `open_for_clip` does CLIP's real geometry here and
+        // hands over an already-224x224 image, on which fastembed's resize and
+        // crop are both provable identities. See `clip_preprocess`'s module
+        // doc for the measurements and for why the FILTER is not the problem.
+        let img = open_for_clip(path)?;
+        let vecs = models.vision.embed_images(vec![img])?;
         let img_vec = l2_normalize(
             vecs.into_iter()
                 .next()

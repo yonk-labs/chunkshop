@@ -15,6 +15,13 @@ pub mod provenance;
 #[cfg(feature = "media")]
 pub mod image_meta;
 
+// Aspect-ratio-preserving CLIP geometry. `media`-gated (it needs `image`) but
+// NOT `embedder-hub`-gated: the resize/crop arithmetic is testable without
+// downloading either CLIP tower, which is the point of splitting it out of
+// `clip_tags`.
+#[cfg(feature = "media")]
+pub mod clip_preprocess;
+
 #[cfg(all(feature = "media", feature = "embedder-hub"))]
 pub mod clip_tags;
 
