@@ -33,7 +33,7 @@ silently full-resyncing on Rust since v0.8.3.
 
 - [ ] **F4** OCR rung — RapidOCR (ONNX, rides the runtime chunkshop already ships)
 - [ ] **F6** Remote VLM captioning — structured `json_schema` output → `promote_metadata` columns.
-      **Endpoint confirmed working:** `192.168.1.189:8082`, models
+      **Endpoint confirmed working for VISION only** (see the audio finding below): `192.168.1.189:8082`, models
       `mlx-community/gemma-4-e4b-it-4bit` and `gemma-4-E2B-it-qat-4bit`
       (2-3s, accurate on a synthetic test image).
       ⚠️ `lmstudio-community/gemma-4-E4B-it-MLX-4bit` fails to load server-side.
@@ -59,10 +59,30 @@ silently full-resyncing on Rust since v0.8.3.
 - [ ] **F7** ASR deriver — faster-whisper (MIT, no torch, no system ffmpeg, native timestamps)
 - [ ] **F8** segmentation before transcription (largely free via faster-whisper's Silero VAD)
 - [ ] Decide `symphonia` (MPL-2.0) vs sherpa-onnx for the Rust audio path
-- [ ] ⚠️ **Audio on `192.168.1.189:8082` is UNCONFIRMED.** No `/v1/audio/transcriptions`
-      endpoint. gemma-4 *does* ingest audio via `input_audio` (prompt_tokens scale with
-      duration: 14 text-only → 24 @0.3s → 91 @3.0s), but probe responses came back
-      `content: None`. Needs a proper session with real speech before relying on it.
+- [ ] ⛔ **`192.168.1.189:8082` CANNOT be used for audio. Tested and disproven 2026-09-01.**
+      There is no `/v1/audio/transcriptions` endpoint, and `gemma-4-e4b-it-4bit` does not
+      usefully hear audio sent via `input_audio`. It *allocates* audio tokens by duration
+      (109 prompt_tokens for any 3.0s clip), but the audio does not inform the answer.
+      Decisive control — three acoustically unrelated 3.0s clips, one prompt:
+
+          silence (all-zero samples)  -> "It is a low-pitched, steady sound."
+          60 Hz steady sine           -> "The sound is low-pitched and steady."
+          2 kHz chirp, pulsing 6/sec  -> "The sound is low-pitched and steady."
+
+      Digital silence and a high-pitched pulsing chirp produce the same description.
+      An earlier probe returning "The sound is of a mosquito" for a warbling tone was a
+      lucky guess, not perception — do not read it as evidence.
+
+      **Why this matters more than a missing feature:** it fails by returning a fluent,
+      confident, *wrong* answer with HTTP 200. An ASR deriver pointed here would fill a
+      knowledge base with hallucinated transcripts of client meetings and never error.
+      This is exactly the failure class NN-3/SC-8 provenance and the D4 `content: None`
+      rule exist to catch — and it defeats both, because the response looks valid.
+
+      **Consequence:** v1.1 audio must use **faster-whisper locally** (already the spec's
+      Tech Stack choice — MIT, no torch, no system ffmpeg, native word/segment timestamps
+      and Silero VAD). Do not substitute a multimodal chat endpoint for ASR without
+      running this same silence-vs-signal control against it first.
 
 ## Deferred minors (from the v1-A execution ledger)
 
