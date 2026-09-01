@@ -132,3 +132,98 @@ jobs:
       - name: Tear down test databases
         if: always()
         run: docker compose -f docker-compose.test.yaml down -v
+
+  rust:
+    name: cargo build + test + clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    # WHY THIS JOB EXISTS (read before trimming it):
+    # Until 2026-09-01 this workflow had ZERO cargo steps. The only `cargo
+    # test` in the repo was in release.yml, tag-triggered, and scoped
+    # `--lib` — which structurally excludes everything under
+    # rust/chunkshop/tests/, i.e. every cross-language parity test. It also
+    # passed no `--features`, and `media` is neither default nor part of
+    # `full`, so the entire Rust media surface was never even COMPILED by
+    # CI on any trigger. The Rust/Python parity claim had never been
+    # machine-checked. That gap is what let a batch of defects reach the
+    # branch, so treat these steps as a correctness gate, not a nicety.
+    #
+    # Databases are deliberately NOT started here. Every DB-backed Rust test
+    # prints a "skipping" line and returns when its DSN env var is unset
+    # (see cross_backend_matrix.rs's module doc — `#[ignore]` is banned
+    # there precisely so the skip is visible). Adding docker-compose here
+    # would widen coverage but also widen the environmental failure surface;
+    # the Python `test` job above already exercises the shared backends.
+    env:
+      # fastembed-rs defaults its model cache to `.fastembed_cache` relative
+      # to the process cwd, which is `rust/` for these steps.
+      # clip_embedding_parity.rs's own helper reads FASTEMBED_CACHE_DIR, so
+      # pointing it at the same directory keeps ONE cache for both paths.
+      FASTEMBED_CACHE_DIR: ${{ github.workspace }}/rust/.fastembed_cache
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          # Same shape as release.yml's cache key, plus Cargo.lock so a
+          # dependency bump busts it.
+          key: ${{ runner.os }}-cargo-ci-${{ hashFiles('rust/**/Cargo.toml', 'rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-ci-
+
+      - name: Cache fastembed ONNX models
+        uses: actions/cache@v5
+        with:
+          path: rust/.fastembed_cache
+          key: fastembed-rs-${{ runner.os }}-${{ hashFiles('rust/chunkshop/src/embedder.rs') }}
+          restore-keys: |
+            fastembed-rs-${{ runner.os }}-
+
+      # The slim-build guarantee: chunkshop-rs must still compile with every
+      # optional feature off. `derivers` is compiled unconditionally (see
+      # sources/mod.rs), so this is the step that catches a deriver reaching
+      # for a feature-gated dep.
+      - name: cargo build --no-default-features (slim-build guarantee)
+        working-directory: rust
+        run: cargo build --workspace --no-default-features --locked
+
+      # Default features == `full`, which does NOT include `media`. This run
+      # is what proves the shipped default configuration still passes,
+      # including the integration tests under rust/chunkshop/tests/ that
+      # release.yml's `--lib` was skipping.
+      - name: cargo test (default features)
+        working-directory: rust
+        run: cargo test --workspace --locked --no-fail-fast
+
+      # `--features` is additive to the default set, so this is `full` +
+      # `media` — the ONLY step in CI that compiles the media derivers,
+      # parser layer, and the SC-12 parity tests at all. The four
+      # `#[ignore]`d live-model tests do NOT run here (they pull ~350 MB of
+      # ONNX weights); they live in rust-media-live-models.yml.
+      - name: cargo test --features media,embedder-hub (the media path)
+        working-directory: rust
+        run: cargo test --workspace --features media,embedder-hub --locked --no-fail-fast
+
+      # Deliberately NOT `-- -D warnings`: the workspace currently carries
+      # ~70 allow-level clippy warnings (mostly `manual_async_fn` in the
+      # backend layer), so a deny-all gate would land red on arrival and
+      # get disabled. Plain `cargo clippy` still FAILS the job on clippy's
+      # deny-by-default lints (the `correctness` group), which is the part
+      # worth gating on today. Tighten to `-D warnings` once the existing
+      # backlog is cleared.
+      - name: cargo clippy (gates on deny-by-default lints)
+        working-directory: rust
+        run: cargo clippy --workspace --all-targets --features media,embedder-hub --locked

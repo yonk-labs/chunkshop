@@ -1,0 +1,90 @@
+name: Rust media — live model tests
+
+# The four `#[ignore]`d Rust tests that download and run REAL CLIP weights
+# (~350 MB of ONNX per tower) live here and nowhere else:
+#
+#   tests/clip_embedding_parity.rs  clip_text_vectors_match_python_reference
+#   tests/clip_embedding_parity.rs  clip_vision_vectors_match_python_reference
+#   tests/media_derivation_parity.rs  (the CLIP-weights derivation test)
+#   src/sources/derivers/clip_tags.rs  (lib unit test, --ignored)
+#
+# They are `#[ignore]`d so they stay out of the per-PR gate — a 350 MB fetch
+# plus CPU inference on every pull request would make the fast gate useless.
+# But `#[ignore]` with nowhere else to run means "never runs", which is how
+# the SC-12 Rust/Python parity claim went unchecked on every trigger. This
+# workflow is the "somewhere else": schedule + manual button.
+#
+# Everything ELSE in the media path — the parser layer, rung-0 image
+# metadata, the provenance/cache spine, and the non-ignored parity tests —
+# is gated per-PR by ci.yml's `rust` job. Only the live-weights tests are
+# deferred here.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 06:00 UTC. Weekly is enough: these tests catch drift in the
+    # upstream model artifacts and in fastembed/ort, not in this repo's
+    # day-to-day diffs (ci.yml's `rust` job covers those).
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  live-models:
+    name: cargo test -- --ignored (real CLIP weights)
+    runs-on: ubuntu-latest
+    # Generous: cold cache means downloading both CLIP towers plus the int8
+    # BGE model, then running CPU inference over the fixtures.
+    timeout-minutes: 90
+
+    env:
+      # clip_embedding_parity.rs's `cache_dir()` reads this; fastembed-rs's
+      # own default is `.fastembed_cache` under the process cwd (`rust/`).
+      # Pointing both at the same path keeps ONE cached copy of the weights.
+      FASTEMBED_CACHE_DIR: ${{ github.workspace }}/rust/.fastembed_cache
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-cargo-live-${{ hashFiles('rust/**/Cargo.toml', 'rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-live-
+            ${{ runner.os }}-cargo-ci-
+
+      - name: Cache CLIP + BGE ONNX weights
+        uses: actions/cache@v5
+        with:
+          path: rust/.fastembed_cache
+          key: fastembed-rs-live-${{ runner.os }}-${{ hashFiles('rust/chunkshop/tests/clip_embedding_parity.rs') }}
+          restore-keys: |
+            fastembed-rs-live-${{ runner.os }}-
+            fastembed-rs-${{ runner.os }}-
+
+      # `-- --ignored` runs ONLY the ignored tests. Every `#[ignore]` in the
+      # workspace is a live-model test (verified 2026-09-01: the DB-backed
+      # tests use a runtime skip-and-return instead, never `#[ignore]`), so
+      # this needs no per-test filter. If someone adds an `#[ignore]` for a
+      # different reason, it starts running here — which is the right
+      # default, since the alternative is a test that runs nowhere.
+      - name: cargo test --features media,embedder-hub -- --ignored
+        working-directory: rust
+        run: |
+          cargo test --workspace --features media,embedder-hub --locked \
+            --no-fail-fast -- --ignored --nocapture
+
+      - name: Report cache size
+        if: always()
+        run: du -sh rust/.fastembed_cache 2>/dev/null || echo "no model cache written"

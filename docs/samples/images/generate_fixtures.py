@@ -1,7 +1,16 @@
-"""Deterministic Pillow-generated fixtures for the SC-1 quickstart CI job.
+"""Deterministic Pillow-generated image fixtures. Writes to TWO directories.
 
-Regenerates sprite_knight.png, chart_revenue.png, and screenshot_settings.png
-in this same directory, which docs/samples/images-keyless.yaml globs over.
+1. The SC-1 quickstart corpus, in this same directory
+   (docs/samples/images/): sprite_knight.png, chart_revenue.png,
+   screenshot_settings.png. docs/samples/images-keyless.yaml globs `*.png`
+   over this directory and .github/workflows/sc1-quickstart-clock.yml asserts
+   the sprite ranks first for "pixel art". Adding ANY image here changes what
+   that gate measures -- see tests/fixtures/images/README.md.
+
+2. The adversarial image_meta fixtures, in tests/fixtures/images/: the
+   swatch_* palette / tRNS / greyscale / RGBA / GIF / JPEG / WebP cases.
+   These are test inputs, not sample content, so they deliberately do NOT
+   live in the quickstart corpus.
 
 Regenerate with (from the repo root):
     cd python && uv run --no-sync python ../docs/samples/images/generate_fixtures.py
@@ -16,7 +25,11 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+# The quickstart sample corpus (this directory).
 OUT = Path(__file__).resolve().parent
+# The adversarial image_meta fixtures. Repo root is three levels up from
+# docs/samples/images/.
+FIXTURES = OUT.parents[2] / "tests" / "fixtures" / "images"
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -279,18 +292,21 @@ def main() -> None:
     make_chart_revenue().save(OUT / "chart_revenue.png", optimize=True)
     make_screenshot_settings().save(OUT / "screenshot_settings.png", optimize=True)
 
-    make_palette_no_alpha().save(OUT / "swatch_palette.png")
-    make_palette_with_trns().save(OUT / "swatch_palette_trns.png")
-    make_grayscale_l().save(OUT / "swatch_grayscale.png")
-    make_rgba().save(OUT / "swatch_rgba.png")
+    FIXTURES.mkdir(parents=True, exist_ok=True)
+    make_palette_no_alpha().save(FIXTURES / "swatch_palette.png")
+    make_palette_with_trns().save(FIXTURES / "swatch_palette_trns.png")
+    make_grayscale_l().save(FIXTURES / "swatch_grayscale.png")
+    make_rgba().save(FIXTURES / "swatch_rgba.png")
     rgb = make_small_rgb()
-    rgb.save(OUT / "swatch_rgb.jpg", quality=90)
-    rgb.save(OUT / "swatch_rgb.webp")
-    rgb.convert("P", palette=Image.ADAPTIVE).save(OUT / "swatch_rgb.gif")
+    rgb.save(FIXTURES / "swatch_rgb.jpg", quality=90)
+    rgb.save(FIXTURES / "swatch_rgb.webp")
+    rgb.convert("P", palette=Image.ADAPTIVE).save(FIXTURES / "swatch_rgb.gif")
 
-    for p in sorted(OUT.iterdir()):
-        if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-            print(p.name, p.stat().st_size, "bytes")
+    for d in (OUT, FIXTURES):
+        print(f"-- {d}")
+        for p in sorted(d.iterdir()):
+            if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                print(" ", p.name, p.stat().st_size, "bytes")
 
 
 if __name__ == "__main__":

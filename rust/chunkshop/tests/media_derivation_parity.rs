@@ -12,7 +12,7 @@
 //! alpha) ARE value-level asserted — those five fields are exact-parity
 //! candidates per Task 9 Correction 1's measurement, and the plain-RGB
 //! fixture is exactly the case where Rust and Python already agree
-//! (`docs/samples/images/swatch_palette*.png` / `swatch_rgb.gif` are the
+//! (`tests/fixtures/images/swatch_palette*.png` / `swatch_rgb.gif` are the
 //! adversarial cases covered by `image_meta.rs`'s own unit tests instead,
 //! since the golden fixture format here only records the key SET, not a
 //! second language's per-fixture values).

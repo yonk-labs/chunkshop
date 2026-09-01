@@ -117,9 +117,22 @@ jobs:
             rust/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('rust/**/Cargo.toml') }}
 
-      - name: Run lib tests
+      # Was `--lib` until 2026-09-01, which structurally excluded EVERY file
+      # under rust/chunkshop/tests/ — i.e. all the cross-language parity
+      # tests — from the one and only cargo gate in the repo. Unit tests
+      # alone are not a release gate.
+      - name: Run tests (default features — lib + integration)
         working-directory: rust
-        run: cargo test --workspace --lib --no-fail-fast --locked
+        run: cargo test --workspace --no-fail-fast --locked
+
+      # Default features are `full`, which does NOT include `media`, so
+      # without this step the release gate never compiles the media derivers
+      # or the SC-12 parity tests. The `#[ignore]`d live-CLIP-weights tests
+      # still do not run here (see rust-media-live-models.yml) — a 350 MB
+      # model fetch on the publish path would be a flaky release blocker.
+      - name: Run tests (media path)
+        working-directory: rust
+        run: cargo test --workspace --features media,embedder-hub --no-fail-fast --locked
 
       - name: Package crate
         working-directory: rust
