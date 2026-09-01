@@ -62,11 +62,19 @@ fn text_file_output_is_unchanged_by_the_parser_layer() {
     assert_eq!(docs[0].id, "a");
 }
 
-// The four cases below are UNCONDITIONAL — no `#[cfg(feature = "media")]` —
-// because the refusal itself is unconditional (see `registry.rs`'s
-// `UNIMPLEMENTED_FORMATS`): a default (non-`media`) build has no deriver for
-// any of these formats either, so it must refuse them too, not silently
-// text-decode them. Coverage must match that guarantee in both build modes.
+// The three cases below (pptx/xlsx/docx) are UNCONDITIONAL — no
+// `#[cfg(feature = "media")]` — because the refusal itself is unconditional
+// (see `registry.rs`'s `UNIMPLEMENTED_FORMATS`): a default (non-`media`)
+// build has no deriver for any of these formats either, so it must refuse
+// them too, not silently text-decode them. Coverage must match that
+// guarantee in both build modes.
+//
+// `pdf` moved to `MEDIA_GATED_FORMATS` in Task 3 (a real deriver exists,
+// gated behind `media`), so its refusal behaviour now differs by build:
+// a non-`media` build still refuses (via `MissingFeatureError`, naming the
+// feature), but a `media` build actually derives text — see
+// `pdf_without_media_feature_refuses_naming_the_feature` and
+// `pdf_with_extractable_text_round_trips` below.
 
 #[test]
 fn pptx_is_refused_not_silently_decoded_as_text() {
@@ -76,9 +84,24 @@ fn pptx_is_refused_not_silently_decoded_as_text() {
     assert_named_refusal("pptx", "deck.pptx");
 }
 
+#[cfg(not(feature = "media"))]
 #[test]
-fn pdf_is_refused_not_silently_decoded_as_text() {
-    assert_named_refusal("pdf", "doc.pdf");
+fn pdf_without_media_feature_refuses_naming_the_feature() {
+    let dir = tempfile::tempdir().unwrap();
+    write_temp(dir.path(), "doc.pdf", NOT_UTF8);
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.pdf", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+    };
+    let src = FilesSource::new(cfg);
+    let err = src.iter_documents().unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("--features media"),
+        "expected the error to name the feature to enable, got: {msg}"
+    );
+    assert!(msg.contains("pdf"), "expected the error to name pdf, got: {msg}");
 }
 
 #[test]
@@ -89,4 +112,30 @@ fn xlsx_is_refused_not_silently_decoded_as_text() {
 #[test]
 fn docx_is_refused_not_silently_decoded_as_text() {
     assert_named_refusal("docx", "letter.docx");
+}
+
+#[cfg(feature = "media")]
+#[test]
+fn pdf_with_extractable_text_round_trips() {
+    // Fixture generated with pypdf (PdfWriter + a hand-built content
+    // stream drawing "Hello PDF" in Helvetica) rather than hand-authored
+    // bytes — see the fixture-generation note in the task report. Round-
+    // trip verified against pypdf's own extract_text() before committing.
+    const MINI_PDF: &[u8] = include_bytes!("fixtures/hello.pdf");
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("hello.pdf");
+    std::fs::write(&p, MINI_PDF).unwrap();
+
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.pdf", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+    };
+    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    assert_eq!(docs.len(), 1);
+    assert!(
+        docs[0].content.contains("Hello PDF"),
+        "got: {:?}",
+        docs[0].content
+    );
 }

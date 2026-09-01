@@ -7,12 +7,12 @@
 //! `.superpowers/plan-d-scoping.md` §2 — `pptx-to-md`, `undoc`, and
 //! `office_oxide`'s PPTX path are all young or low-traction, and a bad pick
 //! risks 1-2 days of mid-implementation rework per scoping §5, risk 1).
-//! PDF/XLSX/DOCX have a crate lined up (`pdf-extract`/`calamine`/
-//! `docx-rust`, all `media`-gated) but their derivers are Tasks 3-5, not yet
-//! landed on this branch. Every recognized binary format gets a named
-//! refusal rather than falling through to `TextDeriver` — the whole point
-//! of this parser layer is that a binary file must never be silently read
-//! as UTF-8 text.
+//! XLSX/DOCX have a crate lined up (`calamine`/`docx-rust`, both
+//! `media`-gated) but their derivers are Tasks 4-5, not yet landed on this
+//! branch. PDF's deriver (`pdf-extract`, `media`-gated) landed in Task 3.
+//! Every recognized binary format gets a named refusal rather than falling
+//! through to `TextDeriver` — the whole point of this parser layer is that
+//! a binary file must never be silently read as UTF-8 text.
 //!
 //! Two distinct "not available" states, tracked as two separate lists so a
 //! format's state is explicit rather than inferred:
@@ -24,14 +24,14 @@
 //!   enable) — they must never fall through to `TextDeriver` just because
 //!   *this particular build* lacks the feature.
 //!
-//! Carry-forward for Tasks 3, 4, 5: landing a real deriver for `pdf`/
-//! `xlsx`/`docx` MOVES that extension from `UNIMPLEMENTED_FORMATS` to
+//! Carry-forward for Tasks 4, 5: landing a real deriver for `xlsx`/`docx`
+//! MOVES that extension from `UNIMPLEMENTED_FORMATS` to
 //! `MEDIA_GATED_FORMATS` (never delete it outright) at the same time as
 //! adding the format's `media_deriver` match arm. Deleting outright reopens
 //! the binary-decoded-as-text hole in a non-`media` build: `media_deriver`
 //! returns `None` when the feature is off, and if the format isn't in
 //! either list any more, `get_deriver` falls all the way through to
-//! `TextDeriver`.
+//! `TextDeriver`. Task 3 already did this move for `pdf`.
 //!
 //! HTML is the one deliberate exception: it stays OUT of both lists,
 //! falling back to `TextDeriver` in a non-`media` build. HTML source is
@@ -50,17 +50,18 @@ use super::text::TextDeriver;
 use super::{Deriver, MissingFeatureError, ParseResult, UnsupportedFormatError};
 
 /// Formats with NO Rust deriver at all, in any build. See module docs.
-const UNIMPLEMENTED_FORMATS: &[&str] = &["pdf", "xlsx", "docx", "pptx"];
+const UNIMPLEMENTED_FORMATS: &[&str] = &["xlsx", "docx", "pptx"];
 
 /// Formats WITH a real deriver, but gated behind the `media` Cargo feature.
-/// Empty today — no format has moved into it yet (Tasks 3-5 do that as
+/// `pdf` moved in here in Task 3 (Tasks 4-5 do the same for xlsx/docx as
 /// each deriver lands). See module docs for the move-not-delete rule.
-const MEDIA_GATED_FORMATS: &[&str] = &[];
+const MEDIA_GATED_FORMATS: &[&str] = &["pdf"];
 
 #[cfg(feature = "media")]
 fn media_deriver(ext: &str) -> Option<Box<dyn Deriver>> {
     match ext {
         "html" | "htm" => Some(Box::new(super::html::HtmlDeriver)),
+        "pdf" => Some(Box::new(super::pdf::PdfDeriver)),
         _ => None,
     }
 }
@@ -140,14 +141,15 @@ mod tests {
 
     #[test]
     fn media_gated_format_without_media_feature_refuses_with_missing_feature_error() {
-        // `MEDIA_GATED_FORMATS` is empty today (see module docs — no format
-        // has moved into it yet), so this exercises `dispatch` directly
-        // with a test-only list. Proves the branch works correctly before
-        // any real format depends on it, rather than leaving it present
-        // but unreached until Task 3 lands and discovers a typo the hard
-        // way.
-        let d = dispatch("pdf", &[], &["pdf"]);
-        let err = d.derive(Path::new("whatever.pdf")).unwrap_err();
+        // Uses a synthetic extension (not "pdf" — Task 3 gave `pdf` a real
+        // `media_deriver` match arm, which would now take precedence over
+        // the test-only override lists passed to `dispatch` here and mask
+        // the branch this test exists to exercise). `pdf`'s own
+        // media-gated-but-disabled behaviour is covered directly by
+        // `pdf_without_media_feature_refuses_naming_the_feature` in
+        // `tests/media_parser_formats.rs`.
+        let d = dispatch("faketype", &[], &["faketype"]);
+        let err = d.derive(Path::new("whatever.faketype")).unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("--features media"),
