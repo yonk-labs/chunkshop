@@ -37,9 +37,27 @@ Agreement to ~1e-7 — float32 rounding, not semantics. The `Pooling::Mean` decl
 no token axis to average and both sides pass it through. Probe:
 `rust/chunkshop/examples/parity_probe.rs`. Reference vectors + generator: `tests/parity/`.
 
-**Consequences:** SC-12 bit-level parity is achievable for the CLIP text tower; use a
-`1e-6` tolerance, not exact equality. Still to check: the CLIP **vision** tower (needs an
-image fixture) and `Xenova/bge-base-en-v1.5-int8`.
+**`Xenova/bge-base-en-v1.5-int8` ALSO VERIFIED** (2026-09-01), through chunkshop's own
+`FastembedEmbedder` rather than raw fastembed — the distinction matters, because this model
+is not a stock fastembed variant on either side. Rust routes it via `user_defined_source`
+to `("Xenova/bge-base-en-v1.5", "onnx/model_quantized.onnx")` on a hand-rolled CLS-pooled
+path (`embedder.rs:92-102`). Max |Δ| over the first 8 components:
+
+```
+clip_text        ~4e-8   PASS (tol 1e-6)
+text_bge_int8    ~5e-7   PASS (tol 1e-6)
+```
+
+**Consequences:** SC-12 bit-level parity is achievable for both text models chunkshop ships;
+use a `1e-6` tolerance, not exact equality. Only the CLIP **vision** tower remains unchecked
+(needs an image fixture — `docs/samples/images/sprite_knight.png` is committed and suitable).
+
+⚠️ **Related caveat found in `embedder.rs:551-561`, NOT a blocker but worth knowing:** the
+semantic chunker's int8 MiniLM boundary model has *no* bit-exact Rust path — it is mapped to
+fastembed-rs's stock `AllMiniLML6V2Q`, a different model, deliberately ("close enough for
+boundary detection"). So Rust already carries one documented parity compromise. It does not
+affect the media path, but SC-12 claims should be worded to cover the models media actually
+uses rather than "all embedders".
 
 ⚠️ **Porting detail the scoping missed:** `Xenova/bge-base-en-v1.5-int8` — chunkshop's own
 default embedder — is **not** in fastembed's stock registry on either side. Python registers
