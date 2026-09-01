@@ -12,6 +12,42 @@ Spec: `spec/chunkshop-media-ingest/SPEC.md`.
 
 ## Plan D — Rust media parity  ⛔ RELEASE BLOCKER
 
+**Scoped 2026-09-01: 13.5-18.5 engineering-days.** Full study (gitignored working
+copy): `.superpowers/plan-d-scoping.md` in the `feat/rust-media-parity` worktree.
+
+### ✅ Top schedule risk RESOLVED before any port code was written
+
+The scoping's #1 risk was "CLIP tokenizer/pooling divergence between Python
+`fastembed` and `fastembed-rs` is unverified — test it early, not last."
+
+**The concern was real and specific.** Python's `CLIPOnnxEmbedding._post_process_onnx_output`
+(`fastembed/text/clip_embedding.py`) does `return output.model_output` — **no pooling**.
+`fastembed-rs` 5.13.3 declares `EmbeddingModel::ClipVitB32 => Some(Pooling::Mean)`
+(`text_embedding/impl.rs:247`). On paper, a divergence.
+
+**Empirically identical.** Same fixture, same model, both L2-normalised, dim 512:
+
+```
+py   first8 = [ 0.02402054, -0.00598646,  0.00069226, -0.04729067, ...]  sum = 1.62794122
+rust first8 = [ 0.02402058, -0.00598644,  0.00069229, -0.04729069, ...]  sum = 1.62794113
+```
+
+Agreement to ~1e-7 — float32 rounding, not semantics. The `Pooling::Mean` declaration is
+**inert**: the Qdrant ONNX export already emits a pooled `[batch, 512]` tensor, so there is
+no token axis to average and both sides pass it through. Probe:
+`rust/chunkshop/examples/parity_probe.rs`. Reference vectors + generator: `tests/parity/`.
+
+**Consequences:** SC-12 bit-level parity is achievable for the CLIP text tower; use a
+`1e-6` tolerance, not exact equality. Still to check: the CLIP **vision** tower (needs an
+image fixture) and `Xenova/bge-base-en-v1.5-int8`.
+
+⚠️ **Porting detail the scoping missed:** `Xenova/bge-base-en-v1.5-int8` — chunkshop's own
+default embedder — is **not** in fastembed's stock registry on either side. Python registers
+it at import (`embedders/_registry.py`); Rust must go through `resolve_model_name` +
+`try_new_from_user_defined` (`embedder.rs`). A parity test using `EmbeddingModel::` directly
+would not exercise chunkshop's actual path.
+
+
 Bigger than it looks. Rust has **no parser layer at all** today
 (`rust/chunkshop/src/sources/files.rs:36` reads every match with
 `std::fs::read_to_string`, no extension dispatch), so the SP-3 parser layer
