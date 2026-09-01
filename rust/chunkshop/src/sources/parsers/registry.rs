@@ -20,12 +20,14 @@ use super::{Deriver, ParseResult, UnsupportedFormatError};
 
 /// Extensions Python parses today with a real Rust crate lined up
 /// (Tasks 3-5). Checked before the "recognized but refused" list.
+///
+/// `pdf` / `xlsx` / `docx` arms are added by the task that creates each
+/// deriver module (Tasks 3-5 respectively) — `mod.rs` only declares `pdf`,
+/// `xlsx`, `docx` once their files exist, so a match arm referencing
+/// `super::pdf::PdfDeriver` etc. before then would not compile.
 #[cfg(feature = "media")]
 fn media_deriver(ext: &str) -> Option<Box<dyn Deriver>> {
     match ext {
-        "pdf" => Some(Box::new(super::pdf::PdfDeriver)),
-        "xlsx" => Some(Box::new(super::xlsx::XlsxDeriver)),
-        "docx" => Some(Box::new(super::docx::DocxDeriver)),
         "html" | "htm" => Some(Box::new(super::html::HtmlDeriver)),
         _ => None,
     }
