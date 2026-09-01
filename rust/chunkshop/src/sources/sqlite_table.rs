@@ -16,7 +16,7 @@ pub struct SqliteTableSource {
 
 impl SqliteTableSource {
     pub fn new(cfg: SqliteTableSourceConfig) -> Self {
-        let backend = SQLiteBackend::new(cfg.dsn_env.clone());
+        let backend = SQLiteBackend::new_with_dsn(cfg.dsn.clone(), cfg.dsn_env.clone());
         Self { cfg, backend }
     }
 

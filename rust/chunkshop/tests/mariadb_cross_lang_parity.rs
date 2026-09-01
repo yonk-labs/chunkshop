@@ -42,6 +42,7 @@ async fn cross_language_top_k_parity() -> anyhow::Result<()> {
     }
 
     let cfg = MariadbTargetConfig {
+        dsn: None,
         dsn_env: DSN_ENV.to_string(),
         database_name: "chunkshop_xlang".to_string(),
         table: "parity".to_string(),

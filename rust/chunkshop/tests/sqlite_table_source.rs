@@ -23,7 +23,8 @@ async fn iter_documents_yields_planted_rows() {
     }
 
     let cfg = SqliteTableSourceConfig {
-        dsn_env: env,
+        dsn: None,
+        dsn_env: Some(env),
         database_name: "ignored".into(),
         table: "docs".into(),
         id_column: "id".into(),
@@ -56,7 +57,8 @@ async fn iter_documents_respects_where_clause() {
         .unwrap();
     }
     let cfg = SqliteTableSourceConfig {
-        dsn_env: env,
+        dsn: None,
+        dsn_env: Some(env),
         database_name: "ignored".into(),
         table: "docs".into(),
         id_column: "id".into(),

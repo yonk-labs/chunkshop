@@ -69,7 +69,8 @@ async fn pg_table_source_emits_three_rows() {
     env::set_var("CHUNKSHOP_TEST_DSN", &dsn);
 
     let cfg = PgTableSourceConfig {
-        dsn_env: "CHUNKSHOP_TEST_DSN".to_string(),
+        dsn: None,
+        dsn_env: Some("CHUNKSHOP_TEST_DSN".to_string()),
         schema_name: schema.to_string(),
         table: table.to_string(),
         id_column: "doc_id".to_string(),
@@ -144,7 +145,8 @@ async fn pg_table_source_respects_where_clause() {
 
     env::set_var("CHUNKSHOP_TEST_DSN", &dsn);
     let cfg = PgTableSourceConfig {
-        dsn_env: "CHUNKSHOP_TEST_DSN".to_string(),
+        dsn: None,
+        dsn_env: Some("CHUNKSHOP_TEST_DSN".to_string()),
         schema_name: schema.to_string(),
         table: table.to_string(),
         id_column: "id".to_string(),

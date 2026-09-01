@@ -36,6 +36,70 @@ const ALLOWED_PROMOTE_TYPES: &[&str] = &[
 /// separate brief.
 const CLICKHOUSE_ENGINE_RE: &str = r"^(MergeTree(\(\))?|ReplacingMergeTree\(\w+\))( ORDER BY .+)?$";
 
+/// Matches `${VAR}` references inside a `dsn` literal. Only the exact
+/// `${NAME}` form is substituted — a bare `$` (common in DSN passwords) is
+/// left untouched. Mirrors Python's `_DSN_VAR` in `config.py`.
+fn dsn_var_re() -> &'static Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap())
+}
+
+/// Resolve the effective connection string for a config carrying `dsn`/
+/// `dsn_env` (direct `dsn` literal — with `${VAR}` interpolation — taking
+/// precedence over the legacy `dsn_env` env-var-name lookup). Mirrors
+/// Python's `_DsnResolvable.resolve_dsn()` in `config.py` exactly, including
+/// its error text, so operators see the same message regardless of which
+/// implementation loaded the config.
+///
+/// This is the ONE place `${VAR}` substitution happens in Rust — every
+/// source/backend that accepts `dsn`/`dsn_env` must call this rather than
+/// re-implementing resolution (the pre-existing `session_staging.rs` helper
+/// this replaces fell back to `dsn_env` whenever the literal contained `${`,
+/// instead of substituting — a parity gap, not intended behavior).
+pub fn resolve_dsn(dsn: Option<&str>, dsn_env: Option<&str>) -> Result<String> {
+    if let Some(d) = dsn {
+        let mut missing: Option<String> = None;
+        let resolved = dsn_var_re().replace_all(d, |caps: &regex::Captures| {
+            let name = &caps[1];
+            match std::env::var(name) {
+                Ok(v) => v,
+                Err(_) => {
+                    if missing.is_none() {
+                        missing = Some(name.to_string());
+                    }
+                    String::new()
+                }
+            }
+        });
+        if let Some(name) = missing {
+            return Err(anyhow!(
+                "dsn references ${{{name}}} but env var '{name}' is not set"
+            ));
+        }
+        return Ok(resolved.into_owned());
+    }
+    match dsn_env {
+        Some(env) => std::env::var(env).with_context(|| format!("DSN env var {env} not set")),
+        None => Err(anyhow!("one of `dsn` or `dsn_env` is required")),
+    }
+}
+
+/// Config-load-time check that at least one of `dsn`/`dsn_env` is set.
+/// Mirrors Python's `_DsnResolvable._require_dsn_or_dsn_env` model validator.
+/// Only needed on structs where `dsn_env` has no config-level default (the
+/// four `*TableSourceConfig`s and `SqliteTargetConfig` here) — the three
+/// other target configs default `dsn_env` to `"CHUNKSHOP_DSN"`, so one of the
+/// two is always present there without an explicit check.
+fn require_dsn_or_dsn_env(dsn: &Option<String>, dsn_env: &Option<String>, field: &str) -> Result<()> {
+    if dsn.is_none() && dsn_env.is_none() {
+        return Err(anyhow!(
+            "{field}: one of `dsn` or `dsn_env` is required"
+        ));
+    }
+    Ok(())
+}
+
 /// One promoted jsonb path → typed Postgres column. Mirrors Python's
 /// `chunkshop.config.PromoteColumn`. The `path` is dot-separated; each segment
 /// must match `^[A-Za-z_][A-Za-z0-9_]*$`. The `type_` must be in
@@ -411,7 +475,12 @@ pub struct JsonCorpusSourceConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PgTableSourceConfig {
-    pub dsn_env: String,
+    /// Direct DSN (literal or `${VAR}` interpolated). Takes precedence over
+    /// `dsn_env` when both are set. Mirrors Python's `_DsnResolvable.dsn`.
+    #[serde(default)]
+    pub dsn: Option<String>,
+    #[serde(default)]
+    pub dsn_env: Option<String>,
     #[serde(rename = "schema")]
     pub schema_name: String,
     pub table: String,
@@ -441,7 +510,12 @@ pub struct PgTableSourceConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MariadbTableSourceConfig {
-    pub dsn_env: String,
+    /// Direct DSN (literal or `${VAR}` interpolated). Takes precedence over
+    /// `dsn_env` when both are set. Mirrors Python's `_DsnResolvable.dsn`.
+    #[serde(default)]
+    pub dsn: Option<String>,
+    #[serde(default)]
+    pub dsn_env: Option<String>,
     #[serde(rename = "database")]
     pub database_name: String,
     pub table: String,
@@ -462,7 +536,12 @@ pub struct MariadbTableSourceConfig {
 /// with Postgres) but ignored at runtime — SQLite has no schema namespace.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SqliteTableSourceConfig {
-    pub dsn_env: String,
+    /// Direct DSN (literal or `${VAR}` interpolated). Takes precedence over
+    /// `dsn_env` when both are set. Mirrors Python's `_DsnResolvable.dsn`.
+    #[serde(default)]
+    pub dsn: Option<String>,
+    #[serde(default)]
+    pub dsn_env: Option<String>,
     #[serde(rename = "database")]
     pub database_name: String,
     pub table: String,
@@ -481,7 +560,12 @@ pub struct SqliteTableSourceConfig {
 /// ClickHouse source. Mirrors `python/src/chunkshop/sources/clickhouse_table.py`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClickhouseTableSourceConfig {
-    pub dsn_env: String,
+    /// Direct DSN (literal or `${VAR}` interpolated). Takes precedence over
+    /// `dsn_env` when both are set. Mirrors Python's `_DsnResolvable.dsn`.
+    #[serde(default)]
+    pub dsn: Option<String>,
+    #[serde(default)]
+    pub dsn_env: Option<String>,
     #[serde(rename = "database")]
     pub database_name: String,
     pub table: String,
@@ -1169,6 +1253,11 @@ fn validate_no_document_store(documents: &Option<DocumentStoreConfig>) -> Result
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PostgresTargetConfig {
+    /// Direct DSN (literal or `${VAR}` interpolated). Takes precedence over
+    /// `dsn_env` when both are set. Mirrors Python's `_DsnResolvable.dsn`
+    /// (Python models all four target backends as one `TargetConfig`).
+    #[serde(default)]
+    pub dsn: Option<String>,
     #[serde(default = "default_dsn_env")]
     pub dsn_env: String,
     #[serde(rename = "database")]
@@ -1239,6 +1328,11 @@ impl PostgresTargetConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MariadbTargetConfig {
+    /// Direct DSN (literal or `${VAR}` interpolated). Takes precedence over
+    /// `dsn_env` when both are set. Mirrors Python's `_DsnResolvable.dsn`
+    /// (Python models all four target backends as one `TargetConfig`).
+    #[serde(default)]
+    pub dsn: Option<String>,
     #[serde(default = "default_dsn_env")]
     pub dsn_env: String,
     #[serde(rename = "database")]
@@ -1278,6 +1372,11 @@ impl MariadbTargetConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClickhouseTargetConfig {
+    /// Direct DSN (literal or `${VAR}` interpolated). Takes precedence over
+    /// `dsn_env` when both are set. Mirrors Python's `_DsnResolvable.dsn`
+    /// (Python models all four target backends as one `TargetConfig`).
+    #[serde(default)]
+    pub dsn: Option<String>,
     #[serde(default = "default_dsn_env")]
     pub dsn_env: String,
     #[serde(rename = "database")]
@@ -1339,8 +1438,16 @@ impl ClickhouseTargetConfig {
 /// the sink emits a one-time process-level warning when set.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SqliteTargetConfig {
+    /// Direct DSN (literal or `${VAR}` interpolated) — path to the SQLite
+    /// file (or `:memory:`), or a `${VAR}` reference to one. Takes
+    /// precedence over `dsn_env` when both are set. Mirrors Python's
+    /// `_DsnResolvable.dsn` (Python models all four target backends as one
+    /// `TargetConfig`). One of `dsn` / `dsn_env` is required.
+    #[serde(default)]
+    pub dsn: Option<String>,
     /// Env var holding the path to the SQLite file (or `:memory:`).
-    pub dsn_env: String,
+    #[serde(default)]
+    pub dsn_env: Option<String>,
     #[serde(rename = "database")]
     pub database_name: String,
     pub table: String,
@@ -1367,6 +1474,7 @@ pub struct SqliteTargetConfig {
 
 impl SqliteTargetConfig {
     pub(crate) fn validate(&self) -> Result<()> {
+        require_dsn_or_dsn_env(&self.dsn, &self.dsn_env, "target")?;
         if self.mode == "append" && self.source_tag.is_none() {
             return Err(anyhow!(
                 "target.mode='append' requires target.source_tag to identify this cell"
@@ -1500,6 +1608,7 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
         }
     }
     if let SourceConfig::PgTable(p) = &cfg.source {
+        require_dsn_or_dsn_env(&p.dsn, &p.dsn_env, "source")?;
         validate_ident(&p.schema_name, "source.schema")?;
         validate_ident(&p.table, "source.table")?;
         validate_ident(&p.id_column, "source.id_column")?;
@@ -1510,6 +1619,7 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
         // `where_clause` is intentionally NOT validated — see PgTableSourceConfig docstring.
     }
     if let SourceConfig::MariadbTable(p) = &cfg.source {
+        require_dsn_or_dsn_env(&p.dsn, &p.dsn_env, "source")?;
         validate_ident(&p.database_name, "source.database")?;
         validate_ident(&p.table, "source.table")?;
         validate_ident(&p.id_column, "source.id_column")?;
@@ -1520,6 +1630,7 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
         // `where_clause` intentionally NOT validated — same contract as PgTableSourceConfig.
     }
     if let SourceConfig::SqliteTable(s) = &cfg.source {
+        require_dsn_or_dsn_env(&s.dsn, &s.dsn_env, "source")?;
         validate_ident(&s.database_name, "source.database")?;
         validate_ident(&s.table, "source.table")?;
         validate_ident(&s.id_column, "source.id_column")?;
@@ -1530,6 +1641,7 @@ pub fn load_config(path: &Path) -> Result<CellConfig> {
         // `where_clause` intentionally NOT validated — same contract as PgTableSourceConfig.
     }
     if let SourceConfig::ClickhouseTable(p) = &cfg.source {
+        require_dsn_or_dsn_env(&p.dsn, &p.dsn_env, "source")?;
         validate_ident(&p.database_name, "source.database")?;
         validate_ident(&p.table, "source.table")?;
         validate_ident(&p.id_column, "source.id_column")?;
@@ -2091,7 +2203,7 @@ target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, 
         let cfg = load_config(&path).expect("load");
         match &cfg.target {
             TargetConfig::Sqlite(t) => {
-                assert_eq!(t.dsn_env, "SQLITE_PATH");
+                assert_eq!(t.dsn_env.as_deref(), Some("SQLITE_PATH"));
                 assert_eq!(t.database_name, "ignored");
                 assert_eq!(t.table, "chunks");
                 assert_eq!(t.mode, "overwrite");
@@ -2136,7 +2248,7 @@ target: { type: sqlite, dsn_env: SQLITE_PATH, database: ignored, table: chunks, 
         let cfg = load_config(&path).expect("load");
         match &cfg.source {
             SourceConfig::SqliteTable(s) => {
-                assert_eq!(s.dsn_env, "SQLITE_PATH");
+                assert_eq!(s.dsn_env.as_deref(), Some("SQLITE_PATH"));
                 assert_eq!(s.table, "docs");
                 assert_eq!(s.id_column, "id");
             }
@@ -2533,5 +2645,192 @@ target: { type: postgres, dsn_env: D, database: agent_memory, table: memory, mod
             msg.contains("bogus") || msg.contains("unknown"),
             "expected unknown-field complaint, got: {msg}"
         );
+    }
+
+    // --- dsn / dsn_env parity (mirrors Python's `_DsnResolvable`) ----------
+
+    #[test]
+    fn dsn_config_deserializes_and_resolves() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: pg_table
+  dsn: "postgresql://literal/db"
+  schema: public
+  table: docs
+  id_column: id
+  content_column: body
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn: "postgresql://literal/target", database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).expect("load");
+        match &cfg.source {
+            SourceConfig::PgTable(p) => {
+                assert_eq!(p.dsn.as_deref(), Some("postgresql://literal/db"));
+                assert_eq!(p.dsn_env, None);
+                assert_eq!(
+                    resolve_dsn(p.dsn.as_deref(), p.dsn_env.as_deref()).unwrap(),
+                    "postgresql://literal/db"
+                );
+            }
+            other => panic!("expected PgTable source, got {other:?}"),
+        }
+        match &cfg.target {
+            TargetConfig::Postgres(t) => {
+                assert_eq!(t.dsn.as_deref(), Some("postgresql://literal/target"));
+                assert_eq!(
+                    resolve_dsn(t.dsn.as_deref(), Some(&t.dsn_env)).unwrap(),
+                    "postgresql://literal/target"
+                );
+            }
+            other => panic!("expected Postgres target, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dsn_wins_over_dsn_env_when_both_set() {
+        std::env::set_var(
+            "CHUNKSHOP_TEST_DSN_PRECEDENCE",
+            "postgresql://from-env-var/db",
+        );
+        let resolved = resolve_dsn(
+            Some("postgresql://from-literal-dsn/db"),
+            Some("CHUNKSHOP_TEST_DSN_PRECEDENCE"),
+        )
+        .unwrap();
+        assert_eq!(resolved, "postgresql://from-literal-dsn/db");
+        std::env::remove_var("CHUNKSHOP_TEST_DSN_PRECEDENCE");
+    }
+
+    #[test]
+    fn dsn_interpolates_var() {
+        std::env::set_var("CHUNKSHOP_TEST_DSN_VAR", "secret-password");
+        let resolved = resolve_dsn(
+            Some("postgresql://user:${CHUNKSHOP_TEST_DSN_VAR}@host/db"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(resolved, "postgresql://user:secret-password@host/db");
+        std::env::remove_var("CHUNKSHOP_TEST_DSN_VAR");
+    }
+
+    #[test]
+    fn dsn_unset_var_errors_matching_python() {
+        std::env::remove_var("CHUNKSHOP_TEST_DSN_VAR_UNSET");
+        let err = resolve_dsn(
+            Some("postgresql://user:${CHUNKSHOP_TEST_DSN_VAR_UNSET}@host/db"),
+            None,
+        )
+        .unwrap_err();
+        let msg = format!("{err}");
+        // Mirrors Python's `_DsnResolvable.resolve_dsn`:
+        // f"dsn references ${{{name}}} but env var {name!r} is not set"
+        assert!(
+            msg.contains("CHUNKSHOP_TEST_DSN_VAR_UNSET") && msg.contains("not set"),
+            "expected unset-var complaint naming the var, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn dsn_env_only_config_is_unchanged() {
+        // Table source: dsn absent, dsn_env present — same shape/behavior as
+        // before `dsn` existed.
+        let yaml = r#"
+cell_name: t
+source:
+  type: pg_table
+  dsn_env: CHUNKSHOP_TEST_DSN_ENV_ONLY
+  schema: public
+  table: docs
+  id_column: id
+  content_column: body
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: CHUNKSHOP_TEST_DSN_ENV_ONLY, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).expect("load");
+        match &cfg.source {
+            SourceConfig::PgTable(p) => {
+                assert_eq!(p.dsn, None);
+                assert_eq!(p.dsn_env.as_deref(), Some("CHUNKSHOP_TEST_DSN_ENV_ONLY"));
+            }
+            other => panic!("expected PgTable source, got {other:?}"),
+        }
+        match &cfg.target {
+            TargetConfig::Postgres(t) => {
+                assert_eq!(t.dsn, None);
+                assert_eq!(t.dsn_env, "CHUNKSHOP_TEST_DSN_ENV_ONLY");
+            }
+            other => panic!("expected Postgres target, got {other:?}"),
+        }
+        // resolve_dsn falls back to the (lazy) env var read — unset here, so
+        // this errors exactly like Python's `os.environ[self.dsn_env]`.
+        std::env::remove_var("CHUNKSHOP_TEST_DSN_ENV_ONLY");
+        assert!(resolve_dsn(None, Some("CHUNKSHOP_TEST_DSN_ENV_ONLY")).is_err());
+        std::env::set_var("CHUNKSHOP_TEST_DSN_ENV_ONLY", "postgresql://from-env/db");
+        assert_eq!(
+            resolve_dsn(None, Some("CHUNKSHOP_TEST_DSN_ENV_ONLY")).unwrap(),
+            "postgresql://from-env/db"
+        );
+        std::env::remove_var("CHUNKSHOP_TEST_DSN_ENV_ONLY");
+    }
+
+    #[test]
+    fn rejects_source_missing_both_dsn_and_dsn_env() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: pg_table
+  schema: public
+  table: docs
+  id_column: id
+  content_column: body
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("missing dsn/dsn_env must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("dsn") && msg.contains("dsn_env"),
+            "expected one-of-dsn-or-dsn_env complaint, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_sqlite_target_missing_both_dsn_and_dsn_env() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: sqlite, database: ignored, table: chunks, mode: overwrite, hnsw: false }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("missing dsn/dsn_env must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("dsn") && msg.contains("dsn_env"),
+            "expected one-of-dsn-or-dsn_env complaint, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn sqlite_target_accepts_dsn_without_dsn_env() {
+        let yaml = r#"
+cell_name: t
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: sqlite, dsn: ":memory:", database: ignored, table: chunks, mode: overwrite, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).expect("load");
+        match &cfg.target {
+            TargetConfig::Sqlite(t) => {
+                assert_eq!(t.dsn.as_deref(), Some(":memory:"));
+                assert_eq!(t.dsn_env, None);
+            }
+            other => panic!("expected Sqlite target, got {other:?}"),
+        }
     }
 }

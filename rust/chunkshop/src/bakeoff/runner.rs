@@ -127,6 +127,7 @@ fn corpus_label(cfg: &BakeoffConfig) -> String {
 fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetConfig {
     match target {
         BakeoffTargetEntry::Postgres(t) => TargetConfig::Postgres(PostgresTargetConfig {
+            dsn: None,
             dsn_env: t.dsn_env.clone(),
             database_name: t.database_name.clone(),
             table: table.to_string(),
@@ -142,6 +143,7 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             documents: None,
         }),
         BakeoffTargetEntry::Mariadb(t) => TargetConfig::Mariadb(MariadbTargetConfig {
+            dsn: None,
             dsn_env: t.dsn_env.clone(),
             database_name: t.database_name.clone(),
             table: table.to_string(),
@@ -155,7 +157,8 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             documents: None,
         }),
         BakeoffTargetEntry::Sqlite(t) => TargetConfig::Sqlite(SqliteTargetConfig {
-            dsn_env: t.dsn_env.clone(),
+            dsn: None,
+            dsn_env: Some(t.dsn_env.clone()),
             database_name: t.database_name.clone(),
             table: table.to_string(),
             overwrite: false,
@@ -168,6 +171,7 @@ fn build_target_for_combo(target: &BakeoffTargetEntry, table: &str) -> TargetCon
             documents: None,
         }),
         BakeoffTargetEntry::Clickhouse(t) => TargetConfig::Clickhouse(ClickhouseTargetConfig {
+            dsn: None,
             dsn_env: t.dsn_env.clone(),
             database_name: t.database_name.clone(),
             table: table.to_string(),

@@ -110,7 +110,8 @@ print("OK")
     std::env::set_var(&env, db_path.to_str().unwrap());
     let backend = SQLiteBackend::new(env.clone());
     let cfg = SqliteTargetConfig {
-        dsn_env: env,
+        dsn: None,
+        dsn_env: Some(env),
         database_name: "ignored".into(),
         table: "chunks".into(),
         overwrite: false,

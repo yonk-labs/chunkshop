@@ -9,7 +9,8 @@ use tempfile::tempdir;
 
 fn cfg(dsn_env: &str, mode: &str) -> SqliteTargetConfig {
     SqliteTargetConfig {
-        dsn_env: dsn_env.to_string(),
+        dsn: None,
+        dsn_env: Some(dsn_env.to_string()),
         database_name: "ignored".into(),
         table: "chunks".into(),
         overwrite: false,

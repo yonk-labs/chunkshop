@@ -30,13 +30,21 @@ pub enum AnyBackend {
 
 pub fn load_backend(cfg: &TargetConfig) -> Result<AnyBackend> {
     match cfg {
-        TargetConfig::Postgres(t) => Ok(AnyBackend::Postgres(PostgresBackend::new(
+        TargetConfig::Postgres(t) => Ok(AnyBackend::Postgres(PostgresBackend::new_with_dsn(
+            t.dsn.clone(),
+            Some(t.dsn_env.clone()),
+        ))),
+        TargetConfig::Mariadb(t) => Ok(AnyBackend::Mariadb(MariadbBackend::new_with_dsn(
+            t.dsn.clone(),
+            Some(t.dsn_env.clone()),
+        ))),
+        TargetConfig::Sqlite(t) => Ok(AnyBackend::Sqlite(SQLiteBackend::new_with_dsn(
+            t.dsn.clone(),
             t.dsn_env.clone(),
         ))),
-        TargetConfig::Mariadb(t) => Ok(AnyBackend::Mariadb(MariadbBackend::new(t.dsn_env.clone()))),
-        TargetConfig::Sqlite(t) => Ok(AnyBackend::Sqlite(SQLiteBackend::new(t.dsn_env.clone()))),
-        TargetConfig::Clickhouse(t) => Ok(AnyBackend::Clickhouse(ClickhouseBackend::new(
-            t.dsn_env.clone(),
+        TargetConfig::Clickhouse(t) => Ok(AnyBackend::Clickhouse(ClickhouseBackend::new_with_dsn(
+            t.dsn.clone(),
+            Some(t.dsn_env.clone()),
         ))),
     }
 }
