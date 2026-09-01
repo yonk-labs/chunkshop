@@ -48,8 +48,13 @@ class ImageMetaDeriver:
             segments = [p for p in path.parent.parts[-self.segment_depth:] if p not in ("/", "")]
             words.extend(humanise(s) for s in segments)
 
+        text = " ".join(w for w in words if w)
+        # Fallback: if all segments humanised to empty (e.g., stem is "_"), use format token.
+        if not text.strip():
+            text = f"{fmt.lower()} image"
+
         result = ParseResult(
-            text=" ".join(w for w in words if w),
+            text=text,
             metadata={
                 "width": width,
                 "height": height,
