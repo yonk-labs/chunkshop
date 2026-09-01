@@ -66,15 +66,36 @@ pub fn default_cache_root() -> PathBuf {
 /// If `HOME` is unset or empty (same empty-is-unset truthiness as
 /// `default_cache_root_from`), this deliberately does NOT panic — a
 /// cache-root lookup failing should degrade a library caller, not crash
-/// it. It falls back to `.` (relative to the process's current working
-/// directory): a working, if surprising, non-fatal location. Callers who
-/// need a hard failure instead of a silent relative path should pass an
-/// explicit `root` to `DerivationCache::new` rather than relying on
-/// `default_cache_root()`.
+/// it. It falls back to `std::env::temp_dir()` (honours `TMPDIR`, else
+/// `/tmp`).
+///
+/// KNOWN DIVERGENCE FROM PYTHON, deliberate. Python's `Path.home()` falls
+/// back to the passwd database, so `default_cache_root()` there still
+/// resolves the real home with `HOME` unset or empty (verified: both cases
+/// yield `~/.cache/chunkshop/derived`). Rust's std has no `getpwuid`, and
+/// matching it would mean taking a new dependency (`libc`/`dirs`/`home` —
+/// none are present, even transitively) for an edge case. The temp dir is
+/// chosen over the obvious `.` fallback specifically because `.` would
+/// silently write a `.cache/` tree into the caller's working directory;
+/// `HOME` is routinely unset under systemd units without PAM, under cron,
+/// and in some containers. A cache in the temp dir is a legitimate cache;
+/// a cache in someone's repo is litter. Consequence: with `HOME` unset the
+/// two implementations do not share a cache directory. That costs a
+/// recompute, never correctness — the cache key is unchanged.
+///
+/// Callers who need a guaranteed location should pass an explicit `root`
+/// to `DerivationCache::new` rather than relying on `default_cache_root()`.
 fn dirs_home() -> PathBuf {
-    nonempty(std::env::var("HOME").ok().as_deref())
+    home_or_fallback(std::env::var("HOME").ok().as_deref())
+}
+
+/// Pure half of `dirs_home`, so the empty-vs-unset fallback is testable
+/// without mutating process env (same reason `default_cache_root_from`
+/// exists).
+fn home_or_fallback(home_env: Option<&str>) -> PathBuf {
+    nonempty(home_env)
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(std::env::temp_dir)
 }
 
 /// The `key[..2]/key.json` half of the cache layout, independent of any
@@ -237,6 +258,18 @@ mod tests {
 
     fn cache(tmp: &tempfile::TempDir) -> DerivationCache {
         DerivationCache::new(Some(tmp.path().to_path_buf()))
+    }
+
+    #[test]
+    fn home_fallback_uses_temp_dir_not_the_cwd() {
+        // `.` would silently write a `.cache/` tree into the caller's working
+        // directory. HOME is routinely unset under systemd units without PAM,
+        // under cron, and in some containers, so this is reachable in practice.
+        let tmp = std::env::temp_dir();
+        assert_eq!(home_or_fallback(None), tmp, "unset HOME must not yield a relative path");
+        assert_eq!(home_or_fallback(Some("")), tmp, "empty HOME is treated as unset");
+        assert_ne!(home_or_fallback(None), PathBuf::from("."));
+        assert_eq!(home_or_fallback(Some("/home/someone")), PathBuf::from("/home/someone"));
     }
 
     #[test]
