@@ -44,3 +44,55 @@ the gate; it makes the gap honest while the gate is open.
 `FilesSourceConfig` models no cursor field — so a `files` + `incremental:` YAML
 has been silently running full-resync on Rust since v0.8.3. Change A makes that
 loud too. Worth its own follow-up.
+
+---
+
+## 2026-09-01 — `ross` is an added rung, not a replacement for Plan D's derivers
+
+**Decision.** `../ross` (yonk-labs/ross, Apache-2.0, v0.1.0) becomes an **opt-in
+rung-5 subprocess deriver**. Plan D's Tasks 9, 11 and 12 proceed **unchanged** —
+rung 0 `ImageMetaDeriver` and rung 1 `ClipTagsDeriver` stay in-process Rust via
+`fastembed-rs`, exactly as planned.
+
+**What ross is.** A single Rust binary: media in → metadata, tags, description,
+summary out. Sniffs type by magic bytes, extracts deterministic facts
+(ffprobe for a/v, exiftool for images with a native PNG/WebP fallback, sha256,
+size, mtime), then describes via either locally-run zero-shot CLIP/CLAP
+(`--clip` / `--clap`, fully offline, replaceable vocabulary) or one LLM call per
+file to any OpenAI-compatible endpoint. `--no-llm --clap --clip` needs no network.
+
+**Where it overlaps Plan D:**
+
+| ross | Plan D equivalent |
+|---|---|
+| Extract step | rung 0 — `ImageMetaDeriver` (Task 9) |
+| `--clip` zero-shot tags | rung 1 — `ClipTagsDeriver` (Tasks 11, 12) |
+| LLM pass | rung 3 — remote VLM |
+| `--clap` audio tags | **nothing** — chunkshop has no audio tagger at all |
+
+**Why an added rung rather than a replacement.**
+- ross is **bin-only** (no `lib.rs`), so chunkshop would shell out, not link —
+  that is NN-4's rung-5 escape-hatch shape by construction, not an in-process
+  deriver.
+- ross is v0.1.0 at 3 commits. The shipped default path should not depend on a
+  sibling at that maturity.
+- CLAUDE.md's standing rule: sibling repos are **user-wired via config**, never
+  imported into core. A rung-5 subprocess deriver honours that; replacing the
+  in-process path would not.
+- ross requires `ffprobe`/`exiftool` for a/v and image metadata, which breaks
+  **NN-2** (zero-config: no key, no GPU, no model choice). Keeping in-process
+  rung 0 preserves a floor that works with nothing installed.
+- It is *better* on **NN-6** (text-only users pay nothing) — a subprocess
+  dependency costs them literally zero compile-time and runtime weight.
+
+**Consequence to watch.** ross drives `ort` directly, **not** `fastembed-rs`, so
+it does its own image preprocessing. Task 10's SC-12 amendment pins the vision
+tower's looser `cosine >= 0.9999` bar specifically to *`fastembed-rs`'s
+hardcoded `FilterType::CatmullRom`*. That amendment stays correct under this
+decision, because the shipped path remains fastembed. If ross ever becomes the
+image path, the amendment's stated cause must be re-derived — ross's
+preprocessing may match PIL, or diverge differently.
+
+**Follow-up (not scheduled).** A `ross` rung-5 deriver, and the audio question
+it raises: chunkshop has no CLAP/audio tagger in any plan, and ross already does.
+Tracked in MEDIA-INGEST-ROADMAP.md, not in Plan D.

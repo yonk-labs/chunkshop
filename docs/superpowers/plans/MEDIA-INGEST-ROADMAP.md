@@ -240,3 +240,38 @@ task, ahead of or alongside Plan D. The pattern this branch hit twice — silent
 accepting config you cannot honour — is a cross-implementation contract bug, and
 the media fields were only the instance that happened to get noticed.
 Full struct-by-struct list: `.superpowers/rust-deny-unknown-fields-report.md`.
+
+---
+
+## `ross` as a rung-5 subprocess deriver — DECIDED 2026-09-01, not scheduled
+
+`../ross` (yonk-labs/ross, Apache-2.0, v0.1.0, bin-only) does media → metadata +
+tags + description + summary as a single Rust binary. Decision recorded in
+`DECISIONS.md`: it becomes an **opt-in rung-5 subprocess deriver**; Plan D's
+Tasks 9/11/12 proceed unchanged with in-process `fastembed-rs`.
+
+**Open items this creates:**
+
+1. **A `ross` deriver (rung 5).** Shell out, parse its JSON, map its fields onto
+   `ParseResult { text, metadata }` + provenance. `engine` would be `ross` plus
+   its version — which is exactly what Task 6's `engine`-in-the-derivation-hash
+   work makes safe: a ross-derived value can share a cache directory with a
+   fastembed-derived one without either masquerading as the other.
+2. **Audio is a genuine gap.** ross ships CLAP zero-shot audio tagging.
+   chunkshop has **no** audio tagger in Plan D, Plan B, Plan C, or v1.1. The
+   spec's escalation ladder (NN-4) has no audio rung below the remote-VLM tier.
+   Worth its own scoping pass — this is the clearest thing ross has that no
+   chunkshop plan covers.
+3. **NN-2 boundary.** ross needs `ffprobe`/`exiftool` for a/v and image metadata
+   (native PNG/WebP dimension fallback aside). A rung-5 deriver must degrade
+   per NN-5 (never a dead end) when they are absent, and must not be reachable
+   by a zero-config default path.
+4. **SC-12 scoping caveat.** ross drives `ort` directly, not `fastembed-rs`, and
+   does its own preprocessing. The SC-12 vision-tower amendment above pins its
+   looser `cosine >= 0.9999` bar to `fastembed-rs`'s hardcoded
+   `FilterType::CatmullRom`. That stays correct while the shipped image path is
+   fastembed. If ross ever becomes that path, the cause must be re-measured, not
+   carried over.
+5. **Maturity gate.** v0.1.0, 3 commits, no `lib.rs`. Revisit linking-vs-shelling
+   only if a library surface appears; until then subprocess is the only option
+   and also the one CLAUDE.md's "siblings are user-wired via config" rule wants.
