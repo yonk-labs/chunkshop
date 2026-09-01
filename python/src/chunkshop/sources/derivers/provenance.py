@@ -33,18 +33,24 @@ def _params_hash(params: dict) -> str:
 
 
 def derivation_hash(
-    rung: str, model_id: str, model_version: str, params: dict
+    rung: str, model_id: str, model_version: str, engine: str, params: dict
 ) -> str:
     """Identity of *how* a derivation was produced.
 
     Combined with the content hash this forms the cache key, which means the
-    cache key IS the provenance record: change the model, the version, or any
-    parameter and the derivation is redone rather than silently reused.
+    cache key IS the provenance record: change the model, the version, the
+    engine, or any parameter and the derivation is redone rather than
+    silently reused.
+
+    `engine` distinguishes implementations that can diverge even with the
+    same model id/version (e.g. Python's fastembed vs Rust's fastembed-rs,
+    or CTranslate2 vs whisper-rs for ASR) — SC-12's contract-level parity
+    clause requires the engine be attributable, not just the model.
 
     All param values must be JSON-serializable; raises TypeError with the
     offending key name if not.
     """
-    parts = [CACHE_SCHEMA_VERSION, rung, model_id, model_version, _params_hash(params)]
+    parts = [CACHE_SCHEMA_VERSION, rung, model_id, model_version, engine, _params_hash(params)]
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
 
@@ -54,6 +60,7 @@ def stamp_provenance(
     rung: str,
     model_id: str,
     model_version: str,
+    engine: str,
     params: dict,
 ) -> ParseResult:
     """Return a new ParseResult carrying full derivation provenance.
@@ -69,6 +76,7 @@ def stamp_provenance(
             "rung": rung,
             "model": model_id,
             "model_version": model_version,
+            "engine": engine,
             "params_hash": _params_hash(params),
             "ts": datetime.now(timezone.utc).isoformat(),
         },

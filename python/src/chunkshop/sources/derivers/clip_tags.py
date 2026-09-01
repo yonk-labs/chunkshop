@@ -73,6 +73,7 @@ class ClipTagsDeriver:
             "clip_tags",
             f"{self.vision_model}+{self.text_model}",
             self._model_version(),
+            "python",
             {"vocabulary": self.vocabulary, "top_k": self.top_k,
              "min_score": self.min_score},
         )
@@ -119,6 +120,7 @@ class ClipTagsDeriver:
             rung="clip_tags",
             model_id=f"{self.vision_model}+{self.text_model}",
             model_version=self._model_version(),
+            engine="python",
             params={
                 "vocabulary": self.vocabulary,
                 "top_k": self.top_k,

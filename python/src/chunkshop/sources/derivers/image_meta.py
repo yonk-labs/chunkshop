@@ -34,7 +34,7 @@ class ImageMetaDeriver:
         from chunkshop.sources.derivers.provenance import derivation_hash
 
         return derivation_hash(
-            "image_meta", "deterministic", "1",
+            "image_meta", "deterministic", "1", "python",
             {"path_segments": self.path_segments, "segment_depth": self.segment_depth},
         )
 
@@ -81,6 +81,7 @@ class ImageMetaDeriver:
             rung="image_meta",
             model_id="deterministic",
             model_version="1",
+            engine="python",
             params={"path_segments": self.path_segments,
                     "segment_depth": self.segment_depth},
         )

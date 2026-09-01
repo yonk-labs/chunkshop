@@ -112,6 +112,7 @@ def test_derivation_hash_matches_what_stamp_provenance_records(images, monkeypat
         "clip_tags",
         f"{d.vision_model}+{d.text_model}",
         recorded_version,
+        "python",
         {"vocabulary": d.vocabulary, "top_k": d.top_k, "min_score": d.min_score},
     )
     assert recomputed == hash_, "derivation_hash() must exactly match what was recorded"
