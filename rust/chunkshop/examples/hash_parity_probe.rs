@@ -5,18 +5,61 @@ use chunkshop::sources::derivers::cache::relative_key_path;
 use chunkshop::sources::derivers::provenance::derivation_hash;
 use serde_json::json;
 
+/// The clip_tags params object as the SHIPPED deriver produces it.
+///
+/// This used to be a hand-written `json!({"top_k": 3, "min_score": 0.2, ...})`
+/// — an f64 literal — which is a value the production path never emitted:
+/// `ClipTagsDeriverConfig::min_score` was an `f32`, so the real
+/// `cache_key_parts()` canonicalized the shipped default as
+/// `0.20000000298023224` against Python's `0.2`. The probe hashed the
+/// literal and reported agreement while the shipped code disagreed. Calling
+/// the real code path is the whole point of a parity probe.
+///
+/// `media`-gated because `ClipTagsDeriver` is; without the feature the
+/// probe still builds and still prints every other case. The assertion-
+/// carrying version of this invariant lives in `tests/hash_parity.rs` (and
+/// `python/tests/chunkshop/test_hash_parity.py`) so CI enforces it — a
+/// probe nothing invokes cannot.
+#[cfg(all(feature = "media", feature = "embedder-hub"))]
+fn shipped_clip_params() -> Option<serde_json::Value> {
+    use chunkshop::config::DeriverConfig;
+    use chunkshop::sources::derivers::load_deriver;
+
+    // Deserialized from the YAML shape a user writes, so top_k, min_score
+    // and both model ids come from the shipped serde defaults.
+    let dcfg: DeriverConfig =
+        serde_yaml_ng::from_str("rung: clip_tags\nvocabulary: [\"a cat\", \"a dog\"]\n").ok()?;
+    let deriver = load_deriver(&dcfg).ok()?;
+    Some(deriver.cache_key_parts().3)
+}
+
+#[cfg(not(all(feature = "media", feature = "embedder-hub")))]
+fn shipped_clip_params() -> Option<serde_json::Value> {
+    None
+}
+
 fn main() {
-    let params = json!({"top_k": 3, "min_score": 0.2, "vocabulary": ["a cat", "a dog"]});
-    println!(
-        "rust-clip  {}",
-        derivation_hash(
-            "clip_tags",
-            "Qdrant/clip-ViT-B-32",
-            "1.2.3",
-            "fastembed-rs",
-            &params
-        )
-    );
+    match shipped_clip_params() {
+        Some(params) => {
+            println!(
+                "rust-clip-canonical {}",
+                serde_json::to_string(&params).unwrap()
+            );
+            println!(
+                "rust-clip  {}",
+                derivation_hash(
+                    "clip_tags",
+                    "Qdrant/clip-ViT-B-32",
+                    "1.2.3",
+                    "fastembed-rs",
+                    &params
+                )
+            );
+        }
+        None => eprintln!(
+            "(rust-clip skipped: rebuild with --features media,embedder-hub)"
+        ),
+    }
     println!(
         "rust-empty {}",
         derivation_hash("image_meta", "deterministic", "1", "rust", &json!({}))

@@ -12,6 +12,7 @@ Usage:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from chunkshop.sources.derivers.cache import DerivationCache
@@ -36,8 +37,34 @@ def relative_key_path(
     return str(full.relative_to(_PROBE_ROOT))
 
 
+def shipped_clip_params() -> dict:
+    """The clip_tags params object as the SHIPPED deriver produces it.
+
+    The companion Rust probe used to hand-write this as a `json!` literal
+    with an f64 `min_score`, which is a value its production path never
+    emitted (`min_score` was held as `f32`, canonicalizing the shipped
+    default `0.20` as `0.20000000298023224`). Both probes now read the
+    values off the constructed deriver instead of retyping them.
+    """
+    from chunkshop.config import ClipTagsDeriverConfig
+    from chunkshop.sources.derivers import load_deriver
+
+    deriver = load_deriver(
+        ClipTagsDeriverConfig(rung="clip_tags", vocabulary=["a cat", "a dog"])
+    )
+    return {
+        "vocabulary": deriver.vocabulary,
+        "top_k": deriver.top_k,
+        "min_score": deriver.min_score,
+    }
+
+
 def main() -> None:
-    params = {"top_k": 3, "min_score": 0.2, "vocabulary": ["a cat", "a dog"]}
+    params = shipped_clip_params()
+    print(
+        "python-clip-canonical",
+        json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+    )
     print(
         "python-clip  ",
         derivation_hash("clip_tags", "Qdrant/clip-ViT-B-32", "1.2.3", "fastembed-rs", params),
