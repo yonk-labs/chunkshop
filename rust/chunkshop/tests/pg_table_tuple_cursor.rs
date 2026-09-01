@@ -75,7 +75,8 @@ async fn pg_table_handles_row_inserted_at_cursor_boundary() {
     env::set_var("CHUNKSHOP_TEST_DSN", &dsn);
 
     let cfg = PgTableSourceConfig {
-        dsn_env: "CHUNKSHOP_TEST_DSN".to_string(),
+        dsn: None,
+        dsn_env: Some("CHUNKSHOP_TEST_DSN".to_string()),
         schema_name: schema.to_string(),
         table: table.to_string(),
         id_column: "id".to_string(),
@@ -188,7 +189,8 @@ async fn pg_table_empty_cursor_emits_all_existing_rows_in_canonical_order() {
 
     env::set_var("CHUNKSHOP_TEST_DSN", &dsn);
     let cfg = PgTableSourceConfig {
-        dsn_env: "CHUNKSHOP_TEST_DSN".to_string(),
+        dsn: None,
+        dsn_env: Some("CHUNKSHOP_TEST_DSN".to_string()),
         schema_name: schema.to_string(),
         table: table.to_string(),
         id_column: "id".to_string(),

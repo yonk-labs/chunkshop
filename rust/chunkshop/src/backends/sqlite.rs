@@ -22,12 +22,24 @@ use crate::backends::base::{BackendDialect, ColSpec};
 
 #[derive(Clone)]
 pub struct SQLiteBackend {
-    pub(crate) dsn_env: String,
+    pub(crate) dsn: Option<String>,
+    pub(crate) dsn_env: Option<String>,
 }
 
 impl SQLiteBackend {
+    /// `dsn_env`-only constructor. Kept for existing callers (mostly
+    /// dialect/parity tests that never set `dsn`); prefer `new_with_dsn`
+    /// wherever the config may carry a `dsn` field.
     pub fn new(dsn_env: String) -> Self {
-        Self { dsn_env }
+        Self::new_with_dsn(None, Some(dsn_env))
+    }
+
+    /// `dsn` (literal or `${VAR}` interpolated — resolves to the SQLite file
+    /// path or `:memory:`) takes precedence over `dsn_env` (env-var-name,
+    /// read lazily at connect time). Mirrors Python's
+    /// `_DsnResolvable`/`backend_dsn_kwargs` precedence.
+    pub fn new_with_dsn(dsn: Option<String>, dsn_env: Option<String>) -> Self {
+        Self { dsn, dsn_env }
     }
 }
 
@@ -60,11 +72,11 @@ impl SQLiteBackend {
     /// Idempotent at the auto-extension level — sqlite-vec is registered once
     /// per process via `OnceLock`.
     pub async fn connect(&self) -> Result<SqliteConn> {
+        let dsn = self.dsn.clone();
         let dsn_env = self.dsn_env.clone();
         spawn_blocking(move || -> Result<SqliteConn> {
             register_sqlite_vec_once();
-            let path = std::env::var(&dsn_env)
-                .with_context(|| format!("DSN env var {dsn_env} not set"))?;
+            let path = crate::config::resolve_dsn(dsn.as_deref(), dsn_env.as_deref())?;
             let conn = if path == ":memory:" {
                 Connection::open_in_memory().context("open :memory:")?
             } else {

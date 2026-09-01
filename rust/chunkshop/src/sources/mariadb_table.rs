@@ -15,7 +15,7 @@ pub struct MariadbTableSource {
 
 impl MariadbTableSource {
     pub fn new(cfg: MariadbTableSourceConfig) -> Self {
-        let backend = MariadbBackend::new(cfg.dsn_env.clone());
+        let backend = MariadbBackend::new_with_dsn(cfg.dsn.clone(), cfg.dsn_env.clone());
         Self { cfg, backend }
     }
 

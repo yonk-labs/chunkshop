@@ -21,13 +21,25 @@ use clickhouse::Client;
 use tokio::sync::OnceCell;
 
 pub struct ClickhouseBackend {
-    dsn_env: String,
+    dsn: Option<String>,
+    dsn_env: Option<String>,
     client: OnceCell<Client>,
 }
 
 impl ClickhouseBackend {
+    /// `dsn_env`-only constructor. Kept for existing callers (mostly
+    /// dialect/parity tests that never set `dsn`); prefer `new_with_dsn`
+    /// wherever the config may carry a `dsn` field.
     pub fn new(dsn_env: String) -> Self {
+        Self::new_with_dsn(None, Some(dsn_env))
+    }
+
+    /// `dsn` (literal or `${VAR}` interpolated) takes precedence over
+    /// `dsn_env` (env-var-name, read lazily at first `client()` call).
+    /// Mirrors Python's `_DsnResolvable`/`backend_dsn_kwargs` precedence.
+    pub fn new_with_dsn(dsn: Option<String>, dsn_env: Option<String>) -> Self {
         Self {
+            dsn,
             dsn_env,
             client: OnceCell::new(),
         }
@@ -40,8 +52,8 @@ impl ClickhouseBackend {
         let c = self
             .client
             .get_or_try_init(|| async {
-                let dsn = std::env::var(&self.dsn_env)
-                    .with_context(|| format!("DSN env var {} not set", self.dsn_env))?;
+                let dsn =
+                    crate::config::resolve_dsn(self.dsn.as_deref(), self.dsn_env.as_deref())?;
                 build_client_from_dsn(&dsn)
             })
             .await?;

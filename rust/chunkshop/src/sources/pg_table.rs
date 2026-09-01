@@ -42,7 +42,7 @@ pub struct PgTableCursor {
 
 impl PgTableSource {
     pub fn new(cfg: PgTableSourceConfig) -> Self {
-        let backend = PostgresBackend::new(cfg.dsn_env.clone());
+        let backend = PostgresBackend::new_with_dsn(cfg.dsn.clone(), cfg.dsn_env.clone());
         Self { cfg, backend }
     }
 

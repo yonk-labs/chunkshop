@@ -20,6 +20,7 @@ fn skip_if_no_dsn() -> Option<()> {
 
 fn cfg(db: &str, promote: Vec<PromoteColumn>) -> PostgresTargetConfig {
     PostgresTargetConfig {
+        dsn: None,
         dsn_env: DSN_ENV.to_string(),
         database_name: db.to_string(),
         table: "chunks".to_string(),

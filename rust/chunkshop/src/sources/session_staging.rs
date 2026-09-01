@@ -44,26 +44,6 @@ fn validate_ident(v: &str) -> Result<()> {
     Ok(())
 }
 
-/// Resolve a DSN string from either the literal `dsn` field or the
-/// `dsn_env` env-var-name field. Matches Python's precedence (literal wins
-/// when both set).
-fn resolve_dsn(cfg: &SessionStagingSourceConfig) -> Result<String> {
-    if let Some(d) = &cfg.dsn {
-        // Match Python's `${VAR}` expansion: not implemented here for v1
-        // (Rust callers wire env vars at startup). If the literal contains
-        // `${...}`, fall through to dsn_env path.
-        if !d.contains("${") {
-            return Ok(d.clone());
-        }
-    }
-    if let Some(env) = &cfg.dsn_env {
-        return std::env::var(env).with_context(|| format!("DSN env var {env} not set"));
-    }
-    Err(anyhow!(
-        "session_staging source needs either `dsn` (literal) or `dsn_env` (env var name)"
-    ))
-}
-
 pub struct SessionStagingSource {
     cfg: SessionStagingSourceConfig,
     pool: OnceCell<PgPool>,
@@ -121,7 +101,7 @@ impl SessionStagingSource {
     async fn pool(&self) -> Result<&PgPool> {
         self.pool
             .get_or_try_init(|| async {
-                let dsn = resolve_dsn(&self.cfg)?;
+                let dsn = crate::config::resolve_dsn(self.cfg.dsn.as_deref(), self.cfg.dsn_env.as_deref())?;
                 PgPoolOptions::new()
                     .max_connections(2)
                     .connect(&dsn)

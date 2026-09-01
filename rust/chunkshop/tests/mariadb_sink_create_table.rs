@@ -21,6 +21,7 @@ async fn create_table_overwrite_mode() -> anyhow::Result<()> {
     }
 
     let cfg = MariadbTargetConfig {
+        dsn: None,
         dsn_env: DSN_ENV.to_string(),
         database_name: "chunkshop_r2_sink".to_string(),
         table: "ct".to_string(),
