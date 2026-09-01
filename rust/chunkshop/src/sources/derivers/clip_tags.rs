@@ -272,10 +272,25 @@ fn check_model_supported(field: &str, configured: &str, default: &str) -> anyhow
     Ok(())
 }
 
-/// Python's `round(score, 4)`. Widened to f64 before rounding so the JSON
-/// number is `0.2345`, not f32's `0.23450000584125519` artifact.
+/// Python's `round(score, 4)`. Widened to f64 first so the JSON number is
+/// `0.2345`, not f32's `0.23450000584125519` artifact.
+///
+/// Formatting, not arithmetic, for the same reason `image_meta::round4`
+/// does it: Python rounds half to EVEN on the exact binary value, while
+/// `(x * 10000.0).round() / 10000.0` rounds half AWAY FROM ZERO and also
+/// carries a scaling error of its own. Rust's `{:.4}` is a correctly-
+/// rounded ties-to-even conversion — the same rule CPython's
+/// `round(float, ndigits)` applies.
+///
+/// LATENT here, unlike in `image_meta`. A CLIP cosine landing exactly on a
+/// `.00005` boundary in binary64 is practically unreachable, whereas an
+/// 800x1024 screenshot's aspect ratio hits one exactly and the two ports
+/// really did disagree on it. Fixed anyway: the two `round4`s state the
+/// same Python contract, and leaving one implementing a different rounding
+/// rule invites the next reader to copy the wrong one.
 fn round4(x: f32) -> f64 {
-    ((x as f64) * 10_000.0).round() / 10_000.0
+    let x = x as f64;
+    format!("{x:.4}").parse::<f64>().unwrap_or(x)
 }
 
 fn l2_normalize(v: Vec<f32>) -> Vec<f32> {
@@ -522,6 +537,23 @@ mod tests {
         let d = deriver(1, 0.0);
         let r = d.build_result(ParseResult::new("x"), &[0.234567_f32, 0.0, 0.0]);
         assert_eq!(r.metadata["clip_scores"], json!([0.2346]));
+    }
+
+    /// Ties break to EVEN, as Python's `round()` does — the same rule
+    /// `image_meta::round4` follows. 0.78125 is exactly representable in
+    /// both f32 and f64, so it is a true tie at four decimal places:
+    /// Python yields 0.7812, `(x * 10000.0).round() / 10000.0` yields
+    /// 0.7813. Latent for CLIP (a cosine is vanishingly unlikely to land
+    /// exactly here) but pinned so the two ports state one rounding rule.
+    #[test]
+    fn score_ties_round_to_even_like_python() {
+        let d = deriver(1, 0.0);
+        let r = d.build_result(ParseResult::new("x"), &[0.78125_f32, 0.0, 0.0]);
+        assert_eq!(r.metadata["clip_scores"], json!([0.7812]));
+        // ...and the naive formula really does differ, or the assertion
+        // above would pass for the wrong implementation too.
+        let naive = |x: f64| (x * 10_000.0).round() / 10_000.0;
+        assert_eq!(naive(0.78125), 0.7813);
     }
 
     #[test]
