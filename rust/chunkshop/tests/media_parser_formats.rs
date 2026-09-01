@@ -2,11 +2,15 @@
 //! guard that adding this layer does not change output for existing
 //! text-only YAMLs (SC-13's Rust equivalent).
 //!
-//! Every `.pdf`/`.xlsx`/`.docx`/`.pptx` case below is deliberately fed
-//! non-UTF-8 bytes: if a future change reinstated a text-decode fallback for
-//! any of these formats, an accidentally-decodable fixture (e.g. plain
-//! ASCII) would let that regression pass silently. Invalid UTF-8 forces the
-//! failure to surface loudly instead.
+//! `.pptx` (the only format below still refused unconditionally, in every
+//! build) is fed non-UTF-8 bytes below: if a future change reinstated a
+//! text-decode fallback for it, an accidentally-decodable fixture (e.g.
+//! plain ASCII) would let that regression pass silently. Invalid UTF-8
+//! forces the failure to surface loudly instead. `.pdf`, `.xlsx`, and
+//! `.docx` each moved off non-UTF-8 fixtures once their derivers landed
+//! (Tasks 3, 4, and 5) — their non-`media`-build refusal tests still use
+//! non-UTF-8 bytes for the same reason, but their `media`-build round-trip
+//! tests exercise real extracted content instead.
 
 use std::io::Write;
 
@@ -62,20 +66,20 @@ fn text_file_output_is_unchanged_by_the_parser_layer() {
     assert_eq!(docs[0].id, "a");
 }
 
-// The two cases below (pptx/docx) are UNCONDITIONAL — no
-// `#[cfg(feature = "media")]` — because the refusal itself is unconditional
-// (see `registry.rs`'s `UNIMPLEMENTED_FORMATS`): a default (non-`media`)
-// build has no deriver for either format either, so it must refuse them
-// too, not silently text-decode them. Coverage must match that guarantee
-// in both build modes.
+// The case below (pptx) is UNCONDITIONAL — no `#[cfg(feature = "media")]`
+// — because the refusal itself is unconditional (see `registry.rs`'s
+// `UNIMPLEMENTED_FORMATS`): a default (non-`media`) build has no deriver
+// for it either, so it must refuse too, not silently text-decode it.
+// Coverage must match that guarantee in both build modes.
 //
-// `pdf` moved to `MEDIA_GATED_FORMATS` in Task 3, and `xlsx` in Task 4
-// (each has a real deriver, gated behind `media`), so their refusal
-// behaviour now differs by build: a non-`media` build still refuses (via
-// `MissingFeatureError`, naming the feature), but a `media` build actually
-// derives text — see `pdf_without_media_feature_refuses_naming_the_feature`
-// / `pdf_with_extractable_text_round_trips` and their xlsx counterparts
-// below.
+// `pdf` moved to `MEDIA_GATED_FORMATS` in Task 3, `xlsx` in Task 4, and
+// `docx` in Task 5 (each has a real deriver, gated behind `media`), so
+// their refusal behaviour now differs by build: a non-`media` build still
+// refuses (via `MissingFeatureError`, naming the feature), but a `media`
+// build actually derives text — see
+// `pdf_without_media_feature_refuses_naming_the_feature` /
+// `pdf_with_extractable_text_round_trips` and their xlsx/docx
+// counterparts below.
 
 #[test]
 fn pptx_is_refused_not_silently_decoded_as_text() {
@@ -105,9 +109,24 @@ fn pdf_without_media_feature_refuses_naming_the_feature() {
     assert!(msg.contains("pdf"), "expected the error to name pdf, got: {msg}");
 }
 
+#[cfg(not(feature = "media"))]
 #[test]
-fn docx_is_refused_not_silently_decoded_as_text() {
-    assert_named_refusal("docx", "letter.docx");
+fn docx_without_media_feature_refuses_naming_the_feature() {
+    let dir = tempfile::tempdir().unwrap();
+    write_temp(dir.path(), "letter.docx", NOT_UTF8);
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.docx", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+    };
+    let src = FilesSource::new(cfg);
+    let err = src.iter_documents().unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("--features media"),
+        "expected the error to name the feature to enable, got: {msg}"
+    );
+    assert!(msg.contains("docx"), "expected the error to name docx, got: {msg}");
 }
 
 #[cfg(not(feature = "media"))]
@@ -178,6 +197,34 @@ fn xlsx_with_a_cell_round_trips() {
     assert_eq!(docs.len(), 1);
     assert!(
         docs[0].content.contains("hello xlsx"),
+        "got: {:?}",
+        docs[0].content
+    );
+}
+
+#[cfg(feature = "media")]
+#[test]
+fn docx_with_a_paragraph_round_trips() {
+    // Fixture generated with python-docx (`Document()`, `add_paragraph`,
+    // save) — `docx-rust` is read-only, so there is no writer half to
+    // generate this fixture in Rust. Independently verified with
+    // `unzip -p one_paragraph.docx word/document.xml`, which shows a
+    // single `<w:t>hello docx</w:t>` run, and with python-docx's own
+    // `d.paragraphs` read-back, before committing.
+    const FIXTURE: &[u8] = include_bytes!("fixtures/one_paragraph.docx");
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("one_paragraph.docx");
+    std::fs::write(&p, FIXTURE).unwrap();
+
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.docx", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+    };
+    let docs = FilesSource::new(cfg).iter_documents().unwrap();
+    assert_eq!(docs.len(), 1);
+    assert!(
+        docs[0].content.contains("hello docx"),
         "got: {:?}",
         docs[0].content
     );

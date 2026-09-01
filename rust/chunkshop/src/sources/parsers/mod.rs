@@ -16,14 +16,13 @@ use thiserror::Error;
 pub mod registry;
 pub mod text;
 
-// `docx` is declared by the task that creates it (Task 5) — same
-// convention as `registry`/`text` above. Declaring it ahead of its file
-// existing would break every `--features media` build unconditionally,
-// media-gated or not: `#[cfg(feature = "media")]` only skips a
-// `pub mod X;` line when the feature is off, but Rust still requires
-// `X.rs` to exist at name-resolution time whenever the feature is on.
-// `html` is Task 2's, `pdf` is Task 3's, `xlsx` is Task 4's — all three
-// declared now.
+// `html` is Task 2's, `pdf` is Task 3's, `xlsx` is Task 4's, `docx` is
+// Task 5's — all four declared now. `#[cfg(feature = "media")]` only
+// skips a `pub mod X;` line when the feature is off, but Rust still
+// requires `X.rs` to exist at name-resolution time whenever the feature
+// is on, so a module is declared only by the task that creates its file.
+#[cfg(feature = "media")]
+pub mod docx;
 #[cfg(feature = "media")]
 pub mod html;
 #[cfg(feature = "media")]
