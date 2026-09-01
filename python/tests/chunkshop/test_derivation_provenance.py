@@ -1,3 +1,8 @@
+import pathlib
+
+import pytest
+
+from chunkshop.sources.derivers import provenance
 from chunkshop.sources.derivers.provenance import derivation_hash, stamp_provenance
 from chunkshop.sources.parsers.result import ParseResult
 
@@ -44,3 +49,29 @@ def test_stamp_does_not_mutate_the_input():
     original = ParseResult(text="x", metadata={"a": 1})
     stamp_provenance(original, rung="r", model_id="m", model_version="1", params={})
     assert original.metadata == {"a": 1}
+
+
+def test_path_valued_param_raises_with_key_name():
+    """Path objects are not JSON-serializable; error must name the key."""
+    with pytest.raises(TypeError, match="Parameter 'model_path' is not JSON-serializable"):
+        derivation_hash("test", "test_model", "1", {"model_path": pathlib.Path("/foo/bar")})
+
+
+def test_set_valued_param_raises_with_key_name():
+    """Set objects are not JSON-serializable; error must name the key."""
+    with pytest.raises(TypeError, match="Parameter 'tags' is not JSON-serializable"):
+        derivation_hash(
+            "test",
+            "test_model",
+            "1",
+            {"tags": {"clip_tags", "ocr_text", "caption_long"}},
+        )
+
+
+def test_cache_schema_version_affects_hash(monkeypatch):
+    """Different CACHE_SCHEMA_VERSION values must produce different hashes."""
+    base = derivation_hash("r", "m", "1", {"x": 1})
+    # Monkeypatch the version constant
+    monkeypatch.setattr(provenance, "CACHE_SCHEMA_VERSION", "2")
+    modified = derivation_hash("r", "m", "1", {"x": 1})
+    assert base != modified

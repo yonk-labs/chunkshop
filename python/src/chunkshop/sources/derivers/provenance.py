@@ -12,7 +12,23 @@ CACHE_SCHEMA_VERSION = "1"
 
 
 def _params_hash(params: dict) -> str:
-    canonical = json.dumps(params, sort_keys=True, separators=(",", ":"), default=str)
+    """Compute a stable hash of params, raising on non-JSON-serializable values.
+
+    Raises TypeError if any param value is not JSON-serializable, naming the
+    offending key so the caller knows exactly which param to fix.
+    """
+    try:
+        canonical = json.dumps(params, sort_keys=True, separators=(",", ":"))
+    except TypeError as e:
+        # Re-raise with the key name if possible
+        for key in params:
+            try:
+                json.dumps(params[key])
+            except TypeError:
+                raise TypeError(
+                    f"Parameter '{key}' is not JSON-serializable: {type(params[key]).__name__}"
+                ) from e
+        raise
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
@@ -24,6 +40,9 @@ def derivation_hash(
     Combined with the content hash this forms the cache key, which means the
     cache key IS the provenance record: change the model, the version, or any
     parameter and the derivation is redone rather than silently reused.
+
+    All param values must be JSON-serializable; raises TypeError with the
+    offending key name if not.
     """
     parts = [CACHE_SCHEMA_VERSION, rung, model_id, model_version, _params_hash(params)]
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
@@ -37,7 +56,11 @@ def stamp_provenance(
     model_version: str,
     params: dict,
 ) -> ParseResult:
-    """Return a new ParseResult carrying full derivation provenance."""
+    """Return a new ParseResult carrying full derivation provenance.
+
+    Note: the returned metadata is a shallow copy of the input metadata;
+    nested mutable values are shared by reference.
+    """
     metadata = {
         **result.metadata,
         "content_origin": "derived",
