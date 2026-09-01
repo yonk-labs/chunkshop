@@ -179,7 +179,7 @@ All four outcome families are **critical**. **A is the headline** (it earns eval
 ### A — Time-to-first-success (headline)
 | ID | Criterion | Observable signal |
 |---|---|---|
-| **SC-1** | On a clean machine with **no API key, no GPU, and NO EXTRAS** (`pip install chunkshop`, base only), point the *documented quickstart YAML* at a folder of images → a text query returns the correct image in **under 5 min** including lazy model download. **The tested path is F22 CLIP zero-shot tags (keyless, base install).** OCR/ASR/VLM are documented upgrades and are explicitly NOT part of this claim. | Scripted timing run in a fresh container running **the exact YAML printed in the README**, asserted in CI. Fails if it needs a key, a GPU, any extra, or >5 min. |
+| **SC-1** | On a clean machine with **no API key, no GPU, and NO MEDIA EXTRA** (`pip install chunkshop[sqlite]` — a storage backend only; `sqlite-vec` is required by any sqlite target and is not a media dependency), point the *documented quickstart YAML* at a folder of images → a text query returns the correct image in **under 5 min** including lazy model download. **The tested path is F22 CLIP zero-shot tags (keyless, base install).** OCR/ASR/VLM are documented upgrades and are explicitly NOT part of this claim. | Scripted timing run in a fresh container running **the exact YAML printed in the README**, asserted in CI. Fails if it needs a key, a GPU, ANY media extra (rapidocr/faster-whisper/torch/av), or >5 min. |
 | **SC-2** | The zero-config path requires **no model/endpoint choice** from the user — media works by default. | The quickstart YAML contains no `base_url`, no `api_key_env`, no model name. |
 
 ### B — Retrieval quality (gate)

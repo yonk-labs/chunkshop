@@ -1956,7 +1956,7 @@ Expected: FAIL — README has no `images-keyless` block.
 In `README.md`, add a "Search a folder of images — no API key, no GPU" section containing the marker comments and the YAML copied verbatim from `docs/samples/images-keyless.yaml`, plus:
 
 ```bash
-pip install chunkshop            # no extras
+pip install chunkshop[sqlite]    # storage backend only — NO media extra, no key, no GPU
 export SQLITE_PATH=/tmp/chunkshop-images.db
 chunkshop ingest --config docs/samples/images-keyless.yaml
 chunkshop search "a game sprite" --config docs/samples/images-keyless.yaml -k 1
@@ -1989,8 +1989,8 @@ jobs:
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
 
-      - name: Install chunkshop with NO extras
-        run: pip install ./python
+      - name: Install chunkshop with the storage extra ONLY (no media extras)
+        run: pip install './python[sqlite]'
 
       - name: Assert no media extra leaked into the base install
         run: |
@@ -1998,8 +1998,8 @@ jobs:
           import importlib.util, sys
           for mod in ("rapidocr", "faster_whisper", "torch", "av"):
               if importlib.util.find_spec(mod) is not None:
-                  sys.exit(f"FAIL: {mod} present in a base install")
-          print("base install is clean")
+                  sys.exit(f"FAIL: media package {mod} present without its extra")
+          print("no media package present — the media path is genuinely keyless")
           EOF
 
       - name: Run the documented quickstart, on a clock
