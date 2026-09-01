@@ -32,11 +32,13 @@ jobs:
       # in docs/samples/images-keyless.yaml). Its ranking margin is a property
       # of WHICH images are in that directory, so the directory is pinned here
       # rather than left to whoever last dropped a file into it. This is not
-      # hypothetical: seven `swatch_*` image_meta test fixtures were once
-      # committed here, and because the CLIP tagger labels a flat colour swatch
-      # "a game sprite or pixel art" too, they cut the rank-1-vs-rank-2 cosine
-      # margin from 0.2166 to 0.0562 while the gate stayed green. Test fixtures
-      # belong in tests/fixtures/images/, not in the sample corpus.
+      # hypothetical: a batch of flat-colour `swatch_*` image_meta test
+      # fixtures was once committed here, and because the CLIP tagger labels a
+      # flat colour swatch "a game sprite or pixel art" too, they cut the
+      # rank-1-vs-rank-2 cosine margin from 0.2166 to 0.0562 while the gate
+      # stayed green. They have since been removed and the corpus is pinned at
+      # the three images listed below. Test fixtures belong in
+      # tests/fixtures/images/, not in the sample corpus.
       - name: Pin the quickstart corpus (guards the measured margin below)
         run: |
           expected="chart_revenue.png screenshot_settings.png sprite_knight.png"

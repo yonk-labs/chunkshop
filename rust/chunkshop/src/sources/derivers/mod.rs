@@ -86,15 +86,26 @@ pub fn load_deriver(cfg: &DeriverConfig) -> anyhow::Result<Rc<dyn CacheableDeriv
 /// `parsers::registry::MissingFeatureDeriver`'s pattern for pdf/xlsx/docx
 /// in a non-`media` build.
 ///
-/// Deliberately point-of-use rather than load-time, and yes that is
-/// asymmetric with the `media`-but-not-`embedder-hub` `clip_tags` arm above
-/// (which errors at load). The asymmetry is the one Cargo.toml's `media`
-/// feature comment already specifies: `rung: clip_tags` without
-/// `embedder-hub` is called out there as a config-load failure. Keeping the
-/// non-`media` case at point-of-use preserves the existing behaviour that a
-/// cell whose glob happens to match no derive-routed file still runs in a
-/// slim build. Neither path can silently downgrade to a different rung,
-/// which is the property that actually matters.
+/// Point-of-use rather than load-time, which is asymmetric with the
+/// `media`-but-not-`embedder-hub` `clip_tags` arm above (that one errors at
+/// load). The asymmetry is the one Cargo.toml's `media` feature comment
+/// already specifies: `rung: clip_tags` without `embedder-hub` is called out
+/// there as a config-load failure.
+///
+/// This function's own deferral is now MOOT for any real cell, and the note
+/// that used to live here is stale. It used to say the deferral preserved
+/// the property that "a cell whose glob happens to match no derive-routed
+/// file still runs in a slim build". `CellConfig::preflight_derive` now runs
+/// `load_deriver` over every `derive:` entry BEFORE the sink's DDL, so such a
+/// cell fails at preflight regardless of what its glob matches. That trade
+/// was deliberate: not destroying the user's table with a `mode: overwrite`
+/// DROP+CREATE before reporting a config-load-knowable failure is the
+/// stronger property, and `preflight_derive`'s own doc comment names the
+/// behaviour change. What this stub still guarantees is the property that
+/// always mattered: neither path can silently downgrade to a different rung,
+/// and any caller reaching `derive()` directly (library use, a future
+/// non-preflighted entry point) still gets a named failure rather than a
+/// missing symbol.
 #[cfg(not(feature = "media"))]
 pub fn load_deriver(cfg: &DeriverConfig) -> anyhow::Result<Rc<dyn CacheableDeriver>> {
     let (rung, features) = match cfg {
@@ -112,6 +123,18 @@ struct MissingFeatureDeriver {
 
 #[cfg(not(feature = "media"))]
 impl crate::sources::parsers::Deriver for MissingFeatureDeriver {
+    /// Never actually stamped anywhere — `derive` below always errors, so
+    /// `FilesSource` never reaches its metadata-assembly block for this
+    /// deriver. Answered honestly all the same, keyed on the rung this
+    /// stub stands in for, rather than with a placeholder that would be
+    /// wrong if the stub ever did become reachable.
+    fn parser_name(&self) -> &'static str {
+        match self.rung {
+            "clip_tags" => "ClipTagsDeriver",
+            _ => "ImageMetaDeriver",
+        }
+    }
+
     fn derive(
         &self,
         _path: &std::path::Path,
