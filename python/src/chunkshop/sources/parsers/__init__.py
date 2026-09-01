@@ -8,6 +8,7 @@ with zero parser extras installed.
 from __future__ import annotations
 
 from chunkshop.sources.parsers.base import (
+    AmbiguousDeriverError,
     Deriver,
     EmptyDerivationError,
     FileParser,
@@ -67,6 +68,7 @@ __all__ = [
     "HTMLParser",
     "Deriver",
     "EmptyDerivationError",
+    "AmbiguousDeriverError",
     "call_deriver",
     "ParseResult",
     "normalize_parse_result",

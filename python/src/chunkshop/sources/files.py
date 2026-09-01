@@ -58,14 +58,30 @@ class FilesSource:
         # extension listed in a pipe-separated key ("png|jpg|webp"). Track
         # exactly which extensions came from this block — the cache below is
         # scoped to only those, never to the default/injected parser table.
+        #
+        # Task 9 Correction 2: reject a `derive:` block where the same
+        # extension is reachable from two DIFFERENT keys, rather than
+        # silently letting the later key win (see AmbiguousDeriverError's
+        # docstring — Rust's BTreeMap-ordered resolution can pick the
+        # opposite winner for the identical config).
         self._derived_exts: set[str] = set()
         if cfg.derive:
             from chunkshop.sources.derivers import load_deriver
+            from chunkshop.sources.parsers import AmbiguousDeriverError
 
+            ext_owner: dict[str, str] = {}
             for pattern, deriver_cfg in cfg.derive.items():
                 deriver = load_deriver(deriver_cfg)
                 for ext in pattern.split("|"):
                     ext = ext.strip().lower().lstrip(".")
+                    owner = ext_owner.get(ext)
+                    if owner is not None and owner != pattern:
+                        raise AmbiguousDeriverError(
+                            f"extension '{ext}' is reachable from two different "
+                            f"`derive` keys: '{owner}' and '{pattern}'. Each "
+                            f"extension must be routed by exactly one `derive` key."
+                        )
+                    ext_owner[ext] = pattern
                     self._parsers[ext] = deriver
                     self._derived_exts.add(ext)
 

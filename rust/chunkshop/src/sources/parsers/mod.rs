@@ -86,6 +86,38 @@ pub trait Deriver: Send + Sync {
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult>;
 }
 
+/// Derivers that participate in the derivation cache (Task 7) expose their
+/// own `(rung, model_id, model_version, params)` — the exact tuple both
+/// `derivers::provenance::derivation_hash` and `stamp_provenance` are
+/// called with, so the cache key and the provenance stamp can never
+/// silently disagree (Global Constraints). Mirrors Python's duck-typed
+/// `getattr(parser, "derivation_hash", None)` callback in `files.py`.
+/// Implemented by `ImageMetaDeriver` (Task 9) and `ClipTagsDeriver` (a
+/// later task).
+pub trait CacheableDeriver: Deriver {
+    fn cache_key_parts(&self) -> (String, String, String, Value);
+}
+
+/// Mirrors Python's `AmbiguousDeriverError` (Task 9 Correction 2). Two
+/// different `derive:` keys in `FilesSourceConfig` both claim the SAME
+/// file extension. Python's `cfg.derive` dict preserves YAML insertion
+/// order (so the *later* key silently wins); Rust's is a `BTreeMap`
+/// (lexicographic key order) — the two languages can pick OPPOSITE
+/// winners for the byte-identical config. Rather than let that silently
+/// diverge, both languages reject the ambiguity outright with a named
+/// error citing the extension and both colliding keys.
+#[derive(Debug, Clone, Error)]
+#[error(
+    "extension '{ext}' is reachable from two different `derive` keys: \
+     '{first_key}' and '{second_key}'. Each extension must be routed by \
+     exactly one `derive` key."
+)]
+pub struct AmbiguousDeriverError {
+    pub ext: String,
+    pub first_key: String,
+    pub second_key: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

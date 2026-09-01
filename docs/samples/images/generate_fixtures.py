@@ -219,12 +219,78 @@ def make_screenshot_settings() -> Image.Image:
     return img
 
 
+# ---------------------------------------------------------------------------
+# Task 9 Correction 1 fixtures — cover the PIL `mode`/`has_alpha` value
+# space the `image_meta` deriver's rung-0 parity test measures Rust against.
+# Deliberately tiny (8x8): these exist to pin metadata VALUES, not to look
+# like real game art.
+# ---------------------------------------------------------------------------
+def make_palette_no_alpha() -> Image.Image:
+    """A plain paletted (mode "P") PNG with no tRNS chunk."""
+    img = Image.new("P", (8, 8))
+    palette = [0, 0, 0] * 256
+    palette[0:3] = [255, 0, 0]
+    palette[3:6] = [0, 255, 0]
+    img.putpalette(palette)
+    px = img.load()
+    for y in range(8):
+        for x in range(8):
+            px[x, y] = 0 if (x + y) % 2 == 0 else 1
+    return img
+
+
+def make_palette_with_trns() -> Image.Image:
+    """A paletted (mode "P") PNG with an explicit tRNS chunk — the case
+    Pillow's `has_alpha` catches via `"transparency" in img.info` even
+    though `img.mode` is "P", not "RGBA"/"LA"/"PA"."""
+    img = make_palette_no_alpha()
+    img.info["transparency"] = 0  # palette index 0 is fully transparent
+    return img
+
+
+def make_grayscale_l() -> Image.Image:
+    """Mode "L" (8-bit grayscale, no alpha)."""
+    img = Image.new("L", (8, 8), 128)
+    px = img.load()
+    for y in range(8):
+        for x in range(8):
+            px[x, y] = (x * 32) % 256
+    return img
+
+
+def make_rgba() -> Image.Image:
+    """Mode "RGBA" with real per-pixel alpha."""
+    img = Image.new("RGBA", (8, 8), (200, 30, 30, 255))
+    px = img.load()
+    for y in range(4):
+        for x in range(8):
+            px[x, y] = (200, 30, 30, 0)  # top half fully transparent
+    return img
+
+
+def make_small_rgb() -> Image.Image:
+    """Plain mode "RGB", no alpha, no palette — the baseline case."""
+    img = Image.new("RGB", (8, 8), (30, 110, 200))
+    return img
+
+
 def main() -> None:
     make_sprite_knight().save(OUT / "sprite_knight.png", optimize=True)
     make_chart_revenue().save(OUT / "chart_revenue.png", optimize=True)
     make_screenshot_settings().save(OUT / "screenshot_settings.png", optimize=True)
-    for p in sorted(OUT.glob("*.png")):
-        print(p.name, p.stat().st_size, "bytes")
+
+    make_palette_no_alpha().save(OUT / "swatch_palette.png")
+    make_palette_with_trns().save(OUT / "swatch_palette_trns.png")
+    make_grayscale_l().save(OUT / "swatch_grayscale.png")
+    make_rgba().save(OUT / "swatch_rgba.png")
+    rgb = make_small_rgb()
+    rgb.save(OUT / "swatch_rgb.jpg", quality=90)
+    rgb.save(OUT / "swatch_rgb.webp")
+    rgb.convert("P", palette=Image.ADAPTIVE).save(OUT / "swatch_rgb.gif")
+
+    for p in sorted(OUT.iterdir()):
+        if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+            print(p.name, p.stat().st_size, "bytes")
 
 
 if __name__ == "__main__":

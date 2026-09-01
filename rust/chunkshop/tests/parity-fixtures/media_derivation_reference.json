@@ -1,0 +1,21 @@
+{
+  "metadata_keys": [
+    "aspect_ratio",
+    "content_origin",
+    "derived",
+    "derived_rung",
+    "has_alpha",
+    "height",
+    "image_format",
+    "image_mode",
+    "width"
+  ],
+  "derived_keys": [
+    "engine",
+    "model",
+    "model_version",
+    "params_hash",
+    "rung",
+    "ts"
+  ]
+}

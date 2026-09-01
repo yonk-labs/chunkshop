@@ -79,3 +79,41 @@ def test_no_files_matched_raises(tmp_path):
     src = FilesSource(Cfg(type="files", glob=str(tmp_path / "*.nope")))
     with pytest.raises(ValueError, match="no files matched glob"):
         list(src.iter_documents())
+
+
+def test_ambiguous_derive_block_is_rejected(tmp_path):
+    """Task 9 Correction 2: "png|jpg" and "jpg|webp" both claim "jpg" —
+    Python's dict-insertion-order last-writer-wins and Rust's BTreeMap
+    lexicographic-order last-writer-wins pick OPPOSITE derivers for this
+    identical config, so both must reject it outright instead of picking
+    either."""
+    from chunkshop.sources.parsers import AmbiguousDeriverError
+
+    with pytest.raises(AmbiguousDeriverError, match="jpg"):
+        FilesSource(
+            Cfg(
+                type="files",
+                glob=str(tmp_path / "*"),
+                derive={
+                    "png|jpg": {"rung": "image_meta"},
+                    "jpg|webp": {"rung": "image_meta"},
+                },
+            )
+        )
+
+
+def test_non_overlapping_multi_key_derive_block_still_works(tmp_path):
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    src = FilesSource(
+        Cfg(
+            type="files",
+            glob=str(tmp_path / "*"),
+            derive={
+                "png|jpg": {"rung": "image_meta"},
+                "webp|gif": {"rung": "image_meta"},
+            },
+        )
+    )
+    docs = list(src.iter_documents())
+    assert len(docs) == 1
+    assert docs[0].content == "hello"

@@ -113,6 +113,19 @@ html2text = { version = "0.17", optional = true }
 # fastembed's own code can `use` it that way — a direct dependency is needed
 # for `image_meta.rs`'s own `image::open`/`ImageFormat`/`ColorType` calls.
 image = { version = "0.25", optional = true }
+# `png` and `gif` are already transitive dependencies of `image` (pinned in
+# Cargo.lock at 0.18/0.14 respectively) — declared directly here too, at the
+# SAME versions, so no new crate enters the tree. `image` decodes palette
+# PNGs and all GIFs into expanded RGB(A) buffers, which loses the PIL-visible
+# distinction between "P" (indexed) and "RGB"/"RGBA" mode, and (for GIF)
+# always reports `has_alpha=true` regardless of whether the file actually
+# declares a transparent color. `image_meta.rs` reads the IHDR color-type
+# byte + tRNS chunk (PNG) and the Graphic Control Extension's transparent
+# flag (GIF) directly via these crates' low-level readers to recover
+# Pillow-exact `mode`/`has_alpha` values instead of `image`'s post-expansion
+# `ColorType`. See Task 9 Correction 1.
+png = { version = "0.18", optional = true }
+gif = { version = "0.14", optional = true }
 
 # --- `source` feature: files (glob) / HTTP / S3 ---
 futures = { version = "0.3", optional = true }
@@ -281,4 +294,4 @@ code-aware-rust       = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-rust"
 # without embedder-hub built in should fail at config-load with a clear
 # message (F14/NN-6 convention), not a missing-symbol compile error for
 # users who only wanted image_meta.
-media = ["dep:pdf-extract", "dep:calamine", "dep:docx-rust", "dep:html2text", "dep:image"]
+media = ["dep:pdf-extract", "dep:calamine", "dep:docx-rust", "dep:html2text", "dep:image", "dep:png", "dep:gif"]

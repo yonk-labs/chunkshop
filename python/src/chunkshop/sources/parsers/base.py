@@ -35,6 +35,23 @@ class EmptyDerivationError(ParserError):
     """
 
 
+class AmbiguousDeriverError(ParserError):
+    """Two different `derive:` keys in a `files` source config both route
+    the same file extension to a deriver (Task 9 Correction 2, chunkshop
+    Rust media-parity plan).
+
+    `FilesSource.__init__` builds its per-extension deriver table by
+    iterating `cfg.derive.items()` in dict order, and Python dicts preserve
+    YAML insertion order — so ordinarily the *later* key silently wins on a
+    collision. The Rust port's `derive:` field is a `BTreeMap` (lexicographic
+    key order) for its own good reasons, which means the two languages can
+    pick OPPOSITE winners for the byte-identical YAML config. Rather than
+    let that silently diverge across ports, both languages reject the
+    ambiguity outright with a named error citing the extension and both
+    colliding keys.
+    """
+
+
 @runtime_checkable
 class Deriver(Protocol):
     """Generalisation of FileParser: may return metadata alongside text.

@@ -1,27 +1,98 @@
 //! Files source. Mirrors `python/src/chunkshop/sources/files.py`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use anyhow::{anyhow, Context, Result};
-use sha1::{Digest, Sha1};
+use sha1::{Digest as _, Sha1};
+use sha2::Sha256;
 
 use crate::config::{FilesSourceConfig, OnEmpty};
 use crate::sources::base::Document;
+use crate::sources::derivers::cache::{cached_derive, DerivationCache};
+use crate::sources::derivers::provenance::derivation_hash;
+use crate::sources::parsers::{AmbiguousDeriverError, CacheableDeriver, EmptyDerivationError};
 
 pub struct FilesSource {
     cfg: FilesSourceConfig,
+    /// Per-extension deriver override table, built from `cfg.derive`.
+    /// ONLY extensions listed here are cache-eligible — see `_derived_exts`
+    /// in `files.py`'s docstring for why an extension outside this table
+    /// (the default/registry parser path) must never be routed through the
+    /// cache.
+    derived: HashMap<String, Rc<dyn CacheableDeriver>>,
+    cache: Option<DerivationCache>,
+    /// Set at construction if `cfg.derive` routes the same extension from
+    /// two different pattern keys (Task 9 Correction 2). Checked by
+    /// `iter_documents` before any file is touched, and returned as an
+    /// error rather than silently picking a winner. Stored here (instead
+    /// of making `new()` fallible) to keep `FilesSource::new`'s existing
+    /// infallible signature — and every other call site — unchanged.
+    derive_error: Option<AmbiguousDeriverError>,
 }
 
 impl FilesSource {
     pub fn new(cfg: FilesSourceConfig) -> Self {
-        Self { cfg }
+        let mut derived: HashMap<String, Rc<dyn CacheableDeriver>> = HashMap::new();
+        let mut ext_owner: HashMap<String, String> = HashMap::new();
+        let mut derive_error = None;
+
+        if let Some(derive_cfg) = &cfg.derive {
+            for (pattern, dcfg) in derive_cfg {
+                let deriver: Rc<dyn CacheableDeriver> = crate::sources::derivers::load_deriver(dcfg);
+                for raw_ext in pattern.split('|') {
+                    let ext = raw_ext.trim().to_lowercase();
+                    let ext = ext.trim_start_matches('.').to_string();
+                    if let Some(existing_key) = ext_owner.get(&ext) {
+                        if existing_key != pattern && derive_error.is_none() {
+                            derive_error = Some(AmbiguousDeriverError {
+                                ext: ext.clone(),
+                                first_key: existing_key.clone(),
+                                second_key: pattern.clone(),
+                            });
+                        }
+                        continue;
+                    }
+                    ext_owner.insert(ext.clone(), pattern.clone());
+                    derived.insert(ext, deriver.clone());
+                }
+            }
+        }
+
+        // The cache exists to memoise EXPENSIVE derivation. Without a
+        // derive block every parser is cheap local text/binary extraction
+        // via the registry, so a text-only (or plain media-registry) cell
+        // builds no cache and touches no disk. Even with a derive block,
+        // only derive-configured extensions are ever routed through it —
+        // see `iter_documents` below.
+        let cache = if cfg.derive.is_some() && cfg.cache.enabled {
+            Some(DerivationCache::new(
+                cfg.cache.root.clone().map(PathBuf::from),
+            ))
+        } else {
+            None
+        };
+
+        Self {
+            cfg,
+            derived,
+            cache,
+            derive_error,
+        }
     }
 
     /// Enumerate files matching the glob, in sorted order, deriving each
-    /// through the extension-dispatched parser registry (plain text passes
-    /// through unchanged; recognized binary formats get real extraction or a
-    /// named refusal — never a silent UTF-8 mis-decode).
+    /// through the per-extension `derive:` override table first (cache-
+    /// eligible), falling back to the extension-dispatched parser registry
+    /// (plain text passes through unchanged; recognized binary formats get
+    /// real extraction or a named refusal — never a silent UTF-8
+    /// mis-decode).
     pub fn iter_documents(&self) -> Result<Vec<Document>> {
+        if let Some(err) = &self.derive_error {
+            return Err(anyhow::Error::new(err.clone()));
+        }
+
         let mut paths: Vec<PathBuf> = glob::glob(&self.cfg.glob)
             .with_context(|| format!("invalid glob {:?}", self.cfg.glob))?
             .filter_map(std::result::Result::ok)
@@ -38,15 +109,30 @@ impl FilesSource {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-            let deriver = crate::sources::parsers::registry::get_deriver(&ext);
-            let result = deriver
-                .derive(&p)
-                .with_context(|| format!("deriving {}", p.display()))?;
+
+            let (result, content_hash) = if let Some(deriver) = self.derived.get(&ext) {
+                let bytes = std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?;
+                let content_hash = hash_bytes(&bytes);
+                let (rung, model_id, model_version, params) = deriver.cache_key_parts();
+                let d_hash = derivation_hash(&rung, &model_id, &model_version, "rust", &params);
+                let (r, _hit) = cached_derive(self.cache.as_ref(), &content_hash, &d_hash, || {
+                    deriver.derive(&p)
+                })?;
+                (r, Some(content_hash))
+            } else {
+                let deriver = crate::sources::parsers::registry::get_deriver(&ext);
+                (
+                    deriver
+                        .derive(&p)
+                        .with_context(|| format!("deriving {}", p.display()))?,
+                    None,
+                )
+            };
 
             if result.text.trim().is_empty() {
                 match self.cfg.on_empty {
                     OnEmpty::Error => {
-                        return Err(crate::sources::parsers::EmptyDerivationError {
+                        return Err(EmptyDerivationError {
                             path: p.clone(),
                             parser: ext.clone(),
                         }
@@ -72,7 +158,7 @@ impl FilesSource {
                 content: result.text,
                 title,
                 metadata: serde_json::Value::Object(metadata),
-                fingerprint: None,
+                fingerprint: content_hash,
             });
         }
         Ok(out)
@@ -93,5 +179,81 @@ impl FilesSource {
             }
             other => Err(anyhow!("unknown id_from: {other}")),
         }
+    }
+}
+
+/// Mirrors Python's `_hash_bytes` (`files.py:21-22`).
+fn hash_bytes(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::config::{DeriverConfig, ImageMetaDeriverConfig};
+
+    fn base_cfg(
+        glob: String,
+        derive: Option<BTreeMap<String, DeriverConfig>>,
+    ) -> FilesSourceConfig {
+        FilesSourceConfig {
+            glob,
+            id_from: "path".to_string(),
+            encoding: "utf-8".to_string(),
+            on_empty: OnEmpty::Error,
+            derive,
+            cache: Default::default(),
+        }
+    }
+
+    fn image_meta_cfg() -> DeriverConfig {
+        DeriverConfig::ImageMeta(ImageMetaDeriverConfig {
+            path_segments: true,
+            segment_depth: 3,
+        })
+    }
+
+    #[test]
+    fn ambiguous_derive_block_is_rejected() {
+        // Task 9 Correction 2: "png|jpg" and "jpg|webp" both claim "jpg" —
+        // Python's dict-insertion-order last-writer-wins and Rust's
+        // BTreeMap lexicographic-order last-writer-wins pick OPPOSITE
+        // derivers for this identical config, so both must reject it
+        // outright instead of picking either.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.png"), b"x").unwrap();
+        let mut derive = BTreeMap::new();
+        derive.insert("png|jpg".to_string(), image_meta_cfg());
+        derive.insert("jpg|webp".to_string(), image_meta_cfg());
+        let cfg = base_cfg(format!("{}/*", dir.path().display()), Some(derive));
+
+        let src = FilesSource::new(cfg);
+        let err = src.iter_documents().unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("jpg"), "{msg}");
+        assert!(msg.contains("derive"), "{msg}");
+    }
+
+    #[test]
+    fn non_overlapping_multi_key_derive_block_still_works() {
+        let dir = tempfile::tempdir().unwrap();
+        // The one file present has an extension that ISN'T derive-
+        // configured, so it goes through the ordinary registry path —
+        // this proves construction with a multi-key, non-overlapping
+        // derive block doesn't spuriously error.
+        std::fs::write(dir.path().join("a.txt"), b"hello").unwrap();
+        let mut derive = BTreeMap::new();
+        derive.insert("png|jpg".to_string(), image_meta_cfg());
+        derive.insert("webp|gif".to_string(), image_meta_cfg());
+        let cfg = base_cfg(format!("{}/*", dir.path().display()), Some(derive));
+
+        let src = FilesSource::new(cfg);
+        let docs = src.iter_documents().unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].content, "hello");
     }
 }
