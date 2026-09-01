@@ -14,6 +14,11 @@ use super::{Deriver, ParseResult};
 pub struct PdfDeriver;
 
 impl Deriver for PdfDeriver {
+    /// Python's class is `PDFParser` (initialism uppercased), not `PdfParser`.
+    fn parser_name(&self) -> &'static str {
+        "PDFParser"
+    }
+
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
         let text = pdf_extract::extract_text(path)
             .map_err(|e| anyhow::anyhow!("failed to parse PDF {}: {e}", path.display()))?;

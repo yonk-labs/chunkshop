@@ -129,6 +129,11 @@ impl Default for ImageMetaDeriver {
 }
 
 impl Deriver for ImageMetaDeriver {
+    /// Same class name in both ports.
+    fn parser_name(&self) -> &'static str {
+        "ImageMetaDeriver"
+    }
+
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
         let fmt = ImageFormat::from_path(path).unwrap_or(ImageFormat::Png);
         let fmt_name = pillow_style_format_name(fmt)?;

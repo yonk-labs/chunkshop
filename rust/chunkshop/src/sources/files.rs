@@ -118,7 +118,7 @@ impl FilesSource {
                 .unwrap_or("")
                 .to_lowercase();
 
-            let (result, content_hash) = if let Some(deriver) = self.derived.get(&ext) {
+            let (result, content_hash, parser_name) = if let Some(deriver) = self.derived.get(&ext) {
                 let bytes = std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?;
                 let content_hash = hash_bytes(&bytes);
                 let (rung, model_id, model_version, params) = deriver.cache_key_parts();
@@ -133,14 +133,16 @@ impl FilesSource {
                 let (r, _hit) = cached_derive(self.cache.as_ref(), &content_hash, &d_hash, extra.as_deref(), || {
                     deriver.derive(&p)
                 })?;
-                (r, Some(content_hash))
+                (r, Some(content_hash), deriver.parser_name())
             } else {
                 let deriver = crate::sources::parsers::registry::get_deriver(&ext);
+                let name = deriver.parser_name();
                 (
                     deriver
                         .derive(&p)
                         .with_context(|| format!("deriving {}", p.display()))?,
                     None,
+                    name,
                 )
             };
 
@@ -149,7 +151,12 @@ impl FilesSource {
                     OnEmpty::Error => {
                         return Err(EmptyDerivationError {
                             path: p.clone(),
-                            parser: ext.clone(),
+                            // The deriver's Python class name, matching
+                            // Python's `f"{path} produced no text via
+                            // {parser.__class__.__name__}"`. Was the bare
+                            // extension until the `parser_name` contract
+                            // existed to supply the real thing.
+                            parser: parser_name.to_string(),
                         }
                         .into());
                     }
@@ -167,6 +174,20 @@ impl FilesSource {
             metadata.insert(
                 "source_path".to_string(),
                 serde_json::Value::String(p.display().to_string()),
+            );
+            // Stamped HERE, not inside the deriver, for two reasons.
+            // (1) `ClipTagsDeriver` delegates to `ImageMetaDeriver` for its
+            // rung-0 base, so a deriver-side stamp would label every rung-1
+            // document `"ImageMetaDeriver"` — a wrong value in place of a
+            // missing key, which is strictly worse. (2) It sits outside the
+            // derivation cache, so a cache HIT still gets the parser that
+            // this cell is configured with rather than whichever one first
+            // populated the entry. Mirrors Python's own placement in
+            // `files.py`, where `parser` is merged in after `cached_derive`
+            // returns and takes precedence over deriver-emitted keys.
+            metadata.insert(
+                "parser".to_string(),
+                serde_json::Value::String(parser_name.to_string()),
             );
             out.push(Document {
                 id: doc_id,

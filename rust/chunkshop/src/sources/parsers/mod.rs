@@ -84,6 +84,23 @@ pub struct UnsupportedFormatError {
 
 pub trait Deriver: Send + Sync {
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult>;
+
+    /// The value `FilesSource` stamps into `metadata["parser"]`, and the
+    /// name an `EmptyDerivationError` reports.
+    ///
+    /// Python writes `parser.__class__.__name__` (the metadata-assembly
+    /// block in `files.py`), so this must return the **Python** class name
+    /// for the same format — `"PDFParser"`, not `"PdfDeriver"`. The two
+    /// ports name their types differently, so `std::any::type_name` would
+    /// produce a value that is merely *present* rather than *equal*: a
+    /// subtler parity defect than the missing key it would be replacing.
+    ///
+    /// Deliberately REQUIRED, with no trait default. A default would hand
+    /// every future deriver a plausible-looking wrong name for free, and
+    /// this key is provenance that users grep and filter on — a wrong
+    /// value is worse than a compile error. Requiring it forces whoever
+    /// adds the next deriver to go look up what Python calls it.
+    fn parser_name(&self) -> &'static str;
 }
 
 /// Derivers that participate in the derivation cache (Task 7) expose their

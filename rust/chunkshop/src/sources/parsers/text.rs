@@ -17,6 +17,12 @@ use super::{Deriver, ParseResult};
 pub struct TextDeriver;
 
 impl Deriver for TextDeriver {
+    /// Python's `TextParser` (`parsers/__init__.py`'s `_TEXT`, the table's
+    /// default and its fallback for any unknown extension).
+    fn parser_name(&self) -> &'static str {
+        "TextParser"
+    }
+
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;

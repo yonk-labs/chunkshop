@@ -11,6 +11,11 @@ use super::{Deriver, ParseResult};
 pub struct HtmlDeriver;
 
 impl Deriver for HtmlDeriver {
+    /// Python's class is `HTMLParser` (initialism uppercased).
+    fn parser_name(&self) -> &'static str {
+        "HTMLParser"
+    }
+
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;

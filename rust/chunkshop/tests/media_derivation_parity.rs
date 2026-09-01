@@ -95,6 +95,120 @@ fn rung0_metadata_keys_match_python() {
     assert_rung_keys_match("rung0", &result);
 }
 
+/// Build a one-image `FilesSource` over the shared fixture image and return
+/// the single document's metadata.
+///
+/// The deriver-level assertions above cannot see `FilesSource`'s OWN
+/// metadata contributions (`source_path`, `parser`), and that blind spot was
+/// load-bearing: Rust stamped no `parser` key at all while Python stamped
+/// one on every row, and `rung0_metadata_keys_match_python` stayed green
+/// through the whole divergence. Measured on a 51-image corpus, Python said
+/// `parser="ClipTagsDeriver"` on all 51 and Rust said `null`.
+///
+/// Copies the image into a tempdir first so the glob matches exactly one
+/// file regardless of what else lives in `docs/samples/images/`, and so the
+/// `parser` assertion is unaffected by corpus changes.
+fn document_metadata(
+    deriver: chunkshop::config::DeriverConfig,
+) -> serde_json::Map<String, serde_json::Value> {
+    use chunkshop::config::{DerivationCacheSettings, FilesSourceConfig};
+    use chunkshop::sources::files::FilesSource;
+
+    let dir = tempfile::tempdir().unwrap();
+    let img = dir.path().join("sprite_knight.png");
+    std::fs::copy(IMG_PATH, &img).unwrap();
+
+    let mut derive = std::collections::BTreeMap::new();
+    derive.insert("png".to_string(), deriver);
+
+    let cfg = FilesSourceConfig {
+        glob: dir.path().join("*.png").display().to_string(),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+        on_empty: chunkshop::config::OnEmpty::Error,
+        derive: Some(derive),
+        // Off: this test is about what reaches the document, and a cache
+        // rooted in the user's real cache dir would make the run depend on
+        // whatever a previous run left behind.
+        cache: DerivationCacheSettings {
+            enabled: false,
+            root: None,
+        },
+    };
+
+    let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
+    assert_eq!(
+        docs.len(),
+        1,
+        "the tempdir glob must match exactly one file"
+    );
+    docs[0].metadata.as_object().unwrap().clone()
+}
+
+/// Compare a DOCUMENT's key set (and its `parser` value) against the Python
+/// golden fixture. `parser` is checked by value, not just by presence: a
+/// Rust type name (`"ImageMetaDeriver"` is the same in both ports, but
+/// `"PdfDeriver"` vs `"PDFParser"` is not) in this slot is present-but-wrong,
+/// which a key-set assertion cannot see.
+fn assert_document_matches(section: &str, md: &serde_json::Map<String, serde_json::Value>) {
+    let f = fixture();
+    let expected_keys = key_set(&f[section]["metadata_keys"]);
+    assert!(
+        !expected_keys.is_empty(),
+        "fixture has no {section}.metadata_keys"
+    );
+    let actual_keys: std::collections::HashSet<String> = md.keys().cloned().collect();
+    assert_eq!(
+        actual_keys, expected_keys,
+        "{section}: document metadata key set must match Python"
+    );
+    assert_eq!(
+        md["parser"], f[section]["parser"],
+        "{section}: `parser` must be the same value Python stamps — Python \
+         writes `parser.__class__.__name__`, so Rust must return the PYTHON \
+         class name for the format, not its own struct name"
+    );
+}
+
+#[test]
+fn rung0_document_metadata_matches_python() {
+    let md = document_metadata(chunkshop::config::DeriverConfig::ImageMeta(
+        chunkshop::config::ImageMetaDeriverConfig {
+            path_segments: true,
+            segment_depth: 3,
+        },
+    ));
+    assert_document_matches("rung0_document", &md);
+}
+
+/// The non-derive path: an ordinary text file goes through the extension
+/// registry, and must still carry `parser`. Python stamps `"TextParser"`
+/// (`get_parser` falls back to the shared `_TEXT` instance); Rust's type is
+/// called `TextDeriver`, so this is exactly the case where returning
+/// `std::any::type_name` would produce a present-but-wrong value.
+#[test]
+fn a_registry_parsed_text_file_carries_pythons_parser_name() {
+    use chunkshop::config::{DerivationCacheSettings, FilesSourceConfig};
+    use chunkshop::sources::files::FilesSource;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "hello world").unwrap();
+    let cfg = FilesSourceConfig {
+        glob: dir.path().join("*.txt").display().to_string(),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+        on_empty: chunkshop::config::OnEmpty::Error,
+        derive: None,
+        cache: DerivationCacheSettings::default(),
+    };
+    let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
+    assert_eq!(docs[0].metadata["parser"], serde_json::json!("TextParser"));
+    assert!(
+        docs[0].metadata["source_path"].is_string(),
+        "source_path must still be stamped alongside parser"
+    );
+}
+
 /// Rung 1 (CLIP zero-shot tags). Same contract as rung 0 — keys and
 /// provenance FIELD NAMES, never hash VALUES.
 ///
@@ -160,6 +274,25 @@ fn rung1_metadata_keys_match_python() {
     ] {
         assert!(result.metadata.contains_key(k), "rung 1 lost/omitted {k:?}");
     }
+
+    // ...and the same rung as a user reads it off a row. `parser` must say
+    // "ClipTagsDeriver", NOT the "ImageMetaDeriver" that a deriver-side
+    // stamp would have produced via the rung-0 base this rung wraps.
+    let md = document_metadata(chunkshop::config::DeriverConfig::ClipTags(
+        chunkshop::config::ClipTagsDeriverConfig {
+            vocabulary: f["rung1"]["vocabulary"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect(),
+            top_k,
+            min_score,
+            vision_model: VISION_DEFAULT.to_string(),
+            text_model: TEXT_DEFAULT.to_string(),
+        },
+    ));
+    assert_document_matches("rung1_document", &md);
 }
 
 /// The positive statement of the "never compare hashes" rule: identical rung,

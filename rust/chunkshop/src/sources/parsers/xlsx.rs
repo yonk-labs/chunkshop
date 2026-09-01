@@ -24,6 +24,11 @@ use super::{Deriver, ParseResult};
 pub struct XlsxDeriver;
 
 impl Deriver for XlsxDeriver {
+    /// Python's class is `XLSXParser` (initialism uppercased).
+    fn parser_name(&self) -> &'static str {
+        "XLSXParser"
+    }
+
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
         let mut wb: Xlsx<_> = open_workbook(path)
             .map_err(|e| anyhow::anyhow!("failed to parse XLSX {}: {e}", path.display()))?;

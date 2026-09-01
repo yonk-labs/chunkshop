@@ -103,6 +103,32 @@ pub fn get_deriver(ext: &str) -> Box<dyn Deriver> {
     dispatch(&ext, UNIMPLEMENTED_FORMATS, MEDIA_GATED_FORMATS)
 }
 
+/// Python's parser CLASS NAME for an extension — the value Python stamps
+/// into `metadata["parser"]` (`files.py`) and the one `Deriver::parser_name`
+/// must reproduce.
+///
+/// Exists for the two STAND-IN derivers below, which cover several formats
+/// each and so cannot answer with a single literal the way `PdfDeriver` and
+/// friends do. The real derivers keep their own literal — `parser_name` is a
+/// property of the type, not of a lookup table — and
+/// `stand_in_names_agree_with_the_real_derivers` below is the tripwire that
+/// keeps the two in step.
+///
+/// The `_ => "TextParser"` arm is not a guess: Python's `get_parser` returns
+/// the shared `_TEXT` (`TextParser`) for every extension absent from
+/// `DEFAULT_PARSERS`, so an unknown extension genuinely IS `TextParser` on
+/// both sides.
+pub(crate) fn python_parser_name(ext: &str) -> &'static str {
+    match ext {
+        "pdf" => "PDFParser",
+        "docx" => "DOCXParser",
+        "pptx" => "PPTXParser",
+        "xlsx" => "XLSXParser",
+        "html" | "htm" => "HTMLParser",
+        _ => "TextParser",
+    }
+}
+
 /// A recognized binary format with no Rust deriver at all yet. Refuses
 /// loudly instead of falling through to `TextDeriver` — see module docs.
 pub struct UnimplementedFormatDeriver {
@@ -110,6 +136,10 @@ pub struct UnimplementedFormatDeriver {
 }
 
 impl Deriver for UnimplementedFormatDeriver {
+    fn parser_name(&self) -> &'static str {
+        python_parser_name(self.format)
+    }
+
     fn derive(&self, _path: &Path) -> anyhow::Result<ParseResult> {
         Err(UnsupportedFormatError {
             format: self.format,
@@ -128,6 +158,10 @@ pub struct MissingFeatureDeriver {
 }
 
 impl Deriver for MissingFeatureDeriver {
+    fn parser_name(&self) -> &'static str {
+        python_parser_name(self.format)
+    }
+
     fn derive(&self, _path: &Path) -> anyhow::Result<ParseResult> {
         Err(MissingFeatureError {
             format: self.format,
@@ -157,5 +191,43 @@ mod tests {
             msg.contains("--features media"),
             "expected the error to name the feature to enable, got: {msg}"
         );
+    }
+
+    /// `python_parser_name` (the stand-in derivers' lookup) and the real
+    /// derivers' own `parser_name()` literals are two statements of the
+    /// same fact. If a rename touched one and not the other, a file would
+    /// be stamped `parser = "PDFParser"` in a `media` build and something
+    /// else in a slim one, for the same extension. Compare them by DRIVING
+    /// `get_deriver`, not by restating either table.
+    #[cfg(feature = "media")]
+    #[test]
+    fn stand_in_names_agree_with_the_real_derivers() {
+        for ext in ["pdf", "docx", "xlsx", "html", "htm", "txt", "md", "wat"] {
+            assert_eq!(
+                get_deriver(ext).parser_name(),
+                python_parser_name(ext),
+                "parser name for {ext:?} disagrees between the real deriver and \
+                 the stand-in lookup"
+            );
+        }
+    }
+
+    /// Every name the lookup can return must be a class that actually
+    /// exists in Python — the whole point of the key is that a user can
+    /// compare the two ports' rows. Pinned as literals here deliberately:
+    /// this is the one place the Python-side truth is written down, and it
+    /// is checked against `python/src/chunkshop/sources/parsers/__init__.py`.
+    #[test]
+    fn lookup_returns_pythons_class_names() {
+        assert_eq!(python_parser_name("pdf"), "PDFParser");
+        assert_eq!(python_parser_name("docx"), "DOCXParser");
+        assert_eq!(python_parser_name("pptx"), "PPTXParser");
+        assert_eq!(python_parser_name("xlsx"), "XLSXParser");
+        assert_eq!(python_parser_name("html"), "HTMLParser");
+        assert_eq!(python_parser_name("htm"), "HTMLParser");
+        // Python's `get_parser` falls back to the shared `_TEXT` instance
+        // for anything not in `DEFAULT_PARSERS`.
+        assert_eq!(python_parser_name("txt"), "TextParser");
+        assert_eq!(python_parser_name("wat"), "TextParser");
     }
 }

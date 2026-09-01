@@ -215,6 +215,10 @@ fn cache_key_extra_defaults_to_none() {
 
     struct Pure;
     impl Deriver for Pure {
+        fn parser_name(&self) -> &'static str {
+            "PureTestDeriver"
+        }
+
         fn derive(&self, _path: &Path) -> anyhow::Result<ParseResult> {
             Ok(ParseResult::new("body"))
         }

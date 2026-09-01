@@ -302,6 +302,14 @@ impl ClipTagsDeriver {
 }
 
 impl Deriver for ClipTagsDeriver {
+    /// Same class name in both ports. NOT inherited from the rung-0
+    /// `ImageMetaDeriver` this rung wraps: the `parser` key must name the
+    /// deriver the user actually configured, or a rung-1 corpus would be
+    /// indistinguishable from a rung-0 one in the stamped metadata.
+    fn parser_name(&self) -> &'static str {
+        "ClipTagsDeriver"
+    }
+
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
         let base = self.base_deriver().derive(path)?;
         let scores = self.score_image(path)?;

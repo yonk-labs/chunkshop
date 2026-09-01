@@ -1,5 +1,5 @@
 {
-  "_comment": "Golden fixture for rust/chunkshop/tests/media_derivation_parity.rs. KEY SETS ONLY, never values that legitimately differ between implementations: derived.ts is a timestamp, derived.model_version is the host fastembed version (python 0.8.0 vs rust crate 5.13.3), and derived.engine / the derivation hash differ BY DESIGN (engine participates in the hash so both languages can share one cache directory without masquerading as each other). Regenerate with the snippet in Plan D Task 14 Step 1.",
+  "_comment": "Golden fixture for rust/chunkshop/tests/media_derivation_parity.rs. GENERATED \u2014 do not hand-edit; run tests/parity/generate_media_derivation_reference.py. KEY SETS ONLY, never values that legitimately differ between implementations: derived.ts is a timestamp, derived.model_version is the host fastembed version (python vs the rust crate), and derived.engine / the derivation hash differ BY DESIGN (engine participates in the hash so both languages can share one cache directory without masquerading as each other). The *_document sections are the same rungs seen through FilesSource, i.e. what a user actually reads off a row \u2014 they carry source_path and parser, which the deriver-level sections cannot see.",
   "image_fixture": "docs/samples/images/sprite_knight.png",
   "rung0": {
     "deriver": "ImageMetaDeriver",
@@ -22,6 +22,22 @@
       "rung",
       "ts"
     ]
+  },
+  "rung0_document": {
+    "metadata_keys": [
+      "aspect_ratio",
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "has_alpha",
+      "height",
+      "image_format",
+      "image_mode",
+      "parser",
+      "source_path",
+      "width"
+    ],
+    "parser": "ImageMetaDeriver"
   },
   "rung1": {
     "deriver": "ClipTagsDeriver",
@@ -53,5 +69,23 @@
       "rung",
       "ts"
     ]
+  },
+  "rung1_document": {
+    "metadata_keys": [
+      "aspect_ratio",
+      "clip_scores",
+      "clip_tags",
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "has_alpha",
+      "height",
+      "image_format",
+      "image_mode",
+      "parser",
+      "source_path",
+      "width"
+    ],
+    "parser": "ClipTagsDeriver"
   }
 }

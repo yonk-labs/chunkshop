@@ -25,6 +25,11 @@ use super::{Deriver, ParseResult};
 pub struct DocxDeriver;
 
 impl Deriver for DocxDeriver {
+    /// Python's class is `DOCXParser` (initialism uppercased).
+    fn parser_name(&self) -> &'static str {
+        "DOCXParser"
+    }
+
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
         let docx_file = DocxFile::from_file(path)
             .map_err(|e| anyhow::anyhow!("failed to open DOCX {}: {e}", path.display()))?;
