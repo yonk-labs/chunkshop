@@ -97,8 +97,37 @@ class ClipTagsDeriverConfig(_Base):
     text_model: str = "Qdrant/clip-ViT-B-32-text"
 
 
+class RossDeriverConfig(_Base):
+    """Rung 5: the `ross` sibling binary, run as a subprocess.
+
+    Opt-in and keyless by default (``llm: false`` passes ``--no-llm``, so a
+    run needs no endpoint and no network beyond ross's one-time model
+    download). Costs a text-only user nothing — there is no Python extra and
+    no Cargo feature behind this rung in either port, only a binary that must
+    be on ``$PATH`` (or named by ``binary``) when the rung is actually used.
+
+    Fields are deliberately few. ``--clip``/``--clap`` are NOT configurable:
+    without them ross emits no description at all and every document would
+    derive to empty text. See ``sources.derivers.ross``.
+    """
+    rung: Literal["ross"]
+    #: Path to (or name of) the ross executable. Default resolves on $PATH.
+    binary: str = "ross"
+    #: Replace ross's vendored 50-label vocabulary (``--labels-file``). Its
+    #: CONTENT is hashed into the derivation params, so editing the file
+    #: re-derives rather than serving stale cached tags.
+    labels_file: Optional[str] = None
+    #: Run ross's LLM pass. Off by default: keyless and offline is the point
+    #: of this rung. On, ross needs ROSS_URL + ROSS_MODEL (or the
+    #: per-modality variants) in the environment.
+    llm: bool = False
+    #: Per-file subprocess timeout, seconds. ross's first run downloads its
+    #: CLIP/CLAP weights, which is the slow case this must accommodate.
+    timeout_s: int = 120
+
+
 DeriverConfig = Annotated[
-    Union[ImageMetaDeriverConfig, ClipTagsDeriverConfig],
+    Union[ImageMetaDeriverConfig, ClipTagsDeriverConfig, RossDeriverConfig],
     Field(discriminator="rung"),
 ]
 

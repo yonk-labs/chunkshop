@@ -35,6 +35,11 @@ Rung 1 loads the two CLIP towers (~0.6GB). They are reused from the cache the
 Rust tests populate, so this is a no-download run once those have been fetched
 at least once. Pass `--skip-rung1` to regenerate only the rung-0 sections,
 preserving whatever rung-1 sections the existing fixture already holds.
+
+Rung 5 (`ross`) needs the `ross` binary on `$PATH`. When it is absent the
+rung-5 sections are carried over from the existing fixture and a note is
+printed — the same shape as `--skip-rung1`, because a machine without ross
+must not be able to silently blank a committed contract.
 """
 from __future__ import annotations
 
@@ -73,6 +78,11 @@ IMAGE_FIXTURE = "docs/samples/images/sprite_knight.png"
 VOCABULARY = ["a knight sprite", "a landscape photo", "a chart"]
 TOP_K = 3
 MIN_SCORE = 0.2
+
+# Rung 5 is generated with ross's own vendored vocabulary and no LLM — the
+# keyless, offline default. The Rust test reads this config back out of the
+# fixture rather than restating it.
+ROSS_CONFIG = {"rung": "ross"}
 
 COMMENT = (
     "Golden fixture for rust/chunkshop/tests/media_derivation_parity.rs. "
@@ -127,8 +137,65 @@ def _document_section(derive_cfg: dict, image: Path) -> dict:
     }
 
 
+def _carry_over(out: dict, sections: tuple[str, ...], why: str) -> None:
+    """Copy sections from the committed fixture rather than regenerating.
+
+    A machine that cannot produce a section must not blank it: the fixture
+    is a cross-language contract, and an absent generator dependency is a
+    reason to preserve, never to delete.
+    """
+    if not FIXTURE.exists():
+        raise SystemExit(
+            f"ERROR: {why}, and there is no existing fixture to carry "
+            f"{', '.join(sections)} over from"
+        )
+    prior = json.loads(FIXTURE.read_text())
+    for key in sections:
+        if key not in prior:
+            raise SystemExit(f"ERROR: existing fixture has no {key} to carry over")
+        out[key] = prior[key]
+    print(f"carried {', '.join(sections)} over ({why})")
+
+
+def _rung5(out: dict, image: Path, skip: bool) -> None:
+    """The `ross` subprocess rung. Its metadata key set is FIXED by the
+    deriver (every key present on every document regardless of what ross
+    emitted), which is what makes it assertable across ports at all."""
+    from chunkshop.sources.derivers.ross import RossDeriver, ross_available
+
+    sections = ("rung5", "rung5_document")
+    if skip:
+        _carry_over(out, sections, "--skip-rung5")
+        return
+    if not ross_available():
+        _carry_over(out, sections, "ross is not on $PATH")
+        return
+
+    r = RossDeriver().derive(image)
+    out["rung5"] = {
+        "deriver": RossDeriver.__name__,
+        "config": ROSS_CONFIG,
+        "metadata_keys": _keys(r.metadata),
+        "derived_keys": _derived_keys(r.metadata),
+        # Pinned as VALUES, unlike model/version/hashes: both ports shell
+        # out to the SAME binary, so `engine` and `rung` are genuinely
+        # identical rather than legitimately divergent. `model_version` is
+        # not pinned — it is whatever ross the host has.
+        "engine": r.metadata["derived"]["engine"],
+        "rung": r.metadata["derived"]["rung"],
+        "model": r.metadata["derived"]["model"],
+    }
+    out["rung5_document"] = _document_section(ROSS_CONFIG, image)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--skip-rung5",
+        action="store_true",
+        help="carry the existing rung-5 sections over instead of running the "
+        "ross binary (implied when ross is not on $PATH)",
+    )
     ap.add_argument(
         "--skip-rung1",
         action="store_true",
@@ -156,6 +223,8 @@ def main() -> int:
         "derived_keys": _derived_keys(rung0.metadata),
     }
     out["rung0_document"] = _document_section({"rung": "image_meta"}, image)
+
+    _rung5(out, image, args.skip_rung5)
 
     if args.skip_rung1:
         if not FIXTURE.exists():
@@ -207,7 +276,10 @@ def main() -> int:
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE.write_text(json.dumps(out, indent=2) + "\n")
     print(f"wrote {FIXTURE}")
-    for section in ("rung0", "rung0_document", "rung1", "rung1_document"):
+    for section in (
+        "rung0", "rung0_document", "rung1", "rung1_document",
+        "rung5", "rung5_document",
+    ):
         if section in out:
             body = out[section]
             print(f"  {section}: {len(body['metadata_keys'])} metadata keys", end="")

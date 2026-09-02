@@ -39,6 +39,56 @@
     ],
     "parser": "ImageMetaDeriver"
   },
+  "rung5": {
+    "deriver": "RossDeriver",
+    "config": {
+      "rung": "ross"
+    },
+    "metadata_keys": [
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "ross_description",
+      "ross_metadata",
+      "ross_mime",
+      "ross_model",
+      "ross_summary",
+      "ross_tag_confidence",
+      "ross_tags",
+      "ross_type",
+      "ross_warnings"
+    ],
+    "derived_keys": [
+      "engine",
+      "model",
+      "model_version",
+      "params_hash",
+      "rung",
+      "ts"
+    ],
+    "engine": "ross",
+    "rung": "ross",
+    "model": "ross"
+  },
+  "rung5_document": {
+    "metadata_keys": [
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "parser",
+      "ross_description",
+      "ross_metadata",
+      "ross_mime",
+      "ross_model",
+      "ross_summary",
+      "ross_tag_confidence",
+      "ross_tags",
+      "ross_type",
+      "ross_warnings",
+      "source_path"
+    ],
+    "parser": "RossDeriver"
+  },
   "rung1": {
     "deriver": "ClipTagsDeriver",
     "vocabulary": [

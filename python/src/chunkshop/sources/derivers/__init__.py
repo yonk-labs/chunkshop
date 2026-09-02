@@ -32,4 +32,13 @@ def load_deriver(cfg: Any):
             vision_model=data.get("vision_model", "Qdrant/clip-ViT-B-32-vision"),
             text_model=data.get("text_model", "Qdrant/clip-ViT-B-32-text"),
         )
+    if rung == "ross":
+        from chunkshop.sources.derivers.ross import RossDeriver
+
+        return RossDeriver(
+            binary=data.get("binary", "ross"),
+            labels_file=data.get("labels_file"),
+            llm=data.get("llm", False),
+            timeout_s=data.get("timeout_s", 120),
+        )
     raise ValueError(f"unknown rung: {rung!r}")
