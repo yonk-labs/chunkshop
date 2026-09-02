@@ -39,7 +39,7 @@ aspect     = round(width / height, 4)
 | `png_i16.png` | `I;16` | 16-bit greyscale; `image` decodes `Luma16` and reports `L` |
 | `png_p.png` / `png_p_trns.png` | `P` | indexed, and indexed with a `tRNS` chunk (`has_alpha` with no alpha channel) |
 | `png_800x1024.png` | `RGB` | an aspect ratio that actually rounds: 0.78125 is a tie at 4 dp, and Python breaks ties to even (0.7812), not away from zero (0.7813) |
-| `png_big_palette.png` | `P` | 14432x9664 = 139 Mpx, **136 KB on disk**, 558 MB decoded as RGBA. A full decode blows `image`'s 512 MiB `max_alloc` and aborts the cell; Pillow reads the header. Palette PNGs compress ~200:1, so file size does not predict decode cost — which is why no ordinary synthetic fixture caught this |
+| `png_big_palette.png` | `P` | 14432x9664 = 139 Mpx, **136 KB on disk**, 558 MB decoded as RGBA. Over `image`'s 512 MiB `max_alloc`, so a naive full decode fails with `Memory limit exceeded` where Pillow succeeds — the rung-0/rung-1 parity bug both ports are now pinned against (see below). Palette PNGs compress ~200:1, so file size does not predict decode cost — which is why no ordinary synthetic fixture caught this |
 | `jpg_rgb.jpg` / `jpeg_rgb.jpeg` | `RGB` | both spellings of the extension |
 | `jpg_l.jpg` | `L` | single-component JPEG |
 | `webp_rgb.webp` / `webp_rgba.webp` | `RGB` / `RGBA` | WebP with and without alpha |
@@ -58,6 +58,51 @@ aspect     = round(width / height, 4)
 
 Every extension in `ImageMetaDeriver.supported_extensions` has at least one
 fixture, and both `generate.py` and a Rust test assert that.
+
+## The decompression-bomb bands
+
+`png_big_palette.png` is here because it is the file that separates the two
+ports. Rung 0 (`image_meta`) never decodes it — it reads the PNG header, which
+is why `image_meta.rs` is untouched by any of this. Rung 1 (`clip_tags`) has to
+decode it, because the CLIP vision tower needs pixels, and that decode has to
+be governed by the same policy Pillow applies.
+
+Pillow's policy is `PIL.Image._decompression_bomb_check`, three bands around
+`PIL.Image.MAX_IMAGE_PIXELS`. Both comparisons are strict `>`, so a count
+landing exactly on a constant takes the gentler branch. Measured against the
+installed Pillow, and asserted case-for-case by
+`clip_preprocess.rs::the_bands_match_pils_decompression_bomb_check`:
+
+| dimensions | pixels | Pillow 12.3.0 | `decompression_bomb_check` |
+|---|---|---|---|
+| 1x1 | 1 | Allow | Allow |
+| 9458x9458 | 89,453,764 | Allow | Allow |
+| 5x17895697 | 89,478,485 (= `MAX`) | Allow | Allow |
+| 10x8947849 | 89,478,490 | Warn | Warn |
+| 14432x9664 | 139,470,848 (`png_big_palette.png`) | Warn | Warn |
+| 10x17895697 | 178,956,970 (= `2 * MAX`) | Warn | Warn |
+| 20x8947849 | 178,956,980 | Reject | Reject |
+| 65536x65536 | 4,294,967,296 | Reject | Reject |
+| 100000x100000 | 10,000,000,000 | Reject | Reject |
+| 0x0 | 1 (`max(1, ..)` per axis) | Allow | Allow |
+| 0x100000000 | 100,000,000 | Warn | Warn |
+
+Regenerate the Pillow column with:
+
+```python
+import warnings
+from PIL import Image
+
+def verdict(w, h):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        try:
+            Image._decompression_bomb_check((w, h))
+        except Image.DecompressionBombError:
+            return "Reject"
+    return "Warn" if any(issubclass(c.category, Image.DecompressionBombWarning)
+                         for c in caught) else "Allow"
+```
 
 ## Regenerating
 

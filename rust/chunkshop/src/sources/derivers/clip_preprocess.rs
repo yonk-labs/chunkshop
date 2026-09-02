@@ -111,8 +111,26 @@
 //! same way, so [`target_size`] reproduces it bit-for-bit. This matters: the
 //! sibling tool `ross` rounds instead, and on `chart_revenue.png` that one-pixel
 //! difference (326 vs 325) costs 4.06 degrees.
+//!
+//! # Very large images: PIL's policy, not `image`'s allocator cap
+//!
+//! [`open_for_clip`] used to be `ImageReader::open(path)?.decode()`, which
+//! inherits `image`'s `Limits::default()` — a 512 MiB `max_alloc`. A 14432x9664
+//! palette PNG with `tRNS` is 136 KB on disk and 139,470,848 pixels; palette +
+//! `tRNS` expands to `Rgba8`, so the decode wants 558 MB and the crate refuses
+//! it with `Memory limit exceeded`. Python ingests the same file with nothing
+//! worse than a `DecompressionBombWarning`, and because a parser error aborts
+//! the whole cell in both ports, one such file in a corpus cost every row in
+//! the batch — measured end to end, the Rust cell exited 1 having written 0
+//! rows while the Python cell wrote all 4.
+//!
+//! The decode is now guarded by [`decompression_bomb_check`], a transcription
+//! of `PIL.Image._decompression_bomb_check`, and the allocator cap is lifted so
+//! that the policy — not an incidental byte budget — is what decides. See that
+//! function for the bands and [`open_for_clip`] for why the cap is lifted
+//! rather than merely raised.
 
-use image::{imageops::FilterType, DynamicImage, GenericImageView};
+use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageDecoder};
 use std::path::Path;
 
 /// `size.shortest_edge` and `crop_size.{height,width}` from
@@ -130,6 +148,72 @@ pub const CLIP_SHORTEST_EDGE: u32 = 224;
 /// PIL's `BICUBIC` is the Keys cubic with `a = -0.5`; so is `CatmullRom`.
 /// Same filter `fastembed-rs` uses, deliberately — see the module doc.
 const CLIP_RESAMPLE: FilterType = FilterType::CatmullRom;
+
+/// `PIL.Image.MAX_IMAGE_PIXELS`.
+///
+/// **This is a parity contract, not a tuning knob.** Pillow computes it as
+/// `int(1024 * 1024 * 1024 // 4 // 3)`, and the installed Pillow (12.3.0)
+/// reports exactly this value — both checked by `the_constants_match_pil`.
+/// Python is the reference implementation here, so changing this number
+/// without changing it there is a parity regression, not a tuning decision.
+/// Above it Pillow warns and decodes anyway; above `2 *` it raises. See
+/// [`decompression_bomb_check`].
+pub const MAX_IMAGE_PIXELS: u64 = 89_478_485;
+
+/// Pillow's hard ceiling: `2 * MAX_IMAGE_PIXELS`, the point at which
+/// `_decompression_bomb_check` raises `DecompressionBombError` instead of
+/// warning. Named rather than written inline so the `2 *` is visibly the same
+/// `2 *` that appears in Pillow's source.
+pub const MAX_IMAGE_PIXELS_HARD: u64 = 2 * MAX_IMAGE_PIXELS;
+
+/// What Pillow's decompression-bomb policy says about an image's dimensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BombVerdict {
+    /// `pixels <= MAX_IMAGE_PIXELS`. Decode, silently.
+    Allow,
+    /// `MAX_IMAGE_PIXELS < pixels <= 2 * MAX_IMAGE_PIXELS`. Pillow emits a
+    /// `DecompressionBombWarning` and **decodes anyway**; so do we.
+    Warn,
+    /// `pixels > 2 * MAX_IMAGE_PIXELS`. Pillow raises
+    /// `DecompressionBombError`; so do we.
+    Reject,
+}
+
+/// `PIL.Image._decompression_bomb_check`, transcribed.
+///
+/// Pillow's body, for comparison:
+///
+/// ```python
+/// pixels = max(1, size[0]) * max(1, size[1])
+/// if pixels > 2 * MAX_IMAGE_PIXELS:
+///     raise DecompressionBombError(...)
+/// if pixels > MAX_IMAGE_PIXELS:
+///     warnings.warn(..., DecompressionBombWarning)
+/// ```
+///
+/// Three details are load-bearing and are reproduced rather than tidied up:
+///
+/// - Both comparisons are strict `>`, so a pixel count landing *exactly* on
+///   either constant takes the gentler branch. Exactly `MAX_IMAGE_PIXELS` is
+///   silent; exactly `2 * MAX_IMAGE_PIXELS` warns rather than rejecting.
+/// - `max(1, ...)` per axis, so a zero-sized dimension contributes 1 and a
+///   0x0 image counts as 1 pixel, not 0. It never reaches the bomb branches
+///   either way, but the clamp is Pillow's and is kept so the two ports can
+///   be diffed line for line. (`resize_and_center_crop` is what actually
+///   rejects a zero dimension, in both ports.)
+/// - The product is computed in `u64`. `u32 * u32` overflows for anything past
+///   about 65535 square, and a wrapped product could land back inside the
+///   allow band — which is precisely the input a decompression bomb wants.
+pub fn decompression_bomb_check(width: u32, height: u32) -> BombVerdict {
+    let pixels = u64::from(width.max(1)) * u64::from(height.max(1));
+    if pixels > MAX_IMAGE_PIXELS_HARD {
+        BombVerdict::Reject
+    } else if pixels > MAX_IMAGE_PIXELS {
+        BombVerdict::Warn
+    } else {
+        BombVerdict::Allow
+    }
+}
 
 /// The `(width, height)` an image is scaled to before the center crop.
 ///
@@ -200,10 +284,85 @@ pub fn resize_and_center_crop(
 /// The result is exactly `CLIP_SHORTEST_EDGE` square, so
 /// `ImageEmbedding::embed_images` can run its remaining transforms over it with
 /// its own resize and crop reduced to identity.
+///
+/// # Size policy
+///
+/// The vision tower genuinely needs decoded pixels, so the header-only trick
+/// `ImageMetaDeriver` uses at rung 0 is not available here. What *is* available
+/// is reading the dimensions from the header first, applying
+/// [`decompression_bomb_check`] to them, and only then decoding. That is what
+/// Pillow does, and it is what this function does.
+///
+/// ## Why the allocator cap is lifted rather than raised
+///
+/// `image`'s `Limits::default()` caps `max_alloc` at 512 MiB. That cap has no
+/// relationship to Pillow's policy: a 139 Mpx palette PNG is comfortably inside
+/// Pillow's warn band but wants 558 MB as `Rgba8`, so the default cap vetoes a
+/// decode the policy explicitly permits — which is the bug this guard exists to
+/// fix. Raising the cap to some larger number only moves the disagreement:
+/// bytes-per-pixel is not known until the decoder picks an output type, and it
+/// ranges from 1 (`Luma8`) to 16 (`Rgba32F`, via OpenEXR/HDR). Any byte budget
+/// therefore has to guess a bytes-per-pixel to be safe at the top of the warn
+/// band, and whatever it guesses, some legal format exceeds it and gets vetoed
+/// incidentally — reintroducing exactly this bug for a narrower set of files.
+///
+/// So the byte cap is removed and the **pixel count is the guard**: nothing can
+/// reach the decoder unless [`decompression_bomb_check`] returned `Allow` or
+/// `Warn`, which bounds the image at `MAX_IMAGE_PIXELS_HARD` pixels regardless
+/// of what it decodes to. Band 3 is the rejecting branch and the only rejecting
+/// branch, which is the whole point: the guard is the policy, stated once, and
+/// not an allocator side effect that happens to fire first.
+///
+/// The other `Limits` fields (`max_image_width` / `max_image_height`) are
+/// `None` in `Limits::default()` already, so `no_limits()` gives up nothing
+/// that was previously protecting us except the byte cap.
 pub fn open_for_clip(path: &Path) -> anyhow::Result<DynamicImage> {
-    let img = image::ImageReader::open(path)
-        .map_err(|e| anyhow::anyhow!("open {}: {e}", path.display()))?
-        .decode()
+    let mut reader = image::ImageReader::open(path)
+        .map_err(|e| anyhow::anyhow!("open {}: {e}", path.display()))?;
+    // Set before `into_decoder`, which is where `image` hands the limits to the
+    // format decoder. Format detection is unchanged: `ImageReader::open` infers
+    // it from the file extension, exactly as the previous `.decode()` did.
+    reader.limits(image::Limits::no_limits());
+    let decoder = reader
+        .into_decoder()
+        .map_err(|e| anyhow::anyhow!("decode {}: {e}", path.display()))?;
+
+    // Header-only. `ImageDecoder::dimensions()` reads the size the format
+    // header already parsed — no pixel data is inflated to answer it, which is
+    // what makes rejecting a bomb cheap instead of self-defeating.
+    //
+    // `image_meta.rs`'s `read_header` was the other candidate for this. It is
+    // deliberately not reused: it is keyed to the six formats rung 0 supports
+    // and returns Pillow mode/`tRNS` facts this path has no use for, so reusing
+    // it would both narrow which images CLIP can see and require exposing rung
+    // 0's internals. The decoder is already open here and already knows the
+    // dimensions, so asking it costs nothing extra.
+    let (width, height) = decoder.dimensions();
+    match decompression_bomb_check(width, height) {
+        BombVerdict::Allow => {}
+        BombVerdict::Warn => {
+            // Pillow's `DecompressionBombWarning` text, verbatim, so a user
+            // diffing the two ports' logs sees the same line for the same file.
+            tracing::warn!(
+                target: "chunkshop::media",
+                "{}: Image size ({} pixels) exceeds limit of {MAX_IMAGE_PIXELS} pixels, \
+                 could be decompression bomb DOS attack.",
+                path.display(),
+                u64::from(width) * u64::from(height),
+            );
+        }
+        BombVerdict::Reject => {
+            // Pillow's `DecompressionBombError` text, likewise.
+            anyhow::bail!(
+                "decode {}: Image size ({} pixels) exceeds limit of \
+                 {MAX_IMAGE_PIXELS_HARD} pixels, could be decompression bomb DOS attack.",
+                path.display(),
+                u64::from(width) * u64::from(height),
+            );
+        }
+    }
+
+    let img = DynamicImage::from_decoder(decoder)
         .map_err(|e| anyhow::anyhow!("decode {}: {e}", path.display()))?;
     // `ConvertToRGB` first, same order as both reference pipelines.
     let rgb = convert_to_rgb_like_pil(img);
@@ -359,6 +518,126 @@ mod tests {
         // ...and again, standing in for fastembed-rs's own resize step.
         let twice = once.resize_exact(224, 224, CLIP_RESAMPLE);
         assert_eq!(twice.to_rgb8().into_raw(), original.to_rgb8().into_raw());
+    }
+
+    // -----------------------------------------------------------------------
+    // Pillow decompression-bomb parity
+    // -----------------------------------------------------------------------
+
+    /// Repo-root `tests/fixtures/images/`, same fixtures rung 0 uses.
+    fn fixture(name: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/images"
+        ))
+        .join(name)
+    }
+
+    /// The constants are a parity contract with `PIL.Image.MAX_IMAGE_PIXELS`.
+    /// Pinned literally so a typo cannot silently widen or narrow the bands.
+    #[test]
+    fn the_constants_match_pil() {
+        assert_eq!(MAX_IMAGE_PIXELS, 89_478_485);
+        assert_eq!(MAX_IMAGE_PIXELS_HARD, 178_956_970);
+        // Pillow derives it as `int(1024 * 1024 * 1024 // 4 // 3)`.
+        assert_eq!(MAX_IMAGE_PIXELS, 1024 * 1024 * 1024 / 4 / 3);
+    }
+
+    /// The three bands, at and around both boundaries.
+    ///
+    /// Cross-checked against the installed Pillow — see
+    /// `tests/fixtures/images/README.md` for the table and the command that
+    /// produced it. Both of Pillow's comparisons are strict `>`, so landing
+    /// exactly on a constant takes the gentler branch; those two rows are the
+    /// off-by-one this test exists to pin.
+    #[test]
+    fn the_bands_match_pils_decompression_bomb_check() {
+        // Dimensions chosen so `w * h` hits the interesting counts exactly.
+        // 89_478_485 = 5 * 17_895_697 (17_895_697 is prime).
+        let cases: &[(u32, u32, BombVerdict)] = &[
+            (1, 1, BombVerdict::Allow),
+            (9_458, 9_458, BombVerdict::Allow), // 89_453_764, just under
+            (5, 17_895_697, BombVerdict::Allow), // exactly MAX — strict `>`
+            (10, 8_947_849, BombVerdict::Warn), // MAX + 5
+            (14_432, 9_664, BombVerdict::Warn), // png_big_palette.png
+            (10, 17_895_697, BombVerdict::Warn), // exactly 2*MAX — strict `>`
+            (20, 8_947_849, BombVerdict::Reject), // 2*MAX + 10
+            (100_000, 100_000, BombVerdict::Reject),
+            // u32*u32 would wrap here; u64 must not let it back into Allow.
+            (65_536, 65_536, BombVerdict::Reject),
+            (u32::MAX, u32::MAX, BombVerdict::Reject),
+        ];
+        for &(w, h, want) in cases {
+            assert_eq!(
+                decompression_bomb_check(w, h),
+                want,
+                "{w}x{h} ({} px)",
+                u64::from(w) * u64::from(h)
+            );
+        }
+    }
+
+    /// Pillow's `max(1, ...)` per axis. A zero dimension counts as 1, so a
+    /// degenerate image is never routed through the bomb branches — it is
+    /// `resize_and_center_crop` that rejects it, in both ports.
+    #[test]
+    fn a_zero_dimension_is_clamped_to_one_like_pil() {
+        assert_eq!(decompression_bomb_check(0, 0), BombVerdict::Allow);
+        assert_eq!(decompression_bomb_check(0, 100_000_000), BombVerdict::Warn);
+    }
+
+    /// THE regression. 14432x9664 palette PNG with `tRNS`, 136 KB on disk,
+    /// 139,470,848 pixels — inside Pillow's warn band, and 558 MB as `Rgba8`,
+    /// which is over `image`'s 512 MiB `Limits::default()` `max_alloc`.
+    /// Before the fix this returned `decode ...: Memory limit exceeded` and,
+    /// because a parser error aborts the cell, took every other document in
+    /// the run down with it. Python ingests the same file with only a
+    /// `DecompressionBombWarning`.
+    ///
+    /// End-to-end on purpose: the arithmetic is unit-tested above, but the
+    /// bug was in the plumbing — the limits handed to the decoder — and only
+    /// a real decode exercises that.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_139_megapixel_png_inside_pils_warn_band_decodes() {
+        let path = fixture("png_big_palette.png");
+        assert_eq!(
+            decompression_bomb_check(14_432, 9_664),
+            BombVerdict::Warn,
+            "fixture must sit in the warn band or it is not testing the bug"
+        );
+        let out = open_for_clip(&path).expect("139 Mpx PNG must decode, as it does in Python");
+        assert_eq!(out.dimensions(), (224, 224));
+    }
+
+    /// An ordinary image is untouched by the guard — the fix must not have
+    /// bought the big file's decode at the cost of the common path.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn an_ordinary_image_still_decodes_to_224_square() {
+        let out = open_for_clip(&fixture("png_rgba.png")).unwrap();
+        assert_eq!(out.dimensions(), (224, 224));
+    }
+
+    /// Band 3 must still reject, and it must be the *policy* rejecting rather
+    /// than an allocator limit — `no_limits()` removed the only other thing
+    /// that could have. Tested through the policy function with dimensions as
+    /// inputs: materializing a genuinely >178 Mpx file to prove arithmetic
+    /// would cost hundreds of MB for no extra coverage.
+    #[test]
+    fn band_three_is_rejected_and_is_the_only_rejecting_branch() {
+        assert_eq!(
+            decompression_bomb_check(20_000, 20_000),
+            BombVerdict::Reject
+        );
+        // Nothing below the hard ceiling rejects, however many bytes it would
+        // decode to. 178_956_970 px is 2.9 GB as `Rgba32F` — far past any byte
+        // cap — and must still be allowed through, because the pixel count is
+        // the guard.
+        assert_ne!(
+            decompression_bomb_check(10, 17_895_697),
+            BombVerdict::Reject
+        );
     }
 
     #[test]
