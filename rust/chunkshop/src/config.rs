@@ -288,6 +288,13 @@ impl CellConfig {
         // names that module names in its errors.
         for dcfg in derive.values() {
             let needed: Option<&str> = match dcfg {
+                // Rung 5 shells out; nothing about it is compiled in, so it
+                // is available in every build including
+                // `--no-default-features`. Its own preflight (does the
+                // binary exist, what version is it) happens in
+                // `load_deriver`, which `FilesSource::new` calls before the
+                // sink's DDL.
+                DeriverConfig::Ross(_) => None,
                 DeriverConfig::ImageMeta(_) if !cfg!(feature = "media") => Some("media"),
                 DeriverConfig::ClipTags(_)
                     if !cfg!(feature = "media") || !cfg!(feature = "embedder-hub") =>
@@ -300,6 +307,10 @@ impl CellConfig {
                 let rung = match dcfg {
                     DeriverConfig::ImageMeta(_) => "image_meta",
                     DeriverConfig::ClipTags(_) => "clip_tags",
+                    // Unreachable: `needed` is None for Ross (no feature
+                    // gates it). Named rather than `_` so adding a rung
+                    // that DOES need a feature is a compile error here.
+                    DeriverConfig::Ross(_) => "ross",
                 };
                 return Err(anyhow!(
                     "derive rung '{rung}' requires the `{features}` Cargo feature(s); \
@@ -674,6 +685,7 @@ impl Default for OnEmpty {
 pub enum DeriverConfig {
     ImageMeta(ImageMetaDeriverConfig),
     ClipTags(ClipTagsDeriverConfig),
+    Ross(RossDeriverConfig),
 }
 
 /// `deny_unknown_fields` is load-bearing, not decoration: without it a
@@ -717,6 +729,50 @@ pub struct ClipTagsDeriverConfig {
     pub vision_model: String,
     #[serde(default = "default_text_model")]
     pub text_model: String,
+}
+
+/// Mirrors Python's `RossDeriverConfig`. Rung 5: the `ross` sibling binary
+/// (yonk-labs/ross, Apache-2.0), run as a SUBPROCESS.
+///
+/// Unlike every other rung, this one is behind NO Cargo feature — there is
+/// no compile-time dependency on ross at all, only a binary that must exist
+/// when the rung is actually used. That is the whole point of the
+/// subprocess shape (NN-6): a text-only user, and a
+/// `--no-default-features` build, pay literally nothing for it.
+///
+/// `--clip`/`--clap` are deliberately NOT configurable in either port:
+/// without them and with `--no-llm`, ross emits deterministic facts and no
+/// `description` at all, so every document would derive to empty text and
+/// trip `on_empty`. See `sources::derivers::ross`.
+///
+/// `deny_unknown_fields` for the same load-bearing reason as its two
+/// siblings above — and specifically because three structs in this file
+/// were recently found missing it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RossDeriverConfig {
+    /// Path to (or name of) the ross executable. Default resolves on $PATH.
+    #[serde(default = "default_ross_binary")]
+    pub binary: String,
+    /// Replace ross's vendored 50-label vocabulary (`--labels-file`). Its
+    /// CONTENT is hashed into the derivation params, so editing the file
+    /// re-derives rather than serving stale cached tags.
+    pub labels_file: Option<String>,
+    /// Run ross's LLM pass. Off by default: keyless and offline is the
+    /// point of this rung.
+    #[serde(default)]
+    pub llm: bool,
+    /// Per-file subprocess timeout, seconds. ross's first run downloads its
+    /// CLIP/CLAP weights, which is the slow case this must accommodate.
+    #[serde(default = "default_ross_timeout_s")]
+    pub timeout_s: u64,
+}
+
+fn default_ross_binary() -> String {
+    "ross".to_string()
+}
+fn default_ross_timeout_s() -> u64 {
+    120
 }
 
 fn default_top_k() -> usize {
@@ -2264,6 +2320,95 @@ target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hn
         };
         let derive = f.derive.as_ref().expect("derive must be Some");
         assert!(derive.contains_key("png|jpg"));
+    }
+
+    /// Rung 5's YAML must be byte-identical across ports, so this pins the
+    /// field names and the defaults against Python's `RossDeriverConfig`.
+    #[test]
+    fn ross_rung_loads_with_pythons_field_names_and_defaults() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    "png|wav|mp4":
+      rung: ross
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(yaml)).expect("rung: ross must load");
+        let SourceConfig::Files(f) = &cfg.source else {
+            panic!("expected Files source");
+        };
+        let DeriverConfig::Ross(c) = &f.derive.as_ref().unwrap()["png|wav|mp4"] else {
+            panic!("expected the Ross variant");
+        };
+        assert_eq!(c.binary, "ross");
+        assert_eq!(c.labels_file, None);
+        assert!(!c.llm);
+        assert_eq!(c.timeout_s, 120);
+    }
+
+    #[test]
+    fn ross_rung_accepts_every_field_and_rejects_a_typo() {
+        let ok = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    "png":
+      rung: ross
+      binary: /opt/ross
+      labels_file: ./vocab.txt
+      llm: true
+      timeout_s: 30
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        let cfg = load_config(&write_yaml(ok)).expect("all fields must load");
+        let SourceConfig::Files(f) = &cfg.source else { panic!() };
+        let DeriverConfig::Ross(c) = &f.derive.as_ref().unwrap()["png"] else {
+            panic!("expected the Ross variant");
+        };
+        assert_eq!(c.binary, "/opt/ross");
+        assert_eq!(c.labels_file.as_deref(), Some("./vocab.txt"));
+        assert!(c.llm);
+        assert_eq!(c.timeout_s, 30);
+
+        // `deny_unknown_fields` is load-bearing here: three sibling structs
+        // in this file were recently found missing it, and a typo'd key
+        // that silently keeps the default is exactly the divergence
+        // chunkshop's "a typo in YAML is a validation error" contract
+        // forbids.
+        let typo = ok.replace("binary: /opt/ross", "binry: /opt/ross");
+        let err = format!("{:#}", load_config(&write_yaml(&typo)).unwrap_err());
+        assert!(err.contains("binry"), "{err}");
+    }
+
+    /// Rung 5 is behind no Cargo feature — it shells out. Preflight must
+    /// therefore accept it in EVERY build, including one with no `media`.
+    #[test]
+    fn preflight_accepts_the_ross_rung_in_any_build() {
+        let yaml = r#"
+cell_name: t
+source:
+  type: files
+  glob: "x"
+  derive:
+    "png":
+      rung: ross
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target: { type: postgres, dsn_env: D, database: s, table: t, mode: overwrite, hnsw: false }
+"#;
+        load_config(&write_yaml(yaml))
+            .unwrap()
+            .preflight_derive()
+            .expect("rung 5 needs no Cargo feature");
     }
 
     #[test]

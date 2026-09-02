@@ -12,6 +12,12 @@
 pub mod cache;
 pub mod provenance;
 
+// Rung 5, behind NO Cargo feature at all: it shells out to the `ross`
+// binary and uses only `std::process` + `serde_json` + `sha2`, all of which
+// are unconditional here. That is the point of the subprocess shape (NN-6)
+// — `--no-default-features` builds it and a text-only user pays nothing.
+pub mod ross;
+
 #[cfg(feature = "media")]
 pub mod image_meta;
 
@@ -76,7 +82,25 @@ pub fn load_deriver(cfg: &DeriverConfig) -> anyhow::Result<Rc<dyn CacheableDeriv
         DeriverConfig::ClipTags(_) => {
             return Err(missing_feature_error("clip_tags", "media,embedder-hub"))
         }
+        DeriverConfig::Ross(c) => Rc::new(build_ross(c)?),
     })
+}
+
+/// Shared by both `load_deriver` arms — rung 5 is identical in a `media`
+/// build and a `--no-default-features` one, because nothing about it is
+/// compiled in.
+///
+/// Fallible at LOAD, like every other arm: `RossDeriver::new` probes
+/// `ross --version` and hashes any `labels_file`, so a missing binary or an
+/// unreadable vocabulary fails before the sink's DDL rather than after a
+/// `mode: overwrite` cell has already dropped the user's table.
+fn build_ross(c: &crate::config::RossDeriverConfig) -> anyhow::Result<ross::RossDeriver> {
+    ross::RossDeriver::new(
+        c.binary.clone(),
+        c.labels_file.clone(),
+        c.llm,
+        c.timeout_s,
+    )
 }
 
 /// Without the `media` feature, `image` (and therefore `image_meta`) isn't
@@ -108,9 +132,15 @@ pub fn load_deriver(cfg: &DeriverConfig) -> anyhow::Result<Rc<dyn CacheableDeriv
 /// missing symbol.
 #[cfg(not(feature = "media"))]
 pub fn load_deriver(cfg: &DeriverConfig) -> anyhow::Result<Rc<dyn CacheableDeriver>> {
+    // Rung 5 needs no feature — construct the real thing, in a slim build
+    // exactly as in a full one.
+    if let DeriverConfig::Ross(c) = cfg {
+        return Ok(Rc::new(build_ross(c)?));
+    }
     let (rung, features) = match cfg {
         DeriverConfig::ImageMeta(_) => ("image_meta", "media"),
         DeriverConfig::ClipTags(_) => ("clip_tags", "media,embedder-hub"),
+        DeriverConfig::Ross(_) => unreachable!("handled above"),
     };
     Ok(Rc::new(MissingFeatureDeriver { rung, features }))
 }

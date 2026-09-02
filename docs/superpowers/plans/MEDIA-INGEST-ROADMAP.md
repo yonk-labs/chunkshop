@@ -367,29 +367,71 @@ Full struct-by-struct list: `.superpowers/rust-deny-unknown-fields-report.md`.
 
 ---
 
-## `ross` as a rung-5 subprocess deriver — DECIDED 2026-09-01, not scheduled
+## `ross` as a rung-5 subprocess deriver — SHIPPED 2026-09-01, both ports
 
 `../ross` (yonk-labs/ross, Apache-2.0, v0.1.0, bin-only) does media → metadata +
 tags + description + summary as a single Rust binary. Decision recorded in
 `DECISIONS.md`: it becomes an **opt-in rung-5 subprocess deriver**; Plan D's
 Tasks 9/11/12 proceed unchanged with in-process `fastembed-rs`.
 
-**Open items this creates:**
+**Status of the five open items this created:**
 
-1. **A `ross` deriver (rung 5).** Shell out, parse its JSON, map its fields onto
-   `ParseResult { text, metadata }` + provenance. `engine` would be `ross` plus
-   its version — which is exactly what Task 6's `engine`-in-the-derivation-hash
-   work makes safe: a ross-derived value can share a cache directory with a
-   fastembed-derived one without either masquerading as the other.
-2. **Audio is a genuine gap.** ross ships CLAP zero-shot audio tagging.
-   chunkshop has **no** audio tagger in Plan D, Plan B, Plan C, or v1.1. The
-   spec's escalation ladder (NN-4) has no audio rung below the remote-VLM tier.
-   Worth its own scoping pass — this is the clearest thing ross has that no
-   chunkshop plan covers.
-3. **NN-2 boundary.** ross needs `ffprobe`/`exiftool` for a/v and image metadata
-   (native PNG/WebP dimension fallback aside). A rung-5 deriver must degrade
-   per NN-5 (never a dead end) when they are absent, and must not be reachable
-   by a zero-config default path.
+1. ✅ **A `ross` deriver (rung 5) — SHIPPED, Python and Rust.**
+   `rung: ross` is a third variant in `DeriverConfig` in both ports, accepting
+   byte-identical YAML (`binary`, `labels_file`, `llm`, `timeout_s`). It shells
+   out with `--json --quiet --clip --clap` (plus `--no-llm` unless `llm: true`),
+   parses ross's JSON and maps it onto `ParseResult { text, metadata }` with a
+   **fixed** nine-key `ross_*` metadata set. `engine` is `"ross"` — not
+   `"python"`/`"rust"` — because both ports drive the SAME binary, which means
+   a Python-derived and a Rust-derived value legitimately share ONE cache entry
+   rather than each masquerading as the other. Verified end to end: a Rust
+   `chunkshop ingest` served all four documents from the entries a prior Python
+   run wrote, byte-identical.
+
+   **No compile-time dependency in either language** — no Cargo feature, no
+   Python extra. `cargo build --no-default-features` builds rung 5. NN-6 holds
+   exactly.
+
+   Sample config: `docs/samples/media-ross.yaml`. Code:
+   `python/src/chunkshop/sources/derivers/ross.py`,
+   `rust/chunkshop/src/sources/derivers/ross.rs`.
+
+2. ✅ **Audio — CLOSED, and it came free.** ross sniffs by magic bytes, so
+   routing `.wav`/`.mp3`/`.flac`/`.ogg` through the same `derive:` block needs
+   no extension registry work, no MIME handling and no second rung. A one-second
+   440Hz tone derives to CLAP tags with the SAME metadata key set as an image,
+   asserted in both ports. This remains the only audio tagger anywhere in
+   chunkshop; NN-4's ladder still has no in-process audio rung.
+
+3. ✅ **NN-2 / NN-5 boundary — held.** Rung 5 is opt-in and unreachable from
+   any default path. A missing, non-executable, non-ross or failing binary, and
+   a timeout, each produce a named error citing the binary, the exit code's
+   documented meaning and **ross's own stderr verbatim** — which is what names
+   a missing `ffprobe`/`exiftool`, since chunkshop cannot. Both ports fail at
+   deriver CONSTRUCTION (before the sink's DDL), so a `mode: overwrite` cell
+   with a bad `binary:` does not drop the user's table first.
+
+   ⚠️ **Known limitation — vendored-vocabulary identity in the cache key.**
+   ross has a third input beyond content and user config: a 50-label vocabulary
+   vendored INSIDE the binary. Nothing on ross's CLI reports it — `--json` does
+   not echo the label set and `--doctor` prints only external binaries,
+   endpoint config and model cache paths. The deriver therefore identifies it
+   by `ross --version`, probed at construction and recorded as `model_version`.
+   **A ross build that edits `src/clip_labels.txt` without bumping its package
+   version will silently serve stale cached derivations.** A user-supplied
+   `labels_file` has no such gap: its CONTENT is hashed into
+   `params["labels_sha256"]`. Mitigation for the vendored case is
+   `cache: {enabled: false}` or purging the cache after upgrading a
+   source-built ross. Same shape, smaller: ross's `metadata` block depends on
+   whether `exiftool`/`ffprobe` are installed, which is likewise not in the key.
+
+   The `cache_key_extra` this rung declares is the file's **basename**, not
+   `None` and not the full path: when the local tagger is gated ross falls back
+   to a description humanised from the basename (`clap_tag::humanize` rsplits
+   on `/` first), so the deriver is not a pure content function — but the parent
+   directories genuinely are not consumed. Both ports have a test proving the
+   pairing: two byte-identical images under different names MISS rather than
+   being served each other's text, while the same name still hits.
 4. **SC-12 scoping caveat.** ross drives `ort` directly, not `fastembed-rs`, and
    does its own preprocessing — and it **rounds** the CLIP long edge where
    Python truncates (326 vs 325 on `chart_revenue.png`; re-measured across the
@@ -399,6 +441,11 @@ Tasks 9/11/12 proceed unchanged with in-process `fastembed-rs`.
    `clip_preprocess`'s geometry. If ross ever becomes that
    path, its preprocessing must be measured against Python directly — not
    assumed to inherit this bar.
-5. **Maturity gate.** v0.1.0, 3 commits, no `lib.rs`. Revisit linking-vs-shelling
-   only if a library surface appears; until then subprocess is the only option
-   and also the one CLAUDE.md's "siblings are user-wired via config" rule wants.
+5. **Maturity gate.** v0.1.0. Note the README now documents a `lib.rs` and a
+   public `ross::clip_tag::ClipTagger` surface, so "bin-only" is out of date as
+   a FACT — but it does not reopen the decision: DECISIONS.md's other four
+   reasons (the user-wired-siblings rule, the unpublished v0.1.0 dependency,
+   NN-4's rung-5 shape, and ross's own note that ONNX's process-global state
+   makes subprocess isolation the safer boundary) all stand on their own, and
+   the zero-compile-time-dependency property is worth more than in-process
+   speed for an opt-in rung.

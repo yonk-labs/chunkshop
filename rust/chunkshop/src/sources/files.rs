@@ -122,7 +122,13 @@ impl FilesSource {
                 let bytes = std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?;
                 let content_hash = hash_bytes(&bytes);
                 let (rung, model_id, model_version, params) = deriver.cache_key_parts();
-                let d_hash = derivation_hash(&rung, &model_id, &model_version, "rust", &params);
+                // `deriver.engine()`, not a hardcoded "rust": rung 5
+                // (`RossDeriver`) shells out to the same binary from both
+                // ports and stamps `engine: "ross"`, so a hardcoded engine
+                // here would compute a cache key that disagrees with the
+                // provenance the deriver actually stamps.
+                let d_hash =
+                    derivation_hash(&rung, &model_id, &model_version, deriver.engine(), &params);
                 // Third component of the key: whatever per-document
                 // material this deriver consumes beyond its bytes (`None`
                 // for a pure deriver — see `CacheableDeriver`'s

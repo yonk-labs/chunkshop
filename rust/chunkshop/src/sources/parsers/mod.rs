@@ -114,6 +114,24 @@ pub trait Deriver: Send + Sync {
 pub trait CacheableDeriver: Deriver {
     fn cache_key_parts(&self) -> (String, String, String, Value);
 
+    /// The `engine` folded into the derivation hash and stamped into
+    /// `derived.engine`.
+    ///
+    /// Defaults to `"rust"`, which is right for every IN-PROCESS rung: the
+    /// derivation really was performed by this port, and the field exists
+    /// so a Python-derived and a Rust-derived value can share one cache
+    /// directory without masquerading as each other.
+    ///
+    /// It is overridable because rung 5 is not in-process. `RossDeriver`
+    /// shells out to the same `ross` binary from BOTH ports, so stamping
+    /// the host language there would claim a derivation neither port
+    /// performed — and would split one genuinely shared cache entry in two.
+    /// `files.rs` reads this rather than hardcoding `"rust"` at the call
+    /// site, which is what it used to do.
+    fn engine(&self) -> &'static str {
+        "rust"
+    }
+
     /// Per-document material this deriver consumes beyond its bytes.
     ///
     /// THE CACHE-SOUNDNESS INVARIANT. A deriver participating in the
