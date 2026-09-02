@@ -3,8 +3,8 @@ name: Rust media — live model tests
 # The four `#[ignore]`d Rust tests that download and run REAL CLIP weights
 # (~350 MB of ONNX per tower) live here and nowhere else:
 #
-#   tests/clip_embedding_parity.rs  clip_text_vectors_match_python_reference
-#   tests/clip_embedding_parity.rs  clip_vision_vectors_match_python_reference
+#   tests/clip_embedding_parity.rs  clip_text_tower_matches_python_within_1e6
+#   tests/clip_embedding_parity.rs  clip_vision_tower_matches_python_across_the_content_distribution
 #   tests/media_derivation_parity.rs  (the CLIP-weights derivation test)
 #   src/sources/derivers/clip_tags.rs  (lib unit test, --ignored)
 #
@@ -82,8 +82,10 @@ jobs:
       # (verified 2026-09-01 with `-- --ignored --list`):
       #   sources::derivers::clip_tags::tests::tags_are_text_and_correct
       #   clip_text_tower_matches_python_within_1e6
-      #   clip_vision_tower_matches_python_within_1e_minus_5_cosine
+      #   clip_vision_tower_matches_python_across_the_content_distribution
       #   rung1_metadata_keys_match_python
+      # (re-verified 2026-09-01 after the vision test was renamed and moved
+      # onto the 28-image content corpus.)
       # No `#[ignore]` in the workspace exists for any other reason — the
       # DB-backed tests use a runtime skip-and-return instead (see
       # cross_backend_matrix.rs's module doc).

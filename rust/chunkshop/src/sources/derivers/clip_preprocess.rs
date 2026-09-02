@@ -36,10 +36,16 @@
 //! `FilterType::CatmullRom` is the correct match for PIL's `BICUBIC` — both are
 //! the Keys cubic with `a = -0.5`. At matched dimensions the two agree on
 //! 96.6–98.8% of pixels bit-for-bit (mean abs error 0.013–0.044 out of 255).
-//! **Do not change the filter.** The ~6.8e-4 residual that survives this fix is
-//! sub-LSB rounding inside PIL's fixed-point 8-bit resampler versus `image`'s
-//! f32 one, and it is the floor of what is achievable without reimplementing
-//! Pillow's integer kernel.
+//! **Do not change the filter.** The residual that survives this fix is sub-LSB
+//! rounding inside PIL's fixed-point 8-bit resampler versus `image`'s f32 one,
+//! and it is the floor of what is achievable without reimplementing Pillow's
+//! integer kernel. It is CONTENT-dependent: measured over the 28-image corpus
+//! in `tests/parity-fixtures/clip-vision-corpus/` it runs from 2.1e-4 max abs
+//! (0.075 deg, a checkerboard) to 5.3e-3 (0.92 deg, an upscaled photograph),
+//! median 2.1e-3 (0.78 deg). The 6.8e-4 once quoted here was the figure for
+//! `sprite_knight.png` — a flat-shaded drawing at the easy end of that range,
+//! and not representative. Images needing NO resize agree exactly
+//! (`1 - cosine ~ 4e-13`), which is what pins the cause on the resampler.
 //!
 //! # How the fix is applied
 //!

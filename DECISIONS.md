@@ -92,9 +92,18 @@ Task 10's original framing — a looser `cosine >= 0.9999` bar caused by
 `fastembed-rs`'s hardcoded `FilterType::CatmullRom` — was **misdiagnosed on
 both counts**. `CatmullRom` *is* PIL's `BICUBIC`; the real cause was
 `resize_exact` ignoring `size.shortest_edge`'s aspect-preserving semantics
-(`utils.rs:51`/`:215`), an upstream bug chunkshop now preprocesses around. SC-12's
-vision bar is now `cosine >= 0.99998` uniformly, for every image shape — see
-MEDIA-INGEST-ROADMAP.md. The consequence for THIS decision is sharper than
+(`utils.rs:51`/`:215`), an upstream bug chunkshop now preprocesses around.
+
+*(Bar superseded 2026-09-01, same day, later: `cosine >= 0.99998` was itself
+fitted to three flat-shaded fixtures and is FALSE for photographic content —
+it fails 21 of 28 rows of a proper corpus. SC-12's vision bar is now two-tier:
+`1 - cosine <= 1e-9` for no-resize images, `cosine >= 0.9995` plus
+`max abs <= 1.2e-2` for resampled ones, measured over a 28-image corpus. See
+SPEC.md SC-12 and `rust/chunkshop/tests/clip_embedding_parity.rs`. The
+DECISION above — in-process rung 0 rather than a ross subprocess — is
+unchanged by either revision; only this attached note moves.)*
+
+The consequence for THIS decision is sharper than
 before: ross **rounds** the CLIP long edge where Python truncates (326 vs 325 on
 `chart_revenue.png`, worth 4.06°), so ross's vectors are *not* interchangeable
 with chunkshop's today. If ross ever becomes the image path, its preprocessing

@@ -58,7 +58,7 @@ and the wrong cause was propagated into SPEC.md and into the parity test's bars.
 |---|---|---|
 | `Qdrant/clip-ViT-B-32-text` | 1.8e-7 | ✅ pass at `1e-6` |
 | `Xenova/bge-base-en-v1.5-int8` | 5e-7 | ✅ pass at `1e-6` |
-| `Qdrant/clip-ViT-B-32-vision` | 9.3e-4 | ✅ pass at `cosine ≥ 0.99998` (does not meet `1e-6`) |
+| `Qdrant/clip-ViT-B-32-vision` | 2.1e-4 – 5.3e-3 (content-dependent) | ✅ pass at the two-tier bar below (does not meet `1e-6`) |
 
 #### The real root cause: `resize_exact` ignores `shortest_edge`'s semantics
 
@@ -128,18 +128,40 @@ Truncation is load-bearing: the sibling tool `ross` rounds the long edge instead
 
 #### What remains, and why it is a floor
 
-6.8e-4–9.3e-4 max abs per component, 0.24–0.27°. Cause: **sub-LSB rounding inside PIL's
-fixed-point 8-bit resampler** versus `image`'s f32 one. Not a filter difference and not an
-inference difference (the text towers agree at 1.8e-7 on the same runtime). Closing it would
-mean reimplementing Pillow's integer kernel — not worth it. SC-12's vision clause is
-therefore `cosine ≥ 0.99998`, **uniformly for every image**, which sits 1.37x above that
-floor.
+**Re-measured 2026-09-01 (later the same day) over a 28-image corpus.** The "6.8e-4–9.3e-4
+max abs, 0.24–0.27°, therefore `cosine ≥ 0.99998` uniformly" figures that stood here were
+measured on three flat-shaded Pillow drawings, and they are NOT representative: the residual
+is **content-dependent**, not shape-dependent. Against a corpus spanning photographs
+(aspect 1:4→4:1), greyscale, text, texture and flat content, it runs:
+
+| | cosine | angle | max abs |
+|---|---|---|---|
+| best (checkerboard) | 0.999999140 | 0.075° | 2.1e-4 |
+| median | 0.999908283 | 0.775° | 2.1e-3 |
+| worst (400x1600 photo) | 0.999775132 | 1.215° | 4.5e-3 (worst max abs 5.3e-3, an upscaled photo) |
+
+Median by content class: flat 0.241°, texture 0.526°, text 0.599°, photo 0.824°, greyscale
+1.072°. The three original fixtures ARE the flat class — the three easiest resampled rows in
+the corpus. `cosine ≥ 0.99998` fails **21 of 28 rows of correct output**.
+
+Cause is unchanged and now positively pinned: **sub-LSB rounding inside PIL's fixed-point
+8-bit resampler** versus `image`'s f32 one. Not a filter difference and not an inference
+difference — images that need NO resize (224x224, 225x224) agree at `1 - cosine ≈ 4e-13`
+and max abs 2.7e-7, i.e. bypassing the resampler removes 100% of the residual. Closing it
+would mean reimplementing Pillow's integer kernel — not worth it.
+
+SC-12's vision clause is therefore **two-tier and two-axis**: `1 - cosine ≤ 1e-9` and
+`max abs ≤ 1e-5` for no-resize images; `cosine ≥ 0.9995` and `max abs ≤ 1.2e-2` for
+resampled ones. Both carry ~2.2x headroom over the worst measurement. The tight tier is what
+still catches a weight/runtime change; the loose tier is what is actually true of the
+resampler.
 
 Consequence for the "vectors from any implementation are interchangeable" promise: for CLIP
-vision it is true to within 0.27°, in both languages, for any image shape. Candidate pairs
-separated by less than that could still order differently between implementations — rare,
-real, and worth one line in the docs rather than a claim that overreaches. (The pre-fix
-13–26° version of this caveat is retracted; it was measuring the bug, not the floor.)
+vision it is true to within ~1.2°, in both languages, for any image shape and content —
+0.24° was only ever true for flat-shaded drawings. Candidate pairs separated by less than
+that could order differently between implementations — rare, real, and worth one line in
+the docs rather than a claim that overreaches. (The pre-fix 13–26° version of this caveat is
+retracted; it was measuring the bug, not the floor.)
 
 #### ⚠️ Upstream: this is a `fastembed-rs` bug worth reporting
 
@@ -160,13 +182,18 @@ derived from the fp32 CLIP numbers above will not transfer.
 
 #### Regression coverage
 
-`rust/chunkshop/tests/clip_embedding_parity.rs` applies ONE bar (`cosine ≥ 0.99998`,
-max abs ≤ 2e-3) to all three fixtures — the earlier per-image floors (0.9734, 0.8971) are
-gone; they encoded the bug. The test drives the shipped `open_for_clip` path, not a
-test-only reimplementation, and its failure modes were injected and measured rather than
-reasoned about: reverting to `embed(path)` → 13.23°, `.round()` instead of truncation →
-4.06°, a one-pixel crop offset → 4.04°, `Triangle` → 5.86°, `Lanczos3` → 5.37°, `Nearest` →
-13.51°. All fail the bar by 11–37x. Fixtures come from
+`rust/chunkshop/tests/clip_embedding_parity.rs` applies the two-tier bar above to a
+28-image corpus (`tests/parity-fixtures/clip-vision-corpus/`, built by
+`tests/parity/generate_clip_vision_corpus.py`), replacing the three fixtures it used to
+run on; the earlier per-image floors (0.9734, 0.8971) are gone, and so is the
+three-fixture `0.99998`, which encoded a fixture-selection artifact rather than a bug.
+Which rows get the tight tier is DERIVED from the shipped `target_size`, not listed by
+hand. The test drives the shipped `open_for_clip` path, not a test-only reimplementation,
+and its failure modes were injected and re-measured across all 28 rows rather than
+reasoned about: reverting to `embed(path)` → 41.20° worst, 17 rows failing; `.round()`
+instead of truncation → 4.17°, 6 rows; a one-pixel crop offset → 9.20°, 17 rows;
+`Triangle` → 8.90°, 25 rows; `Lanczos3` → 5.87°, 19 rows; `Nearest` → 27.92°, 26 rows.
+The weakest of those still misses by 5.3x in cosine distance. The text fixture comes from
 `tests/parity/generate_clip_full_vectors.py` (Python `fastembed`) into
 `rust/chunkshop/tests/parity-fixtures/clip_{text,vision}_full_reference.bin` and are never
 regenerated from the Rust side.
@@ -217,9 +244,11 @@ Bigger than it looks. Rust has **no parser layer at all** today
 **M2 closed 2026-09-01 (Plan D Tasks 13 + 14).** The vision-tower blocker Task 13 surfaced
 was **root-caused and fixed** the same day: it was an upstream `fastembed-rs` aspect-ratio
 bug, not a filter difference and not a downscale regime — see the CLIP vision section above.
-chunkshop now preprocesses around it, SC-12's vision clause is a single
-`cosine ≥ 0.99998` that holds for every image shape, and the release gate in `DECISIONS.md`
-is clear on this axis.
+chunkshop now preprocesses around it, and the release gate in `DECISIONS.md` is clear on
+this axis. SC-12's vision clause was restated the same day as a single
+`cosine ≥ 0.99998`, and then **again** as the two-tier corpus bar above once that single
+number turned out to be fitted to three flat-shaded fixtures — see "What remains, and why
+it is a floor".
 
 **Also surfaced, own follow-up:** Rust implements `IncrementalSource` for s3 /
 pg_table / http but **not files** — a `files` + `incremental:` YAML has been
@@ -363,10 +392,11 @@ Tasks 9/11/12 proceed unchanged with in-process `fastembed-rs`.
    by a zero-config default path.
 4. **SC-12 scoping caveat.** ross drives `ort` directly, not `fastembed-rs`, and
    does its own preprocessing — and it **rounds** the CLIP long edge where
-   Python truncates (326 vs 325 on `chart_revenue.png`, worth 4.06°). So ross
-   does NOT currently produce vectors interchangeable with chunkshop's or
-   Python's. SC-12's `cosine ≥ 0.99998` vision bar is scoped to the shipped
-   fastembed path plus `clip_preprocess`'s geometry. If ross ever becomes that
+   Python truncates (326 vs 325 on `chart_revenue.png`; re-measured across the
+   28-image corpus this costs up to 4.17° and fails 6 rows). So ross does NOT
+   currently produce vectors interchangeable with chunkshop's or Python's.
+   SC-12's two-tier vision bar is scoped to the shipped fastembed path plus
+   `clip_preprocess`'s geometry. If ross ever becomes that
    path, its preprocessing must be measured against Python directly — not
    assumed to inherit this bar.
 5. **Maturity gate.** v0.1.0, 3 commits, no `lib.rs`. Revisit linking-vs-shelling

@@ -1,0 +1,256 @@
+{
+  "images": [
+    {
+      "name": "ctrl_astronaut_224x224.png",
+      "width": 224,
+      "height": 224,
+      "mode": "RGB",
+      "aspect": 1.0,
+      "content": "photo",
+      "note": "no-resize control: CLIP's native input size"
+    },
+    {
+      "name": "photo_astronaut_512x512.png",
+      "width": 512,
+      "height": 512,
+      "mode": "RGB",
+      "aspect": 1.0,
+      "content": "photo",
+      "note": "square photo"
+    },
+    {
+      "name": "photo_cat_451x300.png",
+      "width": 451,
+      "height": 300,
+      "mode": "RGB",
+      "aspect": 1.5033,
+      "content": "photo",
+      "note": "landscape 1.50"
+    },
+    {
+      "name": "photo_motorcycle_741x500.png",
+      "width": 741,
+      "height": 500,
+      "mode": "RGB",
+      "aspect": 1.482,
+      "content": "photo",
+      "note": "outdoor scene, mixed frequency"
+    },
+    {
+      "name": "photo_coffee_600x400.png",
+      "width": 600,
+      "height": 400,
+      "mode": "RGB",
+      "aspect": 1.5,
+      "content": "photo",
+      "note": "landscape 1.50"
+    },
+    {
+      "name": "photo_rocket_640x427.png",
+      "width": 640,
+      "height": 427,
+      "mode": "RGB",
+      "aspect": 1.4988,
+      "content": "photo",
+      "note": "landscape 1.50"
+    },
+    {
+      "name": "photo_hubble_560x488.png",
+      "width": 560,
+      "height": 488,
+      "mode": "RGB",
+      "aspect": 1.1475,
+      "content": "photo",
+      "note": "dark field, sparse high-contrast points"
+    },
+    {
+      "name": "photo_retina_700x700.png",
+      "width": 700,
+      "height": 700,
+      "mode": "RGB",
+      "aspect": 1.0,
+      "content": "photo",
+      "note": "large square, heavy downscale"
+    },
+    {
+      "name": "photo_ihc_512x512.png",
+      "width": 512,
+      "height": 512,
+      "mode": "RGB",
+      "aspect": 1.0,
+      "content": "photo",
+      "note": "stained tissue, low contrast"
+    },
+    {
+      "name": "aspect_astronaut_1280x720.png",
+      "width": 1280,
+      "height": 720,
+      "mode": "RGB",
+      "aspect": 1.7778,
+      "content": "photo",
+      "note": "16:9 \u2014 the shape the audit measured failing"
+    },
+    {
+      "name": "aspect_astronaut_480x853.png",
+      "width": 480,
+      "height": 853,
+      "mode": "RGB",
+      "aspect": 0.5627,
+      "content": "photo",
+      "note": "9:16 portrait"
+    },
+    {
+      "name": "aspect_rocket_1600x400.png",
+      "width": 1600,
+      "height": 400,
+      "mode": "RGB",
+      "aspect": 4.0,
+      "content": "photo",
+      "note": "4:1 extreme wide"
+    },
+    {
+      "name": "aspect_rocket_400x1600.png",
+      "width": 400,
+      "height": 1600,
+      "mode": "RGB",
+      "aspect": 0.25,
+      "content": "photo",
+      "note": "1:4 extreme tall"
+    },
+    {
+      "name": "aspect_coffee_225x224.png",
+      "width": 225,
+      "height": 224,
+      "mode": "RGB",
+      "aspect": 1.0045,
+      "content": "photo",
+      "note": "one pixel off square \u2014 the smallest resize that is not the control"
+    },
+    {
+      "name": "scale_hubble_320x279.png",
+      "width": 320,
+      "height": 279,
+      "mode": "RGB",
+      "aspect": 1.147,
+      "content": "photo",
+      "note": "heavy downscale before ingest"
+    },
+    {
+      "name": "scale_cat_1024x682.png",
+      "width": 1024,
+      "height": 682,
+      "mode": "RGB",
+      "aspect": 1.5015,
+      "content": "photo",
+      "note": "heavy upscale before ingest (2.3x the 451x300 source)"
+    },
+    {
+      "name": "scale_astronaut_100x100.png",
+      "width": 100,
+      "height": 100,
+      "mode": "RGB",
+      "aspect": 1.0,
+      "content": "photo",
+      "note": "below 224 \u2014 upscaled by the preprocessor"
+    },
+    {
+      "name": "grey_moon_512x512.png",
+      "width": 512,
+      "height": 512,
+      "mode": "L",
+      "aspect": 1.0,
+      "content": "greyscale",
+      "note": "smooth greyscale, low frequency"
+    },
+    {
+      "name": "grey_coins_384x303.png",
+      "width": 384,
+      "height": 303,
+      "mode": "L",
+      "aspect": 1.2673,
+      "content": "greyscale",
+      "note": "greyscale objects on texture"
+    },
+    {
+      "name": "grey_camera_512x512.png",
+      "width": 512,
+      "height": 512,
+      "mode": "L",
+      "aspect": 1.0,
+      "content": "greyscale",
+      "note": "classic greyscale photo"
+    },
+    {
+      "name": "freq_page_384x191.png",
+      "width": 384,
+      "height": 191,
+      "mode": "L",
+      "aspect": 2.0105,
+      "content": "text",
+      "note": "scanned text page"
+    },
+    {
+      "name": "freq_text_448x172.png",
+      "width": 448,
+      "height": 172,
+      "mode": "L",
+      "aspect": 2.6047,
+      "content": "text",
+      "note": "handwritten/printed text strip"
+    },
+    {
+      "name": "freq_gravel_512x512.png",
+      "width": 512,
+      "height": 512,
+      "mode": "L",
+      "aspect": 1.0,
+      "content": "texture",
+      "note": "dense high-frequency texture"
+    },
+    {
+      "name": "freq_brick_512x512.png",
+      "width": 512,
+      "height": 512,
+      "mode": "L",
+      "aspect": 1.0,
+      "content": "texture",
+      "note": "regular high-frequency texture"
+    },
+    {
+      "name": "freq_checker_200x200.png",
+      "width": 200,
+      "height": 200,
+      "mode": "L",
+      "aspect": 1.0,
+      "content": "synthetic",
+      "note": "pathological alternating pixels"
+    },
+    {
+      "name": "flat_sprite_knight.png",
+      "width": 128,
+      "height": 128,
+      "mode": "RGB",
+      "aspect": 1.0,
+      "content": "flat",
+      "note": "flat-shaded Pillow drawing \u2014 one of the three original fixtures"
+    },
+    {
+      "name": "flat_chart_revenue.png",
+      "width": 320,
+      "height": 220,
+      "mode": "RGB",
+      "aspect": 1.4545,
+      "content": "flat",
+      "note": "flat-shaded Pillow drawing \u2014 one of the three original fixtures"
+    },
+    {
+      "name": "flat_screenshot_settings.png",
+      "width": 360,
+      "height": 260,
+      "mode": "RGB",
+      "aspect": 1.3846,
+      "content": "flat",
+      "note": "flat-shaded Pillow drawing \u2014 one of the three original fixtures"
+    }
+  ]
+}
