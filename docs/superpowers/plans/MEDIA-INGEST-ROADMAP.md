@@ -432,6 +432,76 @@ Tasks 9/11/12 proceed unchanged with in-process `fastembed-rs`.
    directories genuinely are not consumed. Both ports have a test proving the
    pairing: two byte-identical images under different names MISS rather than
    being served each other's text, while the same name still hits.
+
+   ✅ **Same defect class, `llm: true` — FIXED 2026-09-02, both ports.** When
+   the LLM pass was enabled the endpoint and model were resolved from the
+   ENVIRONMENT (`ROSS_VISION_URL` > `ROSS_URL`, `ROSS_VISION_MODEL` >
+   `ROSS_MODEL`) and appeared nowhere in `params()`, so they were not in the
+   derivation hash. Measured, same cell, same images, only `ROSS_MODEL` changed
+   between runs:
+
+   ```
+   run 1, gemma-4-E2B-it-qat-4bit    7.04s   2 cache entries written
+   run 2, Ornith-1.0-9B              0.61s   served entirely from run 1's cache
+                                             text identical (gemma's words)
+                                             cache still 2 entries
+   ```
+
+   Worse than the vendored-vocabulary gap it resembles: the model is remote and
+   can change server-side with no local signal at all. The fix runs
+   `ross --doctor` at deriver construction (only when `llm: true`) and folds the
+   per-modality **url + model + whether a key is set** into
+   `params["llm_endpoints"]`. Resolution is delegated to ross rather than
+   reimplemented — its precedence is its own, and duplicating it in two host
+   languages is the drift class this branch already has enough of. Same
+   scenario after the fix:
+
+   ```
+   run 1, gemma-4-E2B-it-qat-4bit    5.31s   2 cache entries
+   run 2, Ornith-1.0-9B             25.79s   REAL re-derivation, cache 2 -> 4
+                                             different text, ross_model=Ornith
+   run 3, gemma again                0.73s   hits run 1's entries, cache still 4
+   ```
+
+   The API key's **value** is never read, hashed, stamped or logged; only the
+   boolean ross itself prints (`key=set` / `key=none`) enters the params, and it
+   earns its place because adding a key to a keyless endpoint turns a
+   401-and-`llm_error` degraded derivation into a real one. Both ports have a
+   leak test driven by a stub that reports `key=set`, and `--doctor` output is
+   redacted at ` key=` before it can reach an error message.
+
+   `llm: false` params are byte-identical to what they were before the fix
+   (`{"labels_sha256": null, "llm": false}`, hash
+   `314091bc293d054ae41970523db6b580df4c3acf2e6af04a36293c526531d829` on a
+   `ross 9.9.9` stub), pinned as a literal in both ports so a future edit cannot
+   drift it silently: `llm_endpoints` is ADDED when the LLM is on, never
+   present-and-null when it is off, so no existing keyless cache entry was
+   invalidated to fix a bug that could not affect it.
+
+   ⚠️ **The honest limitation that remains: LLM output is not deterministic.**
+   With `llm: true` the derived text comes from a remote model doing sampling.
+   Two fresh derivations of the same image can differ even with the endpoint,
+   the model and the prompt all identical — the hash pins the INPUTS, not the
+   output. **On this rung the cache is therefore not an optimisation, it is
+   what makes a corpus stable**: every row derived once and thereafter served
+   from that one entry. The corollary is materially different from rungs 0 and
+   1, which are pure functions of the bytes: `chunkshop cache purge` followed by
+   a re-ingest can legitimately change derived text, and therefore the
+   embeddings, with no config change at all. Purge this cache only when you mean
+   to re-derive the corpus. Recorded in the module docstring of both ports too,
+   which is where a reader hits it.
+
+   📌 **Upstream ask: `ross --doctor --json`.** The weak point of the fix above
+   is that it parses human-readable output — `--doctor --json` is accepted but
+   ignored as of ross 0.1.0 (verified; the flag prints the human format). Both
+   ports therefore hand-parse `vision <url> model=<m> key=<none|set>` and treat
+   any shape they cannot read as a hard construction-time error. ross is a
+   sibling repo we control, so the right fix is upstream: emit a stable JSON
+   document from `--doctor --json` (per-modality `url`, `model`, `key_set`, plus
+   the external-binary and model-cache checks), and let both ports consume that
+   instead. Until then, a ross release that changes `--doctor`'s wording breaks
+   this rung loudly at construction rather than silently in the cache — which is
+   the correct failure mode, but still a failure mode worth removing.
 4. **SC-12 scoping caveat.** ross drives `ort` directly, not `fastembed-rs`, and
    does its own preprocessing — and it **rounds** the CLIP long edge where
    Python truncates (326 vs 325 on `chart_revenue.png`; re-measured across the
