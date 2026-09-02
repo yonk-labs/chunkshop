@@ -188,6 +188,68 @@ def _rung5(out: dict, image: Path, skip: bool) -> None:
     out["rung5_document"] = _document_section(ROSS_CONFIG, image)
 
 
+#: The `--doctor` output the LLM-params section is generated from. A LITERAL,
+#: not a live probe: this section must regenerate on any machine, with or
+#: without ross, with or without an endpoint, and both ports must replay the
+#: SAME bytes rather than two hand-kept copies of a stub script.
+#:
+#: Shaped exactly like ross 0.1.0's real output, including the noise lines
+#: either port's parser has to skip and a `key=set` line — the fixture is
+#: also the evidence that a set key never reaches the params.
+DOCTOR_STDOUT = (
+    "ffprobe    ok\n"
+    "ffmpeg     ok\n"
+    "exiftool   MISSING (optional)\n"
+    "vision     http://192.168.1.189:8082/v1 model=mlx-community/gemma-4-e4b-it-4bit key=none\n"
+    "audio      http://192.168.1.189:8082/v1 model=deepreinforce-ai/Ornith-1.0-9B key=set\n"
+    "video      NOT SET\n"
+    "\n"
+    "clap       ok (/home/u/.cache/ross-clap/audio_model_int8.onnx)\n"
+    "clip       not downloaded (fetched on first --clip) -> /home/u/.cache/ross-clap/clip_vision_int8.onnx\n"
+)
+
+
+def _rung5_llm_params(out: dict) -> None:
+    """The `llm: true` params, built from a fixed `--doctor` transcript.
+
+    Needs neither the ross binary nor an endpoint: it drives a stub that
+    `cat`s DOCTOR_STDOUT, which is what makes this section regenerable
+    anywhere and comparable byte-for-byte against the Rust port.
+
+    Records `params`, not a derivation hash. The hash also folds in
+    `model_version` (whatever ross the host has) and would tempt an
+    equality assertion the fixture's own comment forbids.
+    """
+    import stat
+    import tempfile
+
+    from chunkshop.sources.derivers.ross import RossDeriver
+
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "doctor.txt").write_text(DOCTOR_STDOUT)
+        binary = d / "ross"
+        binary.write_text(
+            "#!/bin/sh\n"
+            'case "$1" in\n'
+            '  --version) echo "ross 9.9.9"; exit 0;;\n'
+            f'  --doctor) cat "{d}/doctor.txt"; exit 0;;\n'
+            "esac\n"
+            "exit 0\n"
+        )
+        binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
+        params = RossDeriver(binary=str(binary), llm=True)._params()
+
+    out["rung5_llm_params"] = {
+        "doctor_stdout": DOCTOR_STDOUT,
+        "params": params,
+        # The `llm: false` params, pinned alongside so the fixture also
+        # records that turning the LLM on ADDS a key rather than reshaping
+        # the keyless path's hash.
+        "params_llm_false": {"llm": False, "labels_sha256": None},
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -225,6 +287,8 @@ def main() -> int:
     out["rung0_document"] = _document_section({"rung": "image_meta"}, image)
 
     _rung5(out, image, args.skip_rung5)
+    # Needs no binary and no endpoint, so it is never carried over.
+    _rung5_llm_params(out)
 
     if args.skip_rung1:
         if not FIXTURE.exists():

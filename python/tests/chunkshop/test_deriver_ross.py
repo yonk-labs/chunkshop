@@ -101,17 +101,38 @@ def test_unreadable_labels_file_fails_at_construction(tmp_path):
     assert "labels_file" in str(exc.value)
 
 
-def _stub_ross(tmp_path, body: str) -> str:
-    """A fake `ross` that answers `--version` and then runs `body`."""
+def _stub_ross(tmp_path, body: str, doctor: str | None = None) -> str:
+    """A fake `ross` that answers `--version` (and optionally `--doctor`)
+    and then runs `body`.
+
+    `doctor` is shell, not a literal: the model-swap tests need a stub whose
+    `--doctor` output tracks `$ROSS_MODEL` exactly the way the real binary's
+    does, so the test can change ONE environment variable and nothing else.
+    """
     tmp_path.mkdir(parents=True, exist_ok=True)
     p = tmp_path / "ross"
-    p.write_text(
-        '#!/bin/sh\n'
-        'case "$1" in --version) echo "ross 9.9.9"; exit 0;; esac\n'
-        f"{body}\n"
-    )
+    arms = 'case "$1" in --version) echo "ross 9.9.9"; exit 0;;'
+    if doctor is not None:
+        arms += f' --doctor) {doctor}\nexit 0;;'
+    arms += " esac"
+    p.write_text(f"#!/bin/sh\n{arms}\n{body}\n")
     p.chmod(0o755)
     return str(p)
+
+
+#: A `--doctor` arm that mirrors ross 0.1.0's real output, resolving from the
+#: environment exactly as ross does for the single-endpoint case.
+_DOCTOR_FROM_ENV = (
+    "printf 'ffprobe    ok\\n'; "
+    "printf 'exiftool   MISSING (optional)\\n'; "
+    "for m in vision audio video; do "
+    "  if [ -n \"$ROSS_URL\" ]; then "
+    "    printf '%-10s %s model=%s key=%s\\n' \"$m\" \"$ROSS_URL\" "
+    "\"$ROSS_MODEL\" \"$([ -n \"$ROSS_API_KEY\" ] && echo set || echo none)\"; "
+    "  else printf '%-10s NOT SET\\n' \"$m\"; fi; "
+    "done; "
+    "printf '\\nclap       ok (/x)\\n'"
+)
 
 
 def test_a_nonzero_derive_exit_surfaces_ross_stderr_with_a_hint(tmp_path):
@@ -231,8 +252,12 @@ def test_the_vendored_vocabulary_is_identified_by_the_binary_version(tmp_path):
     )
 
 
-def test_llm_flag_changes_the_derivation_hash(tmp_path):
-    binary = _stub_ross(tmp_path, "exit 0")
+def test_llm_flag_changes_the_derivation_hash(tmp_path, monkeypatch):
+    """`llm: true` needs a readable `--doctor`, because with the LLM on the
+    endpoint and model are hash inputs — see the LLM section below."""
+    monkeypatch.setenv("ROSS_URL", "http://h/v1")
+    monkeypatch.setenv("ROSS_MODEL", "m")
+    binary = _stub_ross(tmp_path, "exit 0", _DOCTOR_FROM_ENV)
     assert (
         RossDeriver(binary=binary, llm=False).derivation_hash()
         != RossDeriver(binary=binary, llm=True).derivation_hash()
@@ -259,6 +284,282 @@ def test_cache_key_extra_is_the_basename_only(tmp_path):
     assert d.cache_key_extra(Path("/one/two/knight.png")) == "knight.png"
     assert d.cache_key_extra(Path("/other/knight.png")) == "knight.png"
     assert d.cache_key_extra(Path("/one/two/other.png")) == "other.png"
+
+
+# --- the LLM endpoint is an input, and it is in the hash -------------------
+#
+# The defect these close, measured before the fix: same cell, same images,
+# only ROSS_MODEL changed between runs -> run 2 finished in 0.35s against
+# run 1's 9.22s, served run 1's three cache entries verbatim, and the rows
+# carried the first model's words with nothing recording which model wrote
+# them.
+
+
+#: The `llm: false` derivation hash, PINNED. Its whole point is that this
+#: fix did not move it: `llm_endpoints` is absent from the params when the
+#: LLM is off, so every cache entry written on the keyless path before the
+#: fix is still reachable after it. A future edit that changes this literal
+#: is invalidating real user caches and must say so out loud.
+LLM_FALSE_HASH = "314091bc293d054ae41970523db6b580df4c3acf2e6af04a36293c526531d829"
+LLM_FALSE_PARAMS = {"labels_sha256": None, "llm": False}
+
+
+def test_the_llm_false_params_and_hash_did_not_move(tmp_path):
+    """Pinned against the pre-fix values, measured on the same stub."""
+    binary = _stub_ross(tmp_path, "exit 0")
+    d = RossDeriver(binary=binary, llm=False)
+    assert d._params() == LLM_FALSE_PARAMS
+    assert d.derivation_hash() == LLM_FALSE_HASH
+
+
+def test_llm_false_never_runs_doctor(tmp_path):
+    """The keyless path must not pay a `--doctor` subprocess, and must not
+    be able to fail because of one. This stub makes `--doctor` explode."""
+    binary = _stub_ross(tmp_path, "exit 0", doctor='echo "boom" >&2; exit 9')
+    d = RossDeriver(binary=binary, llm=False)
+    assert d.derivation_hash() == LLM_FALSE_HASH
+    assert d.llm_endpoints is None
+
+
+def _llm_deriver(tmp_path, monkeypatch, model, url="http://endpoint:8082/v1", key=None):
+    for var in ("ROSS_URL", "ROSS_MODEL", "ROSS_API_KEY",
+                "ROSS_VISION_URL", "ROSS_VISION_MODEL", "ROSS_VISION_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ROSS_URL", url)
+    monkeypatch.setenv("ROSS_MODEL", model)
+    if key is not None:
+        monkeypatch.setenv("ROSS_API_KEY", key)
+    # The derive arm echoes back the model ross was told to use, the way the
+    # real binary stamps `model` when the LLM path wins.
+    body = (
+        'printf \'{"type":"image","description":"a knight, per %s","model":"%s"}\''
+        ' "$ROSS_MODEL" "$ROSS_MODEL"'
+    )
+    binary = _stub_ross(tmp_path, body, _DOCTOR_FROM_ENV)
+    return RossDeriver(binary=binary, llm=True)
+
+
+def test_a_model_swap_forces_a_re_derivation(tmp_path, monkeypatch):
+    """THE regression test. Two derivations of the same file with different
+    `ROSS_MODEL` values must produce different hashes AND must both really
+    derive — a cache HIT here is the bug."""
+    from chunkshop.sources.derivers.cache import DerivationCache, cached_derive
+    from chunkshop.sources.parsers.base import cache_key_extra_for
+
+    img = tmp_path / "sprite_knight.png"
+    img.write_bytes(b"fake png bytes")
+    content_hash = hashlib.sha256(img.read_bytes()).hexdigest()
+    cache = DerivationCache(root=tmp_path / "cache")
+
+    a = _llm_deriver(tmp_path / "a", monkeypatch, "mlx-community/gemma-4-e4b-it-4bit")
+    ra, hit_a = cached_derive(
+        cache, content_hash, a.derivation_hash(),
+        lambda: a.derive(img), cache_key_extra_for(a, img),
+    )
+    assert not hit_a
+
+    b = _llm_deriver(tmp_path / "b", monkeypatch, "deepreinforce-ai/Ornith-1.0-9B")
+    assert a.derivation_hash() != b.derivation_hash(), (
+        "the LLM model must be in the derivation hash"
+    )
+    rb, hit_b = cached_derive(
+        cache, content_hash, b.derivation_hash(),
+        lambda: b.derive(img), cache_key_extra_for(b, img),
+    )
+    assert not hit_b, "a model swap must re-derive, not serve the old model's text"
+    assert ra.text != rb.text
+    assert "gemma" in ra.text and "Ornith" in rb.text
+
+    # ...and swapping BACK still hits, so this is a key change, not a
+    # blanket cache defeat.
+    c = _llm_deriver(tmp_path / "c", monkeypatch, "mlx-community/gemma-4-e4b-it-4bit")
+    assert c.derivation_hash() == a.derivation_hash()
+    _, hit_c = cached_derive(
+        cache, content_hash, c.derivation_hash(),
+        lambda: pytest.fail("should have been a cache hit"),
+        cache_key_extra_for(c, img),
+    )
+    assert hit_c
+
+
+def test_the_endpoint_url_is_in_the_hash_too(tmp_path, monkeypatch):
+    """Same model name served by two different hosts is two different
+    models in practice — a local mlx build and a hosted one do not agree."""
+    a = _llm_deriver(tmp_path / "a", monkeypatch, "m", url="http://host-a:8082/v1")
+    b = _llm_deriver(tmp_path / "b", monkeypatch, "m", url="http://host-b:8082/v1")
+    assert a.derivation_hash() != b.derivation_hash()
+
+
+def test_key_presence_but_never_its_value_is_in_the_hash(tmp_path, monkeypatch):
+    """Adding a key to a previously keyless endpoint turns a 401 (and an
+    `llm_error` degraded derivation) into a real one, so it must re-derive.
+    Two DIFFERENT keys must not, because ross reports only `set`."""
+    none = _llm_deriver(tmp_path / "n", monkeypatch, "m")
+    k1 = _llm_deriver(tmp_path / "k1", monkeypatch, "m", key="sk-secret-one")
+    k2 = _llm_deriver(tmp_path / "k2", monkeypatch, "m", key="sk-secret-two")
+    assert none.derivation_hash() != k1.derivation_hash()
+    assert k1.derivation_hash() == k2.derivation_hash()
+    assert none._params()["llm_endpoints"]["vision"]["key_set"] is False
+    assert k1._params()["llm_endpoints"]["vision"]["key_set"] is True
+
+
+def test_no_api_key_reaches_params_provenance_metadata_or_an_error(
+    tmp_path, monkeypatch
+):
+    """The explicit leak assertion. The stub reports `key=set`, the real key
+    is in the environment, and it must appear in NOTHING chunkshop keeps."""
+    secret = "sk-do-not-leak-9f3a2b"
+    d = _llm_deriver(tmp_path / "k", monkeypatch, "m", key=secret)
+    img = tmp_path / "x.png"
+    img.write_bytes(b"fake")
+
+    blobs = [
+        json.dumps(d._params()),
+        json.dumps(d.llm_endpoints),
+        json.dumps(d.derive(img).metadata),
+    ]
+    # ...and the error paths, which is where a naive implementation echoes
+    # `--doctor` output verbatim.
+    from chunkshop.sources.derivers.ross import _parse_doctor, _redact_doctor
+
+    leaky = (
+        f"vision     http://h/v1 model=m key={secret}\n"
+        f"audio      NOT SET\nvideo      NOT SET\n"
+    )
+    blobs.append(_redact_doctor(leaky))
+    with pytest.raises(RuntimeError) as exc:
+        _parse_doctor(leaky, "ross")
+    blobs.append(str(exc.value))
+
+    for blob in blobs:
+        assert secret not in blob, blob
+    assert "key_set" in blobs[0], "the BOOLEAN is kept; only the value is not"
+
+
+def test_a_not_set_modality_is_null_and_configuring_one_re_derives(
+    tmp_path, monkeypatch
+):
+    """`NOT SET` is the honest record — ross emits `llm_error: no endpoint
+    configured` for that modality — and pointing it somewhere must
+    re-derive rather than reuse the endpoint-less derivation."""
+    for var in ("ROSS_URL", "ROSS_MODEL", "ROSS_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    unset = RossDeriver(
+        binary=_stub_ross(tmp_path / "u", "exit 0", _DOCTOR_FROM_ENV), llm=True
+    )
+    assert unset.llm_endpoints == {"vision": None, "audio": None, "video": None}
+
+    setup = _llm_deriver(tmp_path / "s", monkeypatch, "m")
+    assert unset.derivation_hash() != setup.derivation_hash()
+
+
+@pytest.mark.parametrize(
+    "doctor,needle",
+    [
+        # ross grew a format we cannot read.
+        ("printf 'vision     http://h/v1 :: m\\n'; printf 'audio      NOT SET\\n';"
+         " printf 'video      NOT SET\\n'", "could not parse"),
+        # A modality vanished (or was renamed) — the silently-unhashed case.
+        ("printf 'vision     NOT SET\\n'; printf 'audio      NOT SET\\n'",
+         "did not report video"),
+        # `--doctor` printed nothing at all.
+        ("true", "did not report"),
+        # An unexpected key state.
+        ("printf 'vision     http://h/v1 model=m key=maybe\\n';"
+         " printf 'audio      NOT SET\\n'; printf 'video      NOT SET\\n'",
+         "unexpected key state"),
+    ],
+)
+def test_an_unreadable_doctor_is_a_named_error_not_a_degraded_hash(
+    tmp_path, monkeypatch, doctor, needle
+):
+    """A silent fallback to a hash that omits the model would reintroduce
+    the exact bug this fix closes, so every unreadable shape is fatal — at
+    CONSTRUCTION, before a `mode: overwrite` cell has dropped the table."""
+    monkeypatch.setenv("ROSS_URL", "http://h/v1")
+    monkeypatch.setenv("ROSS_MODEL", "m")
+    binary = _stub_ross(tmp_path, "exit 0", doctor)
+    with pytest.raises(RuntimeError) as exc:
+        RossDeriver(binary=binary, llm=True)
+    msg = str(exc.value)
+    assert needle in msg, msg
+    assert "ross --doctor" in msg, "the error must say how to see the real output"
+
+
+def test_a_failing_doctor_is_a_named_error(tmp_path):
+    binary = _stub_ross(tmp_path, "exit 0", doctor='echo "no config" >&2; exit 3')
+    with pytest.raises(RuntimeError) as exc:
+        RossDeriver(binary=binary, llm=True)
+    assert "status 3" in str(exc.value)
+    assert "no config" in str(exc.value), "ross's own stderr must be surfaced"
+
+
+# --- Part B: the model actually used --------------------------------------
+
+
+def test_ross_model_records_the_llm_that_actually_answered(tmp_path, monkeypatch):
+    """The hash is computed before the run; the response says what really
+    answered. `ross_model` is that, so a row is attributable even if
+    resolution moved between `--doctor` and the request."""
+    d = _llm_deriver(tmp_path, monkeypatch, "deepreinforce-ai/Ornith-1.0-9B")
+    img = tmp_path / "x.png"
+    img.write_bytes(b"fake")
+    md = d.derive(img).metadata
+    assert md["ross_model"] == "deepreinforce-ai/Ornith-1.0-9B"
+    assert md["derived"]["model"] == "ross", "the TOOL is still ross"
+
+
+def test_ross_model_never_claims_the_llm_when_the_llm_failed(tmp_path):
+    """ross stamps `model` only when the LLM call SUCCEEDED (it stamps the
+    local tagger's label only when no endpoint is configured at all), so a
+    kept-local-result-after-llm_error entry has no `model` — and this
+    deriver must not invent one. The `llm_error` rides in `ross_warnings`,
+    so the null is explicable from the same row."""
+    d = RossDeriver(binary=_stub_ross(tmp_path, "exit 0"))
+    md = d._build_result(
+        {
+            "type": "image",
+            "description": "a knight",
+            "tags": ["knight"],
+            "llm_error": "endpoint returned 401",
+        }
+    ).metadata
+    assert md["ross_model"] is None
+    assert md["ross_warnings"] == ["endpoint returned 401"]
+    assert md["ross_description"] == "a knight"
+
+
+# --- cross-port -----------------------------------------------------------
+
+
+def test_llm_params_match_the_rust_port(tmp_path):
+    """Both ports must build the SAME params from the SAME `--doctor` bytes.
+
+    The fixture carries the literal `--doctor` output, so each port replays
+    identical input through its own parser rather than through two hand-kept
+    copies of a stub script. Params and key sets are compared, never the
+    derivation hash — see the fixture's own note on why.
+    """
+    section = _fixture()["rung5_llm_params"]
+    doctor_stdout = section["doctor_stdout"]
+    (tmp_path / "doctor.txt").write_text(doctor_stdout)
+    binary = _stub_ross(
+        tmp_path, "exit 0", doctor=f'cat "{tmp_path}/doctor.txt"'
+    )
+    d = RossDeriver(binary=binary, llm=True)
+    assert d._params() == section["params"]
+    assert sorted(d._params()) == sorted(section["params"])
+    assert d.llm_endpoints == section["params"]["llm_endpoints"]
+
+
+def _fixture() -> dict:
+    return json.loads(
+        (
+            Path(__file__).resolve().parents[3]
+            / "rust" / "chunkshop" / "tests" / "parity-fixtures"
+            / "media_derivation_reference.json"
+        ).read_text()
+    )
 
 
 # --- the real binary ------------------------------------------------------

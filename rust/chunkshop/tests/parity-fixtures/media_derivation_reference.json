@@ -89,6 +89,30 @@
     ],
     "parser": "RossDeriver"
   },
+  "rung5_llm_params": {
+    "doctor_stdout": "ffprobe    ok\nffmpeg     ok\nexiftool   MISSING (optional)\nvision     http://192.168.1.189:8082/v1 model=mlx-community/gemma-4-e4b-it-4bit key=none\naudio      http://192.168.1.189:8082/v1 model=deepreinforce-ai/Ornith-1.0-9B key=set\nvideo      NOT SET\n\nclap       ok (/home/u/.cache/ross-clap/audio_model_int8.onnx)\nclip       not downloaded (fetched on first --clip) -> /home/u/.cache/ross-clap/clip_vision_int8.onnx\n",
+    "params": {
+      "llm": true,
+      "labels_sha256": null,
+      "llm_endpoints": {
+        "vision": {
+          "url": "http://192.168.1.189:8082/v1",
+          "model": "mlx-community/gemma-4-e4b-it-4bit",
+          "key_set": false
+        },
+        "audio": {
+          "url": "http://192.168.1.189:8082/v1",
+          "model": "deepreinforce-ai/Ornith-1.0-9B",
+          "key_set": true
+        },
+        "video": null
+      }
+    },
+    "params_llm_false": {
+      "llm": false,
+      "labels_sha256": null
+    }
+  },
   "rung1": {
     "deriver": "ClipTagsDeriver",
     "vocabulary": [

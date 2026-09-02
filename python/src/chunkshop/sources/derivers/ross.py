@@ -54,6 +54,44 @@ A THIRD, SMALLER GAP worth knowing: ross's `metadata` block comes from
 and from a native PNG/WebP header fallback when they are not — so
 installing exiftool mid-corpus changes `ross_metadata` for files already
 cached. Same mitigation.
+
+THE LLM ENDPOINT IS AN INPUT, AND IT IS IN THE HASH. With `llm: true`,
+ross calls an OpenAI-compatible endpoint resolved from the ENVIRONMENT
+(`ROSS_VISION_URL` > `ROSS_URL`, `ROSS_VISION_MODEL` > `ROSS_MODEL`, and
+the same shape for the key), per modality. None of that appears in the
+config block, so for a while none of it reached `params()` — and swapping
+`ROSS_MODEL` between two runs of the same cell silently served the first
+model's text out of the cache. It now does: at construction, `llm: true`
+runs `ross --doctor` and folds the per-modality **url + model + whether a
+key is set** into `params["llm_endpoints"]`.
+
+Resolution is delegated to ross rather than reimplemented here on purpose.
+ross's precedence (`--<mod>-url > ROSS_<MOD>_URL > --url > ROSS_URL`) is
+its own; re-deriving it in two host languages is the drift class this
+rung already has enough of. The cost is that `--doctor` prints for humans
+(`--doctor --json` is not supported as of ross 0.1.0), so this file parses
+human-readable output — deliberately strictly: anything it cannot read is
+a construction-time ERROR, never a fallback to a hash that omits the
+model, because a silent fallback IS the bug.
+
+The API key's VALUE is never read, hashed, stamped or printed. Only the
+boolean ross itself reports (`key=set` / `key=none`) enters the params,
+and it earns its place: adding a key to a previously keyless endpoint
+turns a 401-and-`llm_error` degraded derivation into a real one, which
+must re-derive rather than serve the degraded text forever.
+
+WHAT IS STILL NOT DETERMINISTIC, AND CANNOT BE. With `llm: true` the
+derived text comes from a remote model doing sampling. **Two fresh
+derivations of the same image can differ** even with the endpoint, the
+model and the prompt all identical — the hash pins the INPUTS, not the
+output. So on this rung the cache is not an optimisation, it is what
+makes a corpus stable: every row derived once and thereafter served from
+that one entry. The corollary is worth stating plainly because it is a
+materially different property from rungs 0 and 1, which are pure
+functions of the bytes: **`chunkshop cache purge` followed by a re-ingest
+can legitimately change the derived text, and therefore the embeddings,
+with no config change at all.** Purge this cache only when you mean to
+re-derive the corpus.
 """
 
 from __future__ import annotations
@@ -95,6 +133,22 @@ _INSTALL_HINT = (
     "the `rung: ross` derive block to its full path."
 )
 
+#: The modalities `ross --doctor` reports, in ross's own print order. Fixed
+#: rather than discovered: a ross that grows a fourth modality must be a
+#: loud parse failure here, not a silently unhashed new endpoint.
+_MODALITIES = ("vision", "audio", "video")
+
+_DOCTOR_HINT = (
+    "With `llm: true` this rung resolves its endpoint from the environment "
+    "(ROSS_VISION_URL > ROSS_URL, ROSS_VISION_MODEL > ROSS_MODEL, ...) by "
+    "running `ross --doctor`, and folds the url + model into the derivation "
+    "hash so that swapping models re-derives instead of serving the previous "
+    "model's text. Run `ross --doctor` yourself to see what could not be "
+    "read. If ross's output format has changed, this deriver needs updating "
+    "-- do not work around it by disabling the cache, which would put the "
+    "model back outside the key."
+)
+
 
 class RossDeriver:
     # ross sniffs by magic bytes, so this list is documentation of what the
@@ -129,6 +183,13 @@ class RossDeriver:
         # be: `files.py` calls it with no error path.
         self.labels_sha256 = self._hash_labels_file()
         self.version = self._probe_version()
+        # Third eager probe, and only when it can matter: `llm: false` must
+        # not pay a `--doctor` subprocess, and — more importantly — must
+        # produce params BYTE-IDENTICAL to the ones it produced before this
+        # probe existed, so every cache entry on the keyless path stays
+        # reachable. `None` here is what keeps `llm_endpoints` out of the
+        # params dict entirely rather than present-and-null.
+        self.llm_endpoints = self._probe_llm_endpoints()
 
     # --- construction-time probes ----------------------------------------
 
@@ -205,6 +266,51 @@ class RossDeriver:
             )
         return token
 
+    def _probe_llm_endpoints(self) -> Optional[dict]:
+        """`ross --doctor` -> the per-modality endpoint identity, or None.
+
+        None when `llm` is false: ross is then run with `--no-llm` and no
+        endpoint is consulted at all, so there is nothing to key on and no
+        reason to spend a subprocess finding that out.
+
+        Otherwise this asks ROSS to resolve its own precedence rather than
+        reimplementing `--<mod>-url > ROSS_<MOD>_URL > --url > ROSS_URL` in
+        two host languages. The deriver passes no `--url`/`--model` flags
+        of its own, so a bare `--doctor` resolves exactly what the eventual
+        derive call will use.
+
+        Eager, alongside the other two probes, for the same reason: it must
+        fail before `sink.create_table()` has dropped a `mode: overwrite`
+        table, and `derivation_hash()` must stay infallible.
+        """
+        if not self.llm:
+            return None
+        try:
+            proc = subprocess.run(
+                [self.binary, "--doctor"],
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"ross deriver: {self.binary!r} --doctor did not finish "
+                f"within {self.timeout_s}s. {_DOCTOR_HINT}"
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"ross deriver: cannot run the ross binary {self.binary!r}: "
+                f"{exc}. {_INSTALL_HINT}"
+            ) from exc
+
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"ross deriver: {self.binary!r} --doctor exited with status "
+                f"{proc.returncode}. {_DOCTOR_HINT} "
+                f"ross stderr: {proc.stderr.strip() or '(empty)'}"
+            )
+        return _parse_doctor(proc.stdout, self.binary)
+
     # --- provenance -------------------------------------------------------
 
     def _params(self) -> dict:
@@ -214,8 +320,16 @@ class RossDeriver:
         binary is reached by does not change what it computes (its version
         does, and that is `model_version`), and a timeout only bounds how
         long we wait. `llm` and the vocabulary identity DO change output.
+
+        `llm_endpoints` is present ONLY when `llm` is true. That is not
+        tidiness — it is what makes the keyless path's hash byte-identical
+        to what it was before this key existed, so no existing cache entry
+        was invalidated to fix a bug that could not affect it.
         """
-        return {"llm": self.llm, "labels_sha256": self.labels_sha256}
+        params = {"llm": self.llm, "labels_sha256": self.labels_sha256}
+        if self.llm_endpoints is not None:
+            params["llm_endpoints"] = self.llm_endpoints
+        return params
 
     def derivation_hash(self) -> str:
         from chunkshop.sources.derivers.provenance import derivation_hash
@@ -360,6 +474,24 @@ class RossDeriver:
             # "clip:clip-vit-base-patch32" for the local tagger, or the LLM
             # model name when the endpoint path won. Distinct from
             # `derived.model` (always "ross"), which identifies the tool.
+            #
+            # This is the second half of the endpoint-in-the-hash fix, and
+            # the half that stays true when the first cannot: the hash is
+            # computed at CONSTRUCTION from `--doctor`, while this is read
+            # off the RESPONSE, so a row is attributable even if resolution
+            # moved in between (or the endpoint served a different model
+            # than it advertised).
+            #
+            # NOT defaulted, on purpose. ross stamps the local tagger's
+            # label only when no endpoint is configured at all, and stamps
+            # the LLM's name only when the call SUCCEEDED — so when the LLM
+            # was attempted and failed, `model` is absent and this lands
+            # None. That is the honest record: the kept text came from the
+            # local tagger, ross does not say which build of it, and
+            # inventing either the LLM's name (a lie) or a tagger label
+            # ross did not emit (a guess) would be worse than null. The
+            # `llm_error` itself is carried in `ross_warnings`, so a null
+            # here is always explicable from the same row.
             "ross_model": entry.get("model"),
             "ross_metadata": entry.get("metadata") or {},
             "ross_warnings": warnings,
@@ -376,6 +508,104 @@ class RossDeriver:
 
 def _as_str(v) -> str:
     return v.strip() if isinstance(v, str) else ""
+
+
+def _redact_doctor(stdout: str) -> str:
+    """A rendering of `--doctor` output that is safe to put in an error.
+
+    ross 0.1.0 prints `key=none` / `key=set` and never the key itself, so
+    echoing its output verbatim would be safe TODAY. But the only path that
+    reaches an error message is the path where ross's format is not what we
+    expect, which is exactly when that assumption stops being checkable.
+    So: modality lines are truncated at ` key=`, and every other line is
+    reduced to its leading label. The hint tells the user to run
+    `ross --doctor` themselves, where the real output is theirs to see.
+    """
+    out = []
+    for raw in (stdout or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        label = parts[0]
+        if label in _MODALITIES:
+            body = parts[1] if len(parts) > 1 else ""
+            body = body.split(" key=", 1)[0].rstrip()
+            out.append(f"{label} {body} key=<hidden>".strip())
+        else:
+            out.append(f"{label} ...")
+    return "\n".join(out) or "(no output)"
+
+
+def _parse_doctor(stdout: str, binary: str) -> dict:
+    """Parse `ross --doctor` into `{modality: {url, model, key_set} | None}`.
+
+    ross prints one line per modality, either::
+
+        vision     http://host:8082/v1 model=some/model key=none
+        audio      NOT SET
+
+    Parsed strictly and from the RIGHT: the model id is whatever sits
+    between ` model=` and ` key=`, so a url or a model containing spaces
+    would be a named failure rather than a quietly truncated hash input.
+
+    A modality reported `NOT SET` maps to `None`, which is the honest
+    record: ross will emit `llm_error: no endpoint configured` for it, and
+    configuring one later must re-derive.
+
+    Every failure here is a hard error. There is no degraded mode: falling
+    back to a hash that omits the model is precisely the defect this
+    function exists to close.
+    """
+    found: dict = {}
+    for raw in (stdout or "").splitlines():
+        parts = raw.strip().split(None, 1)
+        if not parts or parts[0] not in _MODALITIES:
+            continue
+        name = parts[0]
+        rest = (parts[1] if len(parts) > 1 else "").strip()
+
+        if rest == "NOT SET":
+            found[name] = None
+            continue
+
+        head, sep, key = rest.rpartition(" key=")
+        url, sep2, model = head.rpartition(" model=")
+        if not sep or not sep2 or not url.strip() or not model.strip():
+            raise RuntimeError(
+                f"ross deriver: could not parse the {name!r} line of "
+                f"{binary!r} --doctor; expected "
+                f"'{name} <url> model=<model> key=<none|set>' or "
+                f"'{name} NOT SET'. {_DOCTOR_HINT} "
+                f"Output (key redacted):\n{_redact_doctor(stdout)}"
+            )
+        key = key.strip()
+        if key not in ("none", "set"):
+            raise RuntimeError(
+                f"ross deriver: {binary!r} --doctor reported an unexpected "
+                f"key state for {name!r}; expected 'none' or 'set'. "
+                f"{_DOCTOR_HINT} "
+                f"Output (key redacted):\n{_redact_doctor(stdout)}"
+            )
+        # The key's VALUE is never read. Its PRESENCE is: adding a key to a
+        # previously keyless endpoint turns a 401 (and an `llm_error`
+        # degraded derivation) into a real one, and that must re-derive.
+        found[name] = {
+            "url": url.strip(),
+            "model": model.strip(),
+            "key_set": key == "set",
+        }
+
+    missing = [m for m in _MODALITIES if m not in found]
+    if missing:
+        raise RuntimeError(
+            f"ross deriver: {binary!r} --doctor did not report "
+            f"{', '.join(missing)}. {_DOCTOR_HINT} "
+            f"Output (key redacted):\n{_redact_doctor(stdout)}"
+        )
+    # Rebuilt in ross's own order so the params dict is stable regardless of
+    # the order the lines happened to arrive in.
+    return {m: found[m] for m in _MODALITIES}
 
 
 def ross_available(binary: str = "ross") -> bool:
