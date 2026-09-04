@@ -58,6 +58,12 @@ Rungs 2 (local OCR), 3 (remote VLM captioning as a first-class rung) and 4
 (late-interaction page-image retrieval) are named in the spec's ladder and are
 **not implemented**. See `docs/superpowers/plans/MEDIA-INGEST-ROADMAP.md`.
 
+> **Read this before you plan a PDF corpus:** every shipped rung takes images
+> (and, for rung 5, audio and video). **None takes a PDF.** A scanned,
+> image-only PDF still indexes as an empty document, and `on_empty` will not
+> catch it — see [Limits of this release](#limits-of-this-release). The rung
+> that would fix it is rung 2, and rung 2 is not built.
+
 ## A worked example, end to end
 
 `docs/samples/images-keyless.yaml` is the shipped keyless recipe and is
@@ -524,35 +530,100 @@ entries a prior Python run wrote.
 
 ## Upgrade impact
 
-<!-- TODO(compat): a separate audit is measuring the exact upgrade impact of
-     this feature on existing text-only deployments — new required
-     dependencies, install-time and import-time cost, behaviour of existing
-     text YAMLs, and third-party `FileParser` source compatibility. Do not
-     write backward-compatibility or "existing deployments are unaffected"
-     claims here until those findings land; state them from the measurement,
-     not from the design intent.
+**Measured, not asserted.** An audit ran chunkshop's pre-existing *text-only*
+sample configs against the pre-media baseline (`3df86cb`) and against this
+branch, into separate SQLite targets, then diffed the results byte-for-byte:
+doc ids, chunk text, metadata JSON keys *and* values, table schema, row counts
+and the raw embedding blobs. What follows is that diff. Where something was
+not measured, this section says so rather than reasoning from design intent.
 
-     KNOWN STALE AS OF THIS WRITING, and left for that audit to correct
-     rather than guessed at here:
-       * CHANGELOG.md's "Changed / source.on_empty now defaults to error"
-         entry, and
-       * docs/upgrading.md's "Media ingest: on_empty default change" section
-     both describe on_empty as applying to any files cell. It is now scoped
-     to derive-routed documents only (files.py `_document_for`), so the
-     text-only corpus scenario both describe — and the mode: overwrite
-     partial-refill consequence that follows from it — no longer applies on
-     the plain-parser path. -->
+**The headline: upgrading a text-only deployment requires no new installs and
+changes no output.**
 
-*This section is pending a measurement pass and is deliberately empty.*
+- **No new Python dependencies.** The base dependency list is byte-identical
+  (the same 6 packages). Clean base-only virtualenvs built on each version
+  resolve to the same 35 packages. The only `pyproject.toml` addition is an
+  empty `vision = []` extra.
+- **Pillow was already present at baseline.** It arrives transitively through
+  `fastembed`, which is a core dependency — so rung 0's keyless image path
+  costs zero additional install weight. That is why `vision` is empty.
+- **Nothing media-shaped is imported on a text-only run.** A bare
+  `import chunkshop` loads 246 modules on both versions, none of them from the
+  media path.
+- **No model downloads** on a text-only run.
+- **No new files or directories.** With a clean `$XDG_CACHE_HOME` and `$HOME`,
+  the directory tree after a text-only run is identical to baseline. Cache
+  construction is gated on `cfg.derive`, so no derivation cache is created.
+- **No schema change.** The media promoted columns (`content_origin`,
+  `derived_rung`) are gated on `derive:` in both ports. A text-only cell's
+  table was column-identical on both versions: `id`, `doc_id`, `seq_num`,
+  `original_content`, `embedded_content`, `tags`, `metadata`, `source`,
+  `created_at`.
+- **Rust `preflight_derive()` is a no-op without a `derive:` block.** It
+  returns early, performs no I/O, and cannot fail such a cell.
+- **No shipped config regressed.** All 83 YAMLs present at the baseline load
+  identically on both versions — Python 56 load as a `CellConfig` and 27 are
+  not cell configs; Rust 48 and 35. Same verdict per file, both versions.
+- **Row output was byte-identical** across three text-only configs × two
+  ports, including the raw embedding blobs (matching sha256) — apart from the
+  two Rust-only differences below.
+
+### Two real differences, both Rust-only
+
+1. **Rust rows gain a `parser` metadata key.** Existing Rust `files`-source
+   deployments will see `"parser": "TextParser"` appear in `metadata` on newly
+   written rows. Python has always written this key, so this is **Rust
+   reaching parity with Python, not a new behaviour**. Low impact unless
+   something on your side promotes or schema-validates the metadata object.
+2. **Rust now rejects unknown fields under a `files` `source:` block.** A YAML
+   carrying a stray or misspelled key that Rust previously ignored will now
+   fail at config load. Python has always rejected these (pydantic
+   `extra="forbid"`), so again Rust is catching up. This can only affect a
+   config that already contained a key that was being silently dropped — which
+   means it was not doing what it looked like it was doing. Run
+   `chunkshop-rs validate` over your configs before rolling out.
+
+`created_at` also differs run to run, but it is a wall-clock timestamp and
+varies between two runs of the *baseline* too. Not version-induced.
+
+### One regression, found and fixed before release
+
+`on_empty` was briefly firing for plain-text files, not only for
+derive-routed ones. A corpus containing a single zero-byte or whitespace-only
+`.txt` or `.md` aborted the whole cell: a config that produced `docs=3
+chunks=1` on baseline produced `docs=0` and exit code 1. Under
+`target.mode: overwrite` the table had already been dropped before the source
+drained, so it was left empty.
+
+Fixed in `f6d8f55` (Python) and `be3aa05` (Rust) by scoping `on_empty` to
+derive-routed documents only, which is what
+[the policy always intended](#the-empty-derivation-policy-on_empty). Verified
+restored: `docs=3 chunks=1` again, and a populated table survives a re-run
+(1 row before, 1 row after). It is recorded here because it shipped in an
+intermediate state of this branch, not because it is live.
+
+### What was not measured
+
+Only **SQLite sinks** and the **`files` source** were exercised end to end.
+Postgres, MariaDB and ClickHouse sinks, and the `http` / `s3` / `pg_table`
+sources, were not. The `on_empty` check lives only in `files.py` /
+`files.rs`, so the other sources should be unaffected by it — but that was
+not run, and is not being claimed.
 
 ## Limits of this release
 
 Stated plainly, because the ladder is meant to be honest about what it does
 not do:
 
-- **No OCR rung.** A scanned PDF still yields no text, and because no shipped
-  rung can be routed at a PDF, `on_empty` cannot catch it either — it is still
-  indexed as an empty document.
+- **No shipped rung derives text from a PDF, so the spec's motivating defect
+  is not closed by this release.** Rungs 0 and 1 take images; rung 5 takes
+  images, audio and video. None of them takes a PDF. A scanned, image-only PDF
+  therefore still extracts to nothing and is still indexed as an empty
+  document — and because `on_empty` is correctly scoped to derive-routed
+  documents, it cannot catch that case either. This is exactly the F5 defect
+  in `spec/chunkshop-media-ingest/SPEC.md` ("scanned PDF with no OCR
+  configured → explicit error, never a silent 0-chunk success"): **it remains
+  open.** Closing it needs the OCR rung (rung 2), which is not built.
 - **No first-class remote VLM captioning rung.** Rung 5 with `llm: true` is
   the available path, and it goes through `ross`, not through a chunkshop-native
   deriver with a configurable JSON schema.

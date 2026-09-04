@@ -9,7 +9,7 @@
   `FileParser` protocol — fully backward-compatible, third-party
   `FileParser`s keep working unchanged. Configure it with `source.derive`
   (per-extension deriver mapping), `source.on_empty` (`error` / `skip` /
-  `index` — see "Changed" below), and `source.cache` (provenance-keyed
+  `index` — see the dedicated entry below), and `source.cache` (provenance-keyed
   derivation cache, keyed on content hash + derivation hash + the deriver's
   own `cache_key_extra`, so a deriver is never re-run on unchanged input).
   Derived text flows through the ordinary chunk → embed → sink pipeline and
@@ -70,18 +70,21 @@
   resampled ones. The residual is sub-LSB rounding in PIL's fixed-point 8-bit
   resampler versus `image`'s f32 one, and is content-dependent rather than
   shape-dependent. Upstream `fastembed-rs` issue not yet filed.
-
-### Changed
-
-- **`source.on_empty` now defaults to `"error"`.** A `files` cell that
-  produces no extractable text for a document (a scanned/image-only PDF is
-  the common case) now aborts the run with `EmptyDerivationError` instead
-  of silently indexing an empty document — the pre-1.0 behaviour let such
-  documents vanish from the index with no error and no log line. See
-  [`docs/upgrading.md`](docs/upgrading.md#media-ingest-on_empty-default-change)
-  for the `on_empty: "index"` escape hatch and an important interaction
-  with `target.mode: overwrite` (it drops the table before this can fire —
-  check your corpus before upgrading an `overwrite`-mode cell).
+- **`source.on_empty` (new, defaults to `"error"`) applies to derivers only.**
+  When a document is routed to a `derive:` rung and that rung returns no
+  text, the cell now raises `EmptyDerivationError` naming the file and the
+  deriver, instead of silently indexing an empty document. **A document
+  handled by an ordinary parser is unaffected** — a plain `.md`, or a `.pdf`
+  in a cell with no `derive:` rung for it, that yields empty text is still
+  indexed as an empty document, unconditionally. **A cell with no `derive:`
+  block therefore cannot reach this setting at all**, and no pre-existing
+  text-only config changes behaviour. `"skip"` omits the document and
+  continues; `"index"` restores unconditional empty-document indexing. See
+  [`docs/upgrading.md`](docs/upgrading.md#media-ingest) and
+  [`docs/media-ingest.md`](docs/media-ingest.md#the-empty-derivation-policy-on_empty).
+  Note that no shipped rung derives text from a PDF, so a scanned image-only
+  PDF cannot be derive-routed and `on_empty` does not catch it; that gap
+  needs the unbuilt OCR rung.
 
 ### Fixed
 
@@ -95,7 +98,11 @@
   `s3`, `pg_table` and `http` but *not* `files`, so such a config has been
   silently running a full resync every time since v0.8.3. Failing loudly is the
   correct outcome, but it will surface for anyone who had one.
-
+- **Rust: `files`-source rows now carry a `parser` metadata key**, reaching
+  parity with Python, which has always written it. Existing Rust `files`
+  deployments will see `"parser": "TextParser"` appear in `metadata` on newly
+  written rows. Low impact unless something promotes or schema-validates the
+  metadata object.
 
 - **`chunkshop search` was hardcoded to the Postgres backend and did not
   work against sqlite targets**, a bug shipped in v1.0.0-rc6.

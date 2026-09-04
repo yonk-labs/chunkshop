@@ -70,53 +70,65 @@ for how to compose a source from one engine with a sink on another.
 
 ---
 
-## Media ingest: on_empty default change
+## Media ingest
 
-**TL;DR:** `files` source cells that hit a document a parser can't extract
-any text from now abort the run by default, instead of silently indexing an
-empty document. If your corpus has any such files — most commonly scanned
-PDFs or images with no OCR/derive rung configured — you'll see this on your
-next upgrade.
+**TL;DR:** Nothing to do. Upgrading a **text-only** deployment needs no new
+installs, adds no dependencies, creates no files, changes no table schema and
+produces byte-identical rows. Media is opt-in per cell: a `files` source with
+no `derive:` block behaves exactly as it did before.
 
-### What changed
-Before this release, a parser producing empty text (e.g. `pypdf` on a
-scanned, image-only PDF) was silently indexed as an empty document. The
-document vanished from search results with no error and no log line — a
-correctness bug, not a feature. `source.on_empty` now defaults to `"error"`:
-the cell raises `EmptyDerivationError` and the run stops.
+This is measured, not asserted — an audit ran pre-existing text-only configs
+against the pre-media baseline and against this release into separate targets
+and diffed the rows byte-for-byte, including the raw embedding blobs. The full
+result, and the list of what was *not* measured, is in
+[`media-ingest.md` → Upgrade impact](media-ingest.md#upgrade-impact).
+
+### The one thing to know: `on_empty` is derive-scoped
+
+`source.on_empty` defaults to `"error"`, but **it governs derivers only**. If
+a document is routed to a `derive:` rung and that rung returns no text, the
+cell raises `EmptyDerivationError` naming the file and the deriver — a model
+returning nothing is a failure, not a zero-length success, and it must not
+vanish silently from the index.
+
+A document handled by an **ordinary parser** — a plain `.md`, or a `.pdf` in a
+cell with no `derive:` rung for it — that yields empty text is indexed as an
+empty document regardless of this setting. That is the pre-`on_empty`
+behaviour, kept unconditionally for the plain-parser path.
+
+So: **if you have no `derive:` block, `on_empty` cannot fire at all,** and
+this default is not reachable from your configs. Full semantics in
+[`media-ingest.md` → The empty-derivation policy](media-ingest.md#the-empty-derivation-policy-on_empty).
 
 ### Action required
-1. **Before upgrading, check your corpus** for files that might extract to
-   empty text under your current parsers (scanned/image-only PDFs are the
-   common case). If in doubt, do a dry run against a copy of your target
-   table first.
-2. Pick one of:
-   - Fix the gap — configure a `source.derive` rung (e.g. `image_meta` or
-     `clip_tags` for images) so the file produces real text/tags instead of
-     nothing.
-   - `source.on_empty: "skip"` — omit the offending document and continue
-     the run. Recommended if you'd rather review skipped files after the
-     fact than block ingest.
-   - `source.on_empty: "index"` — restores the pre-1.0 behaviour (index an
-     empty document). Not recommended; kept only for backward compatibility.
 
-### Why this matters more than a typical default change
-`runner.py` calls `sink.create_table()` — which under `target.mode:
-overwrite` **drops and recreates** the target table — *before* the document
-loop begins. `run_cell` *does* catch `EmptyDerivationError` — a blanket
-`except Exception` at `runner.py:267` turns it into a
-`CellResult(error=...)` rather than letting it propagate. But catching it
-only changes how the failure is *reported*; it does **not** roll the table
-back, because the drop already happened and chunkshop takes no snapshot to
-restore from. So on an `overwrite`-mode cell, hitting this on upgrade
-means: table dropped, some documents written, then the cell stops on the
-first empty-text file and returns an error — you are left with a
-**partially-refilled table**, not your original complete one. Re-running
-after fixing the corpus (via one of the options above) will
-refill it correctly, but until then the table is incomplete. `append` and
-`create_if_missing` modes don't drop existing data, so they're safe to
-retry as-is; `overwrite` mode is the one to check your corpus against
-first.
+**None for text-only cells.** `on_empty` only becomes relevant once you add a
+`derive:` block. When you do, decide then between `error` (default — stop and
+tell me), `skip` (omit the document, continue the run) and `index` (index the
+empty document; kept for backward compatibility, not recommended).
+
+### What this release does *not* fix: scanned PDFs
+
+If you came here expecting the scanned-PDF gap to be closed, it is not. **No
+shipped rung derives text from a PDF** — rungs 0 and 1 take images, rung 5
+takes images, audio and video. A scanned, image-only PDF still extracts to
+nothing and is still indexed as an empty document, and because `on_empty` is
+derive-scoped it does not catch that case. Closing it needs the OCR rung
+(rung 2), which is not built. See
+[`media-ingest.md` → Limits of this release](media-ingest.md#limits-of-this-release).
+
+### Rust-only differences
+
+Two behaviours changed for the Rust binary, both of them Rust catching up to
+Python rather than new behaviour:
+
+- **`files`-source rows gain a `parser` metadata key** (`"parser":
+  "TextParser"` for plain text). Python has always written it. Low impact
+  unless you promote or schema-validate the metadata object.
+- **Unknown fields under a `files` `source:` block are now rejected** at
+  config load. Python has always rejected these (pydantic `extra="forbid"`).
+  This affects only a config that already carried a key Rust was silently
+  dropping. Run `chunkshop-rs validate` over your configs before rolling out.
 
 ---
 
