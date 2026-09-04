@@ -92,6 +92,33 @@ The pipeline is `Source → Chunker → Embedder → Extractor → Sink`. Every 
 
 **Identifier safety.** `table`, `schema`, `source_tag`, and `PromoteColumn.path` each pass through a regex validator (`^[a-z_][a-z0-9_]*$` for idents; `^[A-Za-z_][A-Za-z0-9_]*$` per segment for jsonb paths, dot-separated). This is SQL-injection-prevention by allowlist — don't widen the regex without reading `PromoteColumn._safe_path` comments.
 
+**Derivers are a sixth provider type, and they break two of this file's rules.** `source.derive` on the `files` source maps a pipe-separated extension list to a *deriver* — the media-ingest seam that turns non-text bytes into text before the pipeline sees them. (1) Its discriminated union tags on **`rung`, not `type`** — the only union in `config.py` that does. (2) The cache-soundness invariant: a deriver participating in the derivation cache **must be a pure function of its bytes plus everything it declares in the key**, and anything else it reads (filename, parent directory, mtime, env var) is invisible unless it returns it from `cache_key_extra(path)`. Violating that shipped as silent data corruption once — `ImageMetaDeriver` derives its text from the filename while the key held no path, so byte-identical images with different names were served each other's text. A deriver that *wraps* another must delegate `cache_key_extra`, or it silently drops the inner contribution. `CACHE_SCHEMA_VERSION` is `"2"` because of that fix; entries under the old key may hold data attributed to the wrong document and must be unreachable, not re-shaped. Reference: `docs/media-ingest.md` + `docs/reference/deriver-*.md`.
+
+### Deriver inventory (the media escalation ladder)
+
+Three rungs ship, in both ports, from the same YAML. `image_meta` (rung 0 —
+deterministic image header facts + humanised filename/path text; header-only,
+never decodes the raster; no model, no network, no extra). `clip_tags` (rung 1
+— keyless zero-shot CLIP tagging against a user-supplied vocabulary; wraps
+rung 0; `fastembed` is already core so it costs no install weight, and weights
+download lazily on first *use*). `ross` (rung 5 — the `../ross` sibling binary
+as a subprocess; images, audio AND video via magic-byte sniffing; the only
+audio tagger anywhere in chunkshop; keyless and offline unless `llm: true`,
+which resolves its endpoint from the ENVIRONMENT, never from YAML). Rungs 2
+(OCR), 3 (native remote VLM) and 4 (late-interaction) are specified and **not
+built**.
+
+Everything derived is stamped with provenance (`derived.{rung,model,model_version,engine,params_hash,ts}`)
+and memoised on `H(content_hash, derivation_hash, cache_key_extra)`.
+`content_origin` + `derived_rung` are auto-promoted to real columns on any
+cell with a `derive:` block (`DEFAULT_MEDIA_PROMOTIONS`). `engine` is in the
+hash by design, so rungs 0/1 keep **separate caches per implementation**
+(`"python"` vs `"rust"`) while rung 5 **shares** one (`"ross"` in both, since
+both shell out to the same binary). On Rust, rungs 0/1 need `--features media`
+(plus `embedder-hub` for `clip_tags`) — `media` is NOT in the default `full`
+set; rung 5 needs no feature at all. There is no `chunkshop cache purge`
+command yet, despite what some docstrings say.
+
 ### Chunker inventory (+ a benchmark verdict)
 
 Prose: `sentence_aware`, `hierarchy`, `fixed_overlap`, `neighbor_expand`,
@@ -125,7 +152,13 @@ code corpora, `symbol_aware` is the right reach — it's what unlocks
 
 ## Active work
 
-No in-flight implementation plans. The seven plans for v0.2.0 features (metadata extractors, semantic chunker, summary-embed, DocFramer, schema-flexibility, chunker `max_chars` hotfix, bakeoff CLI) all shipped and were moved to `archive/docs/superpowers/plans/` for historical reference. Mission briefs in `skill-output/mission-brief/` (gitignored) sit alongside the now-archived plans.
+**Media ingest — the current effort, on `feat/rust-media-parity`.** Non-text files (images; audio and video via rung 5) are converted to text and flow through the ordinary chunk → embed → sink pipeline into the same table as any other text. Binding spec: `spec/chunkshop-media-ingest/SPEC.md` (SC-1…SC-13, NN-1…NN-6, the escalation ladder). Current findings, measured numbers and open items: `docs/superpowers/plans/MEDIA-INGEST-ROADMAP.md`. User-facing docs: `docs/media-ingest.md` + `docs/reference/deriver-*.md`.
+
+Shipped on this branch: the `Deriver`/`ParseResult` seam, `source.derive` / `on_empty` / `cache`, the provenance spine, rungs 0/1/5 in **both** ports, the Rust parser/extension-dispatch layer (which did not exist at all — `files.rs` did `read_to_string` on every match), and the `clip_preprocess` fix for an upstream `fastembed-rs` `shortest_edge` bug. Not shipped: OCR (rung 2), a native remote-VLM rung (3), late-interaction (4), the CLIP visual plane / `--similar-to`, media arms in the bakeoff, cost governance, and any cache TTL/eviction/CLI.
+
+⛔ **Release gate is open.** `DECISIONS.md` (2026-09-01) blocks any new version until Plan D — Rust media parity — is complete. Read `DECISIONS.md` before changing anything it records, in particular the ross rung-5 decision and the SC-12 vision-tower bar, which was revised twice in one day and whose earlier values are wrong.
+
+No other in-flight implementation plans. The seven plans for v0.2.0 features (metadata extractors, semantic chunker, summary-embed, DocFramer, schema-flexibility, chunker `max_chars` hotfix, bakeoff CLI) all shipped and were moved to `archive/docs/superpowers/plans/` for historical reference. Mission briefs in `skill-output/mission-brief/` (gitignored) sit alongside the now-archived plans.
 
 **Agent-memory SP-A** (staging API, `SessionStagingSource`, `SessionEpisodeFramer`, `ConsolidationChunker`, `MemorySink`) shipped 2026-05-19 and was merged into `main` (`--no-ff`, 15/15 tasks, 365 tests). Its plan is archived; the design spec is retained at `docs/superpowers/specs/2026-05-19-chunkshop-memory-primitives-sp-a-design.md`. Per that spec the remaining sub-projects are **out of chunkshop scope**: SP-B (realtime reader / graph) is pg-raggraph's job, SP-C (orchestrator) assumes an external scheduler, SP-D (eval harness) is separate. Do not start SP-B here without an explicit decision to override the spec's scoping.
 
@@ -142,5 +175,6 @@ When new work starts, run `/mission-brief` then `superpowers:writing-plans` to p
 - `../lede/` — canonical lede: core 0.5 (`extract::{top_terms,key_facts,metadata}`, summarize) + `lede-enrich` 0.1 (deterministic gazetteer NER/facts — the spaCy-free path). Both published (crates.io + PyPI). Powers `chunkshop.summarizers.lede` and the `lede_top_terms`/`lede_report`/`lede_entities` extractors + `consolidator: lede` (Rust behind `--features lede`). Rust API: fns live in same-named submodules (`lede::extract::top_terms::top_terms_scored`), and lede/lede-enrich types have no serde derives. (Formerly `../extractive_summary/`.)
 - `../lede-neural/` — seed-state neural companion to lede. Brief 4's callable path supports it once it ships.
 - `../yonk-doctools/` — seed-state sibling repo for PDF/DOCX → markdown preprocessing with VLM image captioning. Feeds chunkshop's `files` source.
+- `../ross/` — yonk-labs/ross, Apache-2.0, v0.1.0, unpublished. A single Rust binary: media in → metadata, tags, description, summary out; magic-byte type sniffing; local CLIP/CLAP or one LLM call to an OpenAI-compatible endpoint. Wired as the **rung-5 subprocess deriver** (`rung: ross`) in both ports — shelled out to, never linked, per the rule below and `DECISIONS.md` (2026-09-01). Needs `ffprobe`/`ffmpeg` for a/v; `exiftool` optional for images. Upstream ask on file: `--doctor --json` (accepted but ignored as of 0.1.0, so both ports hand-parse human output).
 
-Don't import from these in chunkshop's core code. They're user-wired via config (`module: chunkshop.summarizers.lede`, `glob: /path/to/yonk-doctools/output/**/*.md`).
+Don't import from these in chunkshop's core code. They're user-wired via config (`module: chunkshop.summarizers.lede`, `glob: /path/to/yonk-doctools/output/**/*.md`, `derive: {png: {rung: ross}}`).

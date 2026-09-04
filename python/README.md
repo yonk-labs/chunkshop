@@ -50,6 +50,7 @@ Optional extras:
 | `s3`         | `boto3` for the `s3` source and the S3 RawStore.                     |
 | `pdf` / `docx` / `pptx` / `xlsx` / `html` | File parsers for the `files` source. `office` = pdf+docx+pptx+xlsx; `all-parsers` = office+html. |
 | `code`       | tree-sitter grammars (10 languages) for `symbol_aware` + `code_relationships`. A regex fallback runs when absent. |
+| `vision`     | **Deliberately empty.** Media ingest's keyless image rungs (`image_meta`, `clip_tags`) run on Pillow + `fastembed`, both already core, so the extra names the capability without pulling anything in. See [`../docs/media-ingest.md`](../docs/media-ingest.md). |
 | `quantize`   | `onnx` for on-the-fly quantization scratch.                          |
 | `dev`        | `pytest`, `pytest-asyncio`, `onnx`.                                  |
 
@@ -192,7 +193,7 @@ runtime:  { ... }    # optional, sensible defaults below
 
 | `type`         | Required fields                        | Optional fields                                                          |
 |----------------|----------------------------------------|--------------------------------------------------------------------------|
-| `files`        | `glob`                                 | `id_from: path \| stem \| sha1` (default `stem`), `encoding` (`utf-8`), `incremental` (cursor-based sync — see [`../docs/incremental.md`](../docs/incremental.md)) |
+| `files`        | `glob`                                 | `id_from: path \| stem \| sha1` (default `stem`), `encoding` (`utf-8`), `incremental` (cursor-based sync — see [`../docs/incremental.md`](../docs/incremental.md)), `derive` / `on_empty` / `cache` (media ingest — turn images, audio and video into text; see [`../docs/media-ingest.md`](../docs/media-ingest.md)) |
 | `json_corpus`  | `path`                                 | `documents_key` (`documents`), `id_field` (`id`), `content_field` (`content`), `title_field` (`title`) |
 | `pg_table`     | `dsn_env`, `database`, `table`, `id_column`, `content_column` | `title_column`, `where`, `metadata_columns`, `updated_at_column` (enables incremental tuple cursor) |
 | `sqlite_table` / `mariadb_table` / `clickhouse_table` | `dsn_env`, `database`, `table`, `id_column`, `content_column` | `title_column`, `where`, `metadata_columns` |

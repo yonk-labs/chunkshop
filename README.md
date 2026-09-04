@@ -213,7 +213,7 @@ pip install './python[sqlite]'    # storage backend only — NO media extra, no 
 export SQLITE_PATH=/tmp/chunkshop-images.db
 chunkshop ingest --config docs/samples/images-keyless.yaml
 chunkshop search --config docs/samples/images-keyless.yaml \
-  --query "pixel art" --k 1 --include-facts
+  --query "pixel art" --k 1
 ```
 
 `docs/samples/images/` ships exactly three tiny fixture PNGs (a pixel-art
@@ -231,11 +231,21 @@ rung actually ran, not just that a filename happened to match. CI
 clock every push, on a base install, and asserts the sprite ranks first for
 `"pixel art"` — so this claim can't quietly rot.
 
-`--include-facts` is there because SQLite's `where` builder doesn't yet
-support the fact-row exclusion filter `chunkshop search` applies by default
-on every backend (a documented gap, not a media-path limitation) — it's a
-no-op for this corpus, which has no `consolidation`-chunker fact rows to
-exclude in the first place.
+That is rung 1 of an **escalation ladder**. Rung 0 (`image_meta`) is the same
+thing without the model — deterministic header facts plus humanised
+filename/path text. Rung 5 (`ross`) shells out to the
+[`ross`](https://github.com/yonk-labs/ross) sibling binary for
+natural-language descriptions of **images, audio and video**, keyless and
+offline by default. Every rung stamps provenance (`derived.rung`, `.model`,
+`.model_version`, `.engine`, `.params_hash`, `.ts`) and memoises into a
+provenance-keyed cache, and `content_origin` / `derived_rung` become real SQL
+columns automatically, so a downstream query can tell a verbatim document from
+a model's guess. Both implementations accept the same YAML.
+
+Full guide: [`docs/media-ingest.md`](docs/media-ingest.md). Per-rung reference:
+[`deriver-image-meta`](docs/reference/deriver-image-meta.md) ·
+[`deriver-clip-tags`](docs/reference/deriver-clip-tags.md) ·
+[`deriver-ross`](docs/reference/deriver-ross.md).
 
 ## CLI at a glance
 
@@ -386,6 +396,7 @@ Rust parity yet. See [`docs/storage-model.md`](docs/storage-model.md).
 | [`docs/embedder-catalogue.md`](docs/embedder-catalogue.md) | Verified-working models, known-broken ones, dim / size. |
 | [`docs/extractors.md`](docs/extractors.md) | Each extractor: why use it, config, promoted-column pairing. |
 | [`docs/summaries.md`](docs/summaries.md) | summary_embed + hierarchical chunker reference. |
+| [`docs/media-ingest.md`](docs/media-ingest.md) | Deriving text from non-text bytes: the rung ladder, provenance, the derivation cache, `on_empty`. |
 | [`docs/storage-model.md`](docs/storage-model.md) | What chunkshop writes per row + how to query each payload. |
 | [`docs/query-clients.md`](docs/query-clients.md) | Query the ingested table from Python, JS/TS, Rust, Go (raw SQL). |
 | [`docs/hybrid-search.md`](docs/hybrid-search.md) | Read-side Python API: semantic / keyword / hybrid search + fusion, and `summarize_hits` Fast-mode RAG. |

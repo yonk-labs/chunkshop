@@ -4,14 +4,17 @@
 
 ### Added
 
-- **Media ingest (Python): `files` source can now derive text from non-text
+- **Media ingest: the `files` source can now derive text from non-text
   bytes.** A new `Deriver`/`ParseResult` seam sits alongside the existing
   `FileParser` protocol — fully backward-compatible, third-party
   `FileParser`s keep working unchanged. Configure it with `source.derive`
   (per-extension deriver mapping), `source.on_empty` (`error` / `skip` /
   `index` — see "Changed" below), and `source.cache` (provenance-keyed
-  derivation cache, keyed on content hash + derivation hash, so a deriver
-  is never re-run on unchanged input).
+  derivation cache, keyed on content hash + derivation hash + the deriver's
+  own `cache_key_extra`, so a deriver is never re-run on unchanged input).
+  Derived text flows through the ordinary chunk → embed → sink pipeline and
+  lands in the same table as any other document. Guide:
+  [`docs/media-ingest.md`](docs/media-ingest.md).
 - Two keyless image rungs ship out of the box: `image_meta` (deterministic
   Pillow metadata — dimensions, format, path segments) and `clip_tags`
   (zero-shot CLIP image tagging against a user-supplied vocabulary via
@@ -24,6 +27,49 @@
   tagging runs on `fastembed`, which is already a core dependency — `vision`
   exists only to name the capability for discoverability; it pulls in
   nothing extra.
+- **Rung 5: `rung: ross`, an opt-in subprocess deriver for the `ross` sibling
+  binary** ([yonk-labs/ross](https://github.com/yonk-labs/ross), Apache-2.0).
+  Shipped in **both ports**, accepting byte-identical YAML (`binary`,
+  `labels_file`, `llm`, `timeout_s`). ross sniffs the file type by magic
+  bytes, so a single `derive:` key covers **images, audio and video** — this
+  is the only audio path anywhere in chunkshop. Keyless and offline by
+  default (`llm: false` passes `--no-llm`); `llm: true` adds one call per
+  file to any OpenAI-compatible endpoint, whose url/model/key ross resolves
+  from the **environment** (`ROSS_URL` / `ROSS_MODEL` / `ROSS_API_KEY`, or the
+  per-modality variants) and never from chunkshop config. There is **no
+  compile-time dependency in either language** — no Python extra, no Cargo
+  feature; `cargo build --no-default-features` builds this rung. `engine` is
+  recorded as `"ross"` rather than `"python"`/`"rust"`, because both ports
+  drive the same binary and therefore legitimately share one cache entry.
+  Requires the `ross` binary on `$PATH` at runtime, plus `ffprobe`/`ffmpeg`
+  for audio and video; a missing, non-executable, wrong or failing binary is a
+  named error at deriver **construction** — before the sink's DDL runs, so a
+  `mode: overwrite` cell does not drop your table first. Reference:
+  [`docs/reference/deriver-ross.md`](docs/reference/deriver-ross.md).
+- **Rust parity for media ingest.** The Rust port gained the parser/extension
+  dispatch layer it never had (`std::fs::read_to_string` on every match, no
+  extension dispatch), the SP-3 parser set (PDF/DOCX/XLSX/HTML), the
+  `Deriver`/`ParseResult` seam, `derive` / `on_empty` / `cache` on
+  `FilesSourceConfig`, the provenance stamp and derivation cache, and all
+  three rungs. The same YAML now drives both implementations. Rungs 0 and 1
+  are behind Cargo features — `image_meta` needs `media`, `clip_tags` needs
+  `media` **and** `embedder-hub` — and `media` is not part of the default
+  `full` set, so use `cargo build --features media`; a YAML asking for a rung
+  the binary lacks fails at config load naming the feature.
+- **Aspect-preserving CLIP vision preprocessing (`clip_preprocess`).**
+  `fastembed-rs` 5.13.3 implements `CLIPImageProcessor`'s `shortest_edge` as a
+  square `resize_exact`, squashing any non-square image to 224×224 and giving
+  a different field of view from the Python reference — measured at 13.2° and
+  26.2° on two ordinary non-square fixtures, and 7.1° at an aspect ratio as
+  mild as 1.04. chunkshop now does CLIP's geometry itself (RGB conversion,
+  aspect-preserving resize to a 224 shortest edge with Python's `int()`
+  truncation, 224×224 centre crop) and hands the already-224×224 image to
+  `embed_images`. SC-12's vision-tower bar is correspondingly two-tier, set
+  from a measured 28-image corpus: `1 − cosine ≤ 1e-9` and `max abs ≤ 1e-5`
+  for images needing no resize, `cosine ≥ 0.9995` and `max abs ≤ 1.2e-2` for
+  resampled ones. The residual is sub-LSB rounding in PIL's fixed-point 8-bit
+  resampler versus `image`'s f32 one, and is content-dependent rather than
+  shape-dependent. Upstream `fastembed-rs` issue not yet filed.
 
 ### Changed
 
@@ -63,6 +109,34 @@
   dispatcher wired into the CLI's `search` command for sqlite targets.
   mariadb/clickhouse CLI search and the `fact-search` command remain
   Postgres-only for now.
+- **SQLite search was broken for every target, media or not.** `cli.py`
+  injects a `{"metadata_not": {"kind": "fact"}}` filter unless
+  `--include-facts` is passed, and `search_sqlite._build_where` accepted only
+  `{tags, source, metadata}` — so `chunkshop search` against any sqlite cell
+  failed with `unsupported where keys: ['metadata_not']`, and the only
+  workaround changed the semantics of the query. `metadata_not` now mirrors
+  the Postgres leg using SQLite's NULL-safe `IS NOT`, so rows lacking the key
+  are kept and the default filter is a no-op for ordinary chunk rows.
+
+### Documentation
+
+- **New media-ingest guide, [`docs/media-ingest.md`](docs/media-ingest.md)** —
+  the rung ladder and when to reach for each, a worked example from YAML to
+  searchable rows, the provenance model, the derivation cache (including its
+  soundness invariant and two documented rung-5 limitations), `on_empty`,
+  cost/latency, and Python↔Rust parity.
+- **Three new reference cards** —
+  [`deriver-image-meta`](docs/reference/deriver-image-meta.md),
+  [`deriver-clip-tags`](docs/reference/deriver-clip-tags.md),
+  [`deriver-ross`](docs/reference/deriver-ross.md) — every config field, its
+  type, default and effect. Registered in
+  [`docs/reference/README.md`](docs/reference/README.md) under a new
+  "Derivers" group.
+- **[`docs/reference/parsers.md`](docs/reference/parsers.md) updated** — it
+  documented only the `FileParser.parse(path) -> str` signature, which the
+  `Deriver` seam widened.
+- `docs/samples/README.md` now lists the two media recipes
+  (`images-keyless.yaml`, `media-ross.yaml`).
 
 ## 1.0.0-rc6 — 2026-08-28
 
