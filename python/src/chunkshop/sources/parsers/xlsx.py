@@ -9,6 +9,19 @@ class XLSXParser:
     supported_extensions = ["xlsx"]
 
     def parse(self, path: Path) -> str:
+        """Extract every worksheet's cell values, tab- and newline-joined.
+
+        Deliberately makes NO ``had_content`` claim (the F5 signal the PDF,
+        DOCX, PPTX and HTML parsers set). A workbook whose cells are all
+        empty is a legitimately empty spreadsheet — a blank template — not a
+        failed extraction, and "sheet count > 0" would fire on every one of
+        them. The only honest signal would be non-cell content (charts,
+        images, embedded objects), and neither openpyxl's value view nor the
+        Rust port's calamine exposes that through a public API. Rather than
+        invent a heuristic that produces false positives on blank templates
+        in both ports, this parser stays silent and an empty workbook is
+        indexed as an empty document, exactly as before.
+        """
         try:
             import openpyxl
         except (ImportError, TypeError) as exc:

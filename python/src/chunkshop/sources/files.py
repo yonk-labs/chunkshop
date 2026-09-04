@@ -23,6 +23,43 @@ def _hash_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+#: Where to send a user whose corpus genuinely is scanned images. chunkshop
+#: does not OCR and does not intend to; the honest remedy is preprocessing.
+_PREPROCESS_HINT = (
+    "preprocess it to markdown first (e.g. yonk-doctools, which does "
+    "PDF/DOCX -> markdown with image captioning) and ingest that output"
+)
+
+
+def _empty_message(path: Path, parser, had_content: str | None) -> str:
+    """The text of an EmptyDerivationError.
+
+    Two distinct failures share one exception type, and they need different
+    advice. A deriver that produced nothing is a rung/config problem. A
+    PARSER that read real content units and produced nothing is F5's case —
+    a scanned page, an image-only deck — and the user needs to be told what
+    the file actually contained and that preprocessing, not a config flag,
+    is the real fix.
+    """
+    name = parser.__class__.__name__
+    if had_content:
+        return (
+            f"{path}: {name} read {had_content} but extracted no text. "
+            f"The file has content that produced no characters — typically a "
+            f"scanned PDF or an image-only page with no text layer. chunkshop "
+            f"does not OCR: {_PREPROCESS_HINT}. To continue past files like "
+            f"this instead, set source.on_empty='skip' (or 'index' to index "
+            f"it as an empty document anyway)."
+        )
+    return (
+        f"{path} produced no text via {name}. "
+        f"Set source.on_empty='skip' to continue past these files, "
+        f"or 'index' to restore pre-1.0 behaviour."
+        " If this file needs OCR (e.g. a scanned PDF or "
+        "image), configure an OCR-capable deriver for it."
+    )
+
+
 class FilesSource:
     """Glob-driven file loader. Dispatches by extension to a `FileParser`.
 
@@ -220,29 +257,41 @@ class FilesSource:
         else:
             result = call_deriver(parser, path)
         if not result.text.strip():
-            # ``on_empty`` is a DERIVATION policy, scoped to derive-routed
-            # documents — read its docstring on ``FilesSource``: "What to do
-            # when a deriver produces no text." Applying it to the plain
-            # parser path was a data-loss regression for text-only corpora:
-            # a zero-byte or whitespace-only .md has always been indexed as
-            # an empty document, and the default ``error`` turned an upgrade
-            # into an aborted run — after the sink's ``mode: overwrite`` DDL
-            # had already dropped the populated table, and with no way to
+            # ``on_empty`` reaches a document by exactly TWO routes, and
+            # "the text came out empty" is not one of them.
+            #
+            # (1) The document was derive-routed — read ``on_empty``'s
+            #     docstring on ``FilesSource``: "What to do when a deriver
+            #     produces no text."
+            # (2) The parser made an affirmative ``had_content`` claim: it
+            #     counted content units it knows how to read (PDF pages,
+            #     DOCX tables, PPTX slides, embedded HTML elements) and
+            #     produced no characters anyway. That is spec defect F5 —
+            #     "empty-derivation is loud, not silent" — and a scanned PDF
+            #     is its canonical case.
+            #
+            # Everything else is indexed unconditionally, which is what
+            # keeps a legitimately-empty text file legitimately empty.
+            # Applying a derivation policy to the plain-text path was a
+            # data-loss regression for text-only corpora: a zero-byte or
+            # whitespace-only .md has always been indexed as an empty
+            # document, and the default ``error`` turned an upgrade into an
+            # aborted run — after the sink's ``mode: overwrite`` DDL had
+            # already dropped the populated table, and with no way to
             # pre-stage ``on_empty: index`` because the older pydantic model
-            # rejects the unknown key. Non-derived documents therefore keep
-            # the pre-``on_empty`` behaviour unconditionally.
-            mode = self.cfg.on_empty if derived else "index"
+            # rejects the unknown key. Route (2) cannot resurrect that bug:
+            # ``TextParser`` has no notion of a content unit and never sets
+            # ``had_content``, so no text file can reach the loud branch no
+            # matter how empty it is. Widening the trigger back to "text is
+            # blank" is exactly the change this comment exists to prevent.
+            mode = (
+                self.cfg.on_empty
+                if (derived or result.had_content)
+                else "index"
+            )
             if mode == "error":
-                # Reachable only on the derive path, so the OCR hint is
-                # unconditional here — a text-only cell can no longer see a
-                # media concept in an error message at all (NN-6), because
-                # it can no longer reach this branch.
                 raise EmptyDerivationError(
-                    f"{path} produced no text via {parser.__class__.__name__}. "
-                    f"Set source.on_empty='skip' to continue past these files, "
-                    f"or 'index' to restore pre-1.0 behaviour."
-                    " If this file needs OCR (e.g. a scanned PDF or "
-                    "image), configure an OCR-capable deriver for it."
+                    _empty_message(path, parser, result.had_content)
                 )
             if mode == "skip":
                 return None

@@ -6,12 +6,20 @@ Two facts this module pins, and they pull in opposite directions:
    honours ``on_empty`` in all three modes. That is the whole point of the
    setting — a scanned image that OCRs to nothing is a failure, not an
    empty success.
-2. A document handled by an ordinary parser is NOT subject to it, ever.
-   A zero-byte or whitespace-only ``.md`` is indexed as an empty document,
-   exactly as it was before ``on_empty`` existed. Applying (1) to (2) was a
-   data-loss regression: the default ``error`` aborted the run on any
-   text-only corpus containing an empty file, and it aborted it *after*
-   ``target.mode: overwrite`` had already dropped the populated table.
+2. A document handled by an ordinary parser is NOT subject to it merely
+   for coming out empty. A zero-byte or whitespace-only ``.md`` is indexed
+   as an empty document, exactly as it was before ``on_empty`` existed.
+   Applying (1) to (2) was a data-loss regression: the default ``error``
+   aborted the run on any text-only corpus containing an empty file, and it
+   aborted it *after* ``target.mode: overwrite`` had already dropped the
+   populated table.
+
+There is now a third route, and it does not weaken (2). A parser may make an
+affirmative ``ParseResult.had_content`` claim — "I counted pages/tables/
+slides and produced no characters" — and that reaches ``on_empty`` too. See
+``test_parser_empty_derivation_f5.py``, which owns that case. ``TextParser``
+has no notion of a content unit and never makes the claim, so (2) holds
+whatever the file contains.
 """
 
 from contextlib import contextmanager
@@ -163,13 +171,20 @@ def test_text_only_corpus_is_unaffected_by_every_on_empty_mode(tmp_path, mode):
     assert len(list(src.iter_documents())) == 2
 
 
-def test_pdf_with_no_extractable_text_is_indexed_not_raised(tmp_path):
-    """A PDF nobody routed to a rung goes through PDFParser, not a Deriver.
+def test_pdf_with_no_extractable_text_now_raises(tmp_path):
+    """INVERTED, deliberately — this is spec defect F5 being closed.
 
-    So it is outside `on_empty`'s scope and keeps the pre-`on_empty`
-    behaviour. Routing it to a rung (see
-    ``test_derive_routed_pdf_with_no_text_still_raises``) is how a user asks
-    for the strict treatment.
+    Was ``test_pdf_with_no_extractable_text_is_indexed_not_raised``, which
+    asserted that a PDF nobody routed to a rung indexed as a silent empty
+    document. That WAS the defect: F5 requires "a parser yielding no
+    derivation raises or records a failure state; never a silently-indexed
+    empty doc". `PDFParser` now reports the page count alongside the empty
+    text, and `FilesSource` raises on it by default.
+
+    This is a real behaviour change from 1.0.0-rc6 and is narrowly targeted:
+    the trigger is the parser's affirmative claim, not empty text, so the
+    plain-text guarantee two tests up is untouched. `on_empty: skip` /
+    `index` remain the way through — see `test_parser_empty_derivation_f5.py`.
     """
     pytest.importorskip("pypdf")
     import pypdf
@@ -180,7 +195,14 @@ def test_pdf_with_no_extractable_text_is_indexed_not_raised(tmp_path):
         writer.write(fh)
 
     src = FilesSource(Cfg(type="files", glob=str(tmp_path / "*.pdf")))
-    docs = list(src.iter_documents())
+    with pytest.raises(EmptyDerivationError, match=r"1 page\(s\)"):
+        list(src.iter_documents())
+
+    # ...and the escape hatch still lets it through.
+    lenient = FilesSource(
+        Cfg(type="files", glob=str(tmp_path / "*.pdf"), on_empty="index")
+    )
+    docs = list(lenient.iter_documents())
     assert len(docs) == 1
     assert docs[0].content.strip() == ""
 

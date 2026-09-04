@@ -150,21 +150,41 @@ class FilesSource(_Base):
     encoding: str = "utf-8"
     incremental: Optional[FilesIncrementalSettings] = None
     on_empty: Literal["error", "skip", "index"] = "error"
-    """What to do when a deriver produces no text.
-
-    Scoped to documents routed through the ``derive:`` block above, and
-    only those. A file handled by an ordinary parser (a plain ``.md``, a
-    ``.pdf`` in a cell with no ``derive:`` rung for it) that yields empty
-    text is indexed as an empty document regardless of this setting —
-    applying a derivation policy to the plain-text path made an upgrade
-    abort mid-run on any corpus containing a zero-byte or whitespace-only
-    file, after ``target.mode: overwrite`` had already dropped the table.
+    """What to do when a file that demonstrably held content yields no text.
 
     ``error`` (default) raises EmptyDerivationError — a scanned PDF that
     yields nothing is a failure, not an empty success. ``skip`` omits the
     document and lets the run continue. ``index`` restores the pre-1.0
     behaviour of indexing an empty document; it is retained only for
     backward compatibility and is not recommended.
+
+    **THE SCOPE RULE.** This setting is reached by exactly two routes, and
+    "the extracted text was empty" is deliberately NOT one of them:
+
+    1. the document was routed through the ``derive:`` block above; or
+    2. its parser made an affirmative claim that the file held content it
+       failed to extract — a PDF with pages, a DOCX with tables, a PPTX
+       with slides, an HTML page built from ``<img>``/``<svg>``/``<iframe>``
+       and nothing else. This is spec defect F5, "empty-derivation is loud,
+       not silent".
+
+    Any other empty document is indexed unconditionally, whatever this is
+    set to. A zero-byte or whitespace-only ``.md`` is LEGITIMATELY empty:
+    bytes went in, no text came out, nothing was lost. ``TextParser`` has
+    no notion of a content unit and never makes the route-2 claim, so no
+    text file can reach the loud branch. That separation is load-bearing —
+    applying a derivation policy to the plain-text path made an upgrade
+    abort mid-run on any corpus containing a blank file, after
+    ``target.mode: overwrite`` had already dropped the table.
+
+    XLSX makes no route-2 claim either: a workbook of empty cells is a
+    blank template, and neither port's library exposes non-cell content
+    (charts, images) publicly, so there is no honest signal to raise.
+
+    Route 2 is a deliberate behaviour change from chunkshop 1.0.0-rc6,
+    where a scanned PDF indexed as a silent empty document. If your corpus
+    really is scanned images, preprocess it to markdown (yonk-doctools) or
+    set ``on_empty: skip``.
     """
     derive: Optional[dict[str, DeriverConfig]] = None
     cache: DerivationCacheSettings = DerivationCacheSettings()
