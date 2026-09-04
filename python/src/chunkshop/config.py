@@ -152,6 +152,14 @@ class FilesSource(_Base):
     on_empty: Literal["error", "skip", "index"] = "error"
     """What to do when a deriver produces no text.
 
+    Scoped to documents routed through the ``derive:`` block above, and
+    only those. A file handled by an ordinary parser (a plain ``.md``, a
+    ``.pdf`` in a cell with no ``derive:`` rung for it) that yields empty
+    text is indexed as an empty document regardless of this setting —
+    applying a derivation policy to the plain-text path made an upgrade
+    abort mid-run on any corpus containing a zero-byte or whitespace-only
+    file, after ``target.mode: overwrite`` had already dropped the table.
+
     ``error`` (default) raises EmptyDerivationError — a scanned PDF that
     yields nothing is a failure, not an empty success. ``skip`` omits the
     document and lets the run continue. ``index`` restores the pre-1.0

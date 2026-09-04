@@ -179,7 +179,18 @@ class FilesSource:
     def _document_for(self, path: Path, content_hash: Optional[str] = None) -> Optional[Document]:
         ext = path.suffix.lower().lstrip(".")
         parser = get_parser(ext, self._parsers)
-        if ext in self._derived_exts:
+        # ONE routing signal, read once and reused below. "this extension is
+        # claimed by the `derive:` block" and "this document actually went
+        # through a Deriver" are the same fact here, not two: the derive
+        # block OVERWRITES ``self._parsers[ext]`` (see __init__), so
+        # ``get_parser`` cannot hand back a text parser for a derive-routed
+        # extension, and a deriver that cannot be built raises out of
+        # ``load_deriver`` at construction rather than degrading to one.
+        # Keeping it a single boolean is deliberate — a second, parallel
+        # notion of "was this derived" is exactly the defect class that
+        # produced the bug this gate fixes.
+        derived = ext in self._derived_exts
+        if derived:
             # Only derive-configured extensions are cache-eligible. Routing
             # the default/injected parser table through the cache too would
             # key it on parser.__class__.__name__ alone — collapsing e.g.
@@ -209,23 +220,30 @@ class FilesSource:
         else:
             result = call_deriver(parser, path)
         if not result.text.strip():
-            mode = self.cfg.on_empty
+            # ``on_empty`` is a DERIVATION policy, scoped to derive-routed
+            # documents — read its docstring on ``FilesSource``: "What to do
+            # when a deriver produces no text." Applying it to the plain
+            # parser path was a data-loss regression for text-only corpora:
+            # a zero-byte or whitespace-only .md has always been indexed as
+            # an empty document, and the default ``error`` turned an upgrade
+            # into an aborted run — after the sink's ``mode: overwrite`` DDL
+            # had already dropped the populated table, and with no way to
+            # pre-stage ``on_empty: index`` because the older pydantic model
+            # rejects the unknown key. Non-derived documents therefore keep
+            # the pre-``on_empty`` behaviour unconditionally.
+            mode = self.cfg.on_empty if derived else "index"
             if mode == "error":
-                message = (
+                # Reachable only on the derive path, so the OCR hint is
+                # unconditional here — a text-only cell can no longer see a
+                # media concept in an error message at all (NN-6), because
+                # it can no longer reach this branch.
+                raise EmptyDerivationError(
                     f"{path} produced no text via {parser.__class__.__name__}. "
                     f"Set source.on_empty='skip' to continue past these files, "
                     f"or 'index' to restore pre-1.0 behaviour."
+                    " If this file needs OCR (e.g. a scanned PDF or "
+                    "image), configure an OCR-capable deriver for it."
                 )
-                # NN-6: a text-only user must never see a media concept in an
-                # error message. Only mention OCR when this cell actually has
-                # a derive rung configured — otherwise this fires for an
-                # ordinary empty .md file with no media in sight.
-                if self.cfg.derive:
-                    message += (
-                        " If this file needs OCR (e.g. a scanned PDF or "
-                        "image), configure an OCR-capable deriver for it."
-                    )
-                raise EmptyDerivationError(message)
             if mode == "skip":
                 return None
         metadata = {
