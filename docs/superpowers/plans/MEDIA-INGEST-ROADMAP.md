@@ -329,7 +329,10 @@ Full list with reasoning: `spec/chunkshop-media-ingest/evidence/sdd-execution-le
 - [ ] `fact-search` still on the Postgres-only path (`cli.py:1357`)
 - [ ] `ClipTagsDeriver._ensure_models` sets `_vision` before `_label_vectors`; a shared
       instance could be observed half-built (no threaded call site today)
-- [ ] Derivation cache has no eviction/TTL and no CLI surface — add `chunkshop admin cache purge`
+- [x] Derivation cache CLI surface — shipped as `chunkshop cache path|info|purge`
+      (not `chunkshop admin cache purge`: the name in `ross.py`/`ross.rs` and SPEC.md
+      was already `chunkshop cache purge`, so the shipped group matches those).
+- [ ] Derivation cache still has no eviction/TTL — `purge` is all-or-nothing
 - [ ] `docs/reference/parsers.md` still documents only `FileParser.parse -> str`
 - [ ] `hybrid_search_fn` is an untyped escape hatch on a public entry point — mark provisional
 - [ ] `id_from: stem` risks basename collisions across image directories

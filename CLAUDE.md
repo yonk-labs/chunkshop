@@ -116,8 +116,10 @@ hash by design, so rungs 0/1 keep **separate caches per implementation**
 (`"python"` vs `"rust"`) while rung 5 **shares** one (`"ross"` in both, since
 both shell out to the same binary). On Rust, rungs 0/1 need `--features media`
 (plus `embedder-hub` for `clip_tags`) — `media` is NOT in the default `full`
-set; rung 5 needs no feature at all. There is no `chunkshop cache purge`
-command yet, despite what some docstrings say.
+set; rung 5 needs no feature at all. The cache has a CLI surface —
+`chunkshop cache path|info|purge` (all accept `--config` to resolve a
+cell's own `source.cache.root`; `purge` confirms unless given `--yes`).
+It is pure-Python and works on a text-only install.
 
 ### Chunker inventory (+ a benchmark verdict)
 

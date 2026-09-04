@@ -340,10 +340,35 @@ point `root` at an encrypted volume, or set `enabled: false` to keep derived
 text only in the target database. There is **no encryption at rest** and no
 TTL or eviction.
 
-> **There is no `chunkshop cache purge` command yet.** Some module docstrings
-> and the spec refer to one; it is not implemented. To purge, delete the cache
-> directory, or call `DerivationCache(root=...).purge()` from Python. A CLI
-> surface is a tracked follow-up.
+### The `chunkshop cache` commands
+
+The cache has a CLI surface. All three subcommands are pure-Python and run on
+a text-only install — no media or parser extra required.
+
+| Command | Does |
+|---|---|
+| `chunkshop cache path` | Prints the resolved root and exits. Only the path goes to stdout, so `du -sh $(chunkshop cache path)` composes. |
+| `chunkshop cache info` | Entry count and total size on disk. Cheap; run it before purging. |
+| `chunkshop cache purge` | Deletes every entry under the root. Prompts first unless `--yes` is passed, and reports how many it removed. |
+
+Each accepts `--config CELL.yaml` to resolve the root from that cell's
+`source.cache.root` rather than the default — a user debugging one cell acts
+on the directory that cell actually writes. Without `--config` they act on the
+default root (`CHUNKSHOP_CACHE_DIR` > `XDG_CACHE_HOME` > `~/.cache`, then
+`chunkshop/derived`). The resolved root is printed **before** the purge
+confirmation, so it is never a surprise which directory is being emptied.
+
+Purge removes only chunkshop's own `*.json` entries; unrelated files sharing
+the root are left alone. A root that does not exist reports zero and exits 0 —
+purging a cache you never built is not an error.
+
+> **Purging is a decision, not housekeeping.** Rung-5 derivations are
+> non-deterministic, so the cache is what keeps a corpus stable. A purge
+> followed by a re-ingest can legitimately change derived text — and therefore
+> the embeddings — with no config change at all. It is also the remedy for the
+> two staleness gaps above: a ross built from source that edits
+> `clip_labels.txt` without bumping its version, and installing `exiftool`
+> mid-corpus.
 
 ### The soundness invariant, and why `cache_key_extra` exists
 

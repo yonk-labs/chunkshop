@@ -95,6 +95,27 @@ class DerivationCache:
             Path(tmp).unlink(missing_ok=True)
             raise
 
+    def stats(self) -> tuple[int, int]:
+        """Return ``(entry_count, total_bytes)`` for the entries under ``root``.
+
+        Walks exactly the same set ``purge()`` deletes — ``*.json`` under the
+        root — so ``chunkshop cache info``'s count is a truthful preview of
+        what a purge will remove, and unrelated files sharing the root are
+        neither counted nor deleted. A missing root walks to nothing and
+        reports ``(0, 0)`` rather than raising; an entry that vanishes
+        mid-walk still counts (purge would have counted it too) but
+        contributes no size.
+        """
+        count = 0
+        total = 0
+        for f in self.root.rglob("*.json"):
+            count += 1
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+        return count, total
+
     def purge(self) -> int:
         count = 0
         for f in self.root.rglob("*.json"):
