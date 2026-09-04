@@ -194,7 +194,18 @@ impl DerivationCache {
         let obj = payload.as_object()?;
         let text = obj.get("text")?.as_str()?.to_string();
         let metadata = obj.get("metadata")?.as_object()?.clone();
-        Some(ParseResult { text, metadata })
+        // `had_content` is not persisted, and must not be: the cache is
+        // scoped to derive-routed extensions in BOTH ports, and a
+        // derive-routed document already reaches `on_empty` by route 1, so
+        // no parser F5 claim ever passes through here. Python's `get()`
+        // likewise rebuilds `ParseResult(text=..., metadata=...)` and lets
+        // `had_content` default to None — same shape, same key, same
+        // entries readable from either port.
+        Some(ParseResult {
+            text,
+            metadata,
+            had_content: None,
+        })
     }
 
     pub fn put(

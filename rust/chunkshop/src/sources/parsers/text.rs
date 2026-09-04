@@ -23,6 +23,11 @@ impl Deriver for TextDeriver {
         "TextParser"
     }
 
+    /// Never makes a `had_content` claim, and must never learn how to.
+    /// Bytes in, text out: a zero-byte or whitespace-only file is
+    /// LEGITIMATELY empty, and nothing was lost extracting it. That is what
+    /// keeps `on_empty` off the plain-text path no matter what it is set to
+    /// — see `ParseResult::had_content` and `FilesSourceConfig::on_empty`.
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;

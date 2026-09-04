@@ -155,6 +155,9 @@ pub fn stamp_provenance(
     ParseResult {
         text: result.text,
         metadata,
+        // Provenance stamping never invents or erases an F5 claim: it wraps
+        // whatever the inner deriver said about its own extraction.
+        had_content: result.had_content,
     }
 }
 

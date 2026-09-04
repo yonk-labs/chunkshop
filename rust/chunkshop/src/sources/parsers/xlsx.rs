@@ -29,6 +29,16 @@ impl Deriver for XlsxDeriver {
         "XLSXParser"
     }
 
+    /// Deliberately makes NO `had_content` claim (the F5 signal the PDF,
+    /// DOCX and HTML derivers set). A workbook whose cells are all empty is
+    /// a legitimately empty spreadsheet — a blank template — not a failed
+    /// extraction, and "sheet count > 0" would fire on every one of them.
+    /// The only honest signal would be non-cell content (charts, images,
+    /// embedded objects), and neither calamine nor Python's openpyxl value
+    /// view exposes that through a public API. Rather than invent a
+    /// heuristic that produces false positives on blank templates in both
+    /// ports, this deriver stays silent and an empty workbook is indexed as
+    /// an empty document, exactly as before. Mirrors Python's `XLSXParser`.
     fn derive(&self, path: &Path) -> anyhow::Result<ParseResult> {
         let mut wb: Xlsx<_> = open_workbook(path)
             .map_err(|e| anyhow::anyhow!("failed to parse XLSX {}: {e}", path.display()))?;

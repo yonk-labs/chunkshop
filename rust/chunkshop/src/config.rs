@@ -639,13 +639,36 @@ pub struct FilesSourceConfig {
     pub id_from: String,
     #[serde(default = "default_encoding")]
     pub encoding: String,
-    /// Scoped to documents routed through `derive:` below, and only those.
-    /// A file handled by an ordinary parser (a plain `.md`, a `.pdf` in a
-    /// cell with no `derive:` rung for it) that yields empty text is
-    /// indexed as an empty document regardless of this setting — applying a
-    /// derivation policy to the plain-parser path made an upgrade abort on
-    /// any corpus containing a zero-byte or whitespace-only file, after
-    /// `target.mode: overwrite` had already dropped the table. Enforced in
+    /// What to do when a file that demonstrably held content yields no text.
+    /// Mirrors Python's `chunkshop.config.FilesSource.on_empty` — same three
+    /// values, same default, same scope rule, same YAML.
+    ///
+    /// **THE SCOPE RULE.** This setting is reached by exactly two routes,
+    /// and "the extracted text was empty" is deliberately NOT one of them:
+    ///
+    /// 1. the document was routed through the `derive:` block below; or
+    /// 2. its deriver made an affirmative `ParseResult::had_content` claim
+    ///    that the file held content it failed to extract — a PDF with
+    ///    pages, a DOCX with tables, an HTML page built from
+    ///    `<img>`/`<svg>`/`<iframe>` and nothing else. This is spec defect
+    ///    F5, "empty-derivation is loud, not silent".
+    ///
+    /// Any other empty document is indexed unconditionally, whatever this
+    /// is set to. A zero-byte or whitespace-only `.md` is LEGITIMATELY
+    /// empty: bytes went in, no text came out, nothing was lost.
+    /// `TextDeriver` has no notion of a content unit and never makes the
+    /// route-2 claim, so no text file can reach the loud branch. That
+    /// separation is load-bearing — applying a derivation policy to the
+    /// plain parser path made an upgrade abort on any corpus containing a
+    /// blank file, after `target.mode: overwrite` had already dropped the
+    /// table.
+    ///
+    /// XLSX makes no route-2 claim either: a workbook of empty cells is a
+    /// blank template, and neither port's library exposes non-cell content
+    /// (charts, images) publicly, so there is no honest signal to raise.
+    ///
+    /// Route 2 is a deliberate behaviour change from chunkshop 1.0.0-rc6,
+    /// where a scanned PDF indexed as a silent empty document. Enforced in
     /// `FilesSource::iter_documents`.
     #[serde(default)]
     pub on_empty: OnEmpty,

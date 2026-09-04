@@ -166,17 +166,33 @@ impl FilesSource {
             };
 
             if result.text.trim().is_empty() {
-                // `on_empty` is a DERIVATION policy, scoped to derive-routed
-                // documents — see `FilesSourceConfig::on_empty`. Applying it
-                // to the plain parser path was a data-loss regression for
-                // text-only corpora: the default `Error` aborted the whole
-                // run on a zero-byte or whitespace-only `.md`, and
-                // `iter_documents` builds the entire `Vec<Document>` eagerly,
-                // so NOTHING was written — after `mode: overwrite`'s
-                // DROP+CREATE had already emptied the target table. A
-                // non-derived document keeps the pre-`on_empty` behaviour
-                // unconditionally: it is indexed as an empty document.
-                let policy = if derived {
+                // `on_empty` reaches a document by exactly TWO routes, and
+                // "the text came out empty" is not one of them.
+                //
+                // (1) The document was derive-routed — see
+                //     `FilesSourceConfig::on_empty`.
+                // (2) The deriver made an affirmative `had_content` claim:
+                //     it counted content units it knows how to read (PDF
+                //     pages, DOCX tables, embedded HTML elements) and
+                //     produced no characters anyway. That is spec defect F5
+                //     — "empty-derivation is loud, not silent" — and a
+                //     scanned PDF is its canonical case.
+                //
+                // Everything else is indexed unconditionally, which is what
+                // keeps a legitimately-empty text file legitimately empty.
+                // Applying a derivation policy to the plain parser path was
+                // a data-loss regression for text-only corpora: the default
+                // `Error` aborted the whole run on a zero-byte or
+                // whitespace-only `.md`, and `iter_documents` builds the
+                // entire `Vec<Document>` eagerly, so NOTHING was written —
+                // after `mode: overwrite`'s DROP+CREATE had already emptied
+                // the target table. Route (2) cannot resurrect that bug:
+                // `TextDeriver` has no notion of a content unit and never
+                // sets `had_content`, so no text file can reach the loud
+                // branch no matter how empty it is. Widening the trigger
+                // back to "text is blank" is exactly the change this comment
+                // exists to prevent.
+                let policy = if derived || result.had_content.is_some() {
                     self.cfg.on_empty
                 } else {
                     OnEmpty::Index
@@ -191,6 +207,10 @@ impl FilesSource {
                             // extension until the `parser_name` contract
                             // existed to supply the real thing.
                             parser: parser_name.to_string(),
+                            // `Some(..)` selects the F5 wording (what the
+                            // file HELD + the preprocessing remedy); `None`
+                            // keeps the derive-path message unchanged.
+                            had_content: result.had_content.clone(),
                         }
                         .into());
                     }
