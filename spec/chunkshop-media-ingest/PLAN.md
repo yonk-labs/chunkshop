@@ -30,7 +30,8 @@ SC-13 all have evidence. (SC-12 Rust parity lands with M8; audio SCs are v1.1.)
 - [ ] `key = H(cache_schema_version, content_hash, derivation_hash)`;
       `derivation_hash = H(rung, model_id, model_version, params, prompt, argv)`
 - [ ] Cache lives inside the deriver wrapper (not `FilesSource`); configurable root; TTL;
-      `chunkshop cache purge`; `cache: false` opt-out
+      `chunkshop cache purge`; `cache: {enabled: false}` opt-out (a nested
+      `DerivationCacheSettings`, not a bare bool — `cache: false` fails validation)
 - [ ] Provenance stamped into `derived.<tier>.{model,version,ts,params_hash,cost}`
 - [ ] `content_origin` (`authored`|`derived`) + `derived_rung` as promoted columns, ON BY DEFAULT
 - [ ] Budget ceiling + pre-run cost estimate

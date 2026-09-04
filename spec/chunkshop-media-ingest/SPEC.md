@@ -433,7 +433,7 @@ fails without it. **Scope for v1: IMAGES + the full spine.** Audio (F7, F8) is *
 | **F24** | Cost governance for derivation | per-run budget ceiling (`max_spend`/`max_calls`), a cost estimate before a paid run starts, and a `cost` field recorded in provenance | ✅ | SC-4, NN-2 | A bakeoff or ingest with a budget ceiling stops at the ceiling and reports spend; a dry-run prints an estimate before any paid call | missing |
 | **F22** | CLIP zero-shot tagging (keyless image→text) | embed a configurable label vocabulary with the CLIP text tower; tag each image by nearest labels; output is **text** into the unified plane | ✅ | SC-1, SC-2, NN-2, NN-4 | A folder of images yields searchable text tags with **no key, no GPU, no new dependency**; vocabulary is user-configurable | missing (dep present) |
 | **F4** | OCR — rung 2 | Local OCR engine behind `chunkshop[ocr]`; applies to image files **and** as a fallback when a PDF page yields no embedded text | ✅ | canonical scenario, Job-A | A scanned PDF of known text ingests with that text recoverable in `original_content` | missing |
-| **F5** | Empty-derivation is loud, not silent | A parser yielding `""`/no derivation raises or records a failure state; never a silently-indexed empty doc | ✅ | SC-5 | Scanned PDF with no OCR configured → explicit error or recorded `derivation_failed`, **never** a silent 0-chunk success | missing (**active defect**: `parsers/pdf.py` `or ""`) |
+| **F5** | Empty-derivation is loud, not silent | A parser yielding `""`/no derivation raises or records a failure state; never a silently-indexed empty doc | ✅ | SC-5 | Scanned PDF with no OCR configured → explicit error or recorded `derivation_failed`, **never** a silent 0-chunk success | **shipped** (both ports). A parser that counted content units and produced no characters sets `ParseResult.had_content`; `FilesSource` then applies `on_empty` (default `error`) and raises `EmptyDerivationError` naming the file, what it held ("1 page(s)"), and the preprocessing remedy. Covers **PDF** (pages), **DOCX** (tables), **PPTX** (slides, Python only — Rust refuses `.pptx` outright), **HTML** (`<img>`/`<svg>`/`<iframe>`…). **Not** XLSX: a workbook of empty cells is a blank template, and neither openpyxl's value view nor calamine exposes non-cell content publicly, so there is no honest signal. The trigger is the parser's affirmative claim, **never** "the text came out blank" — a zero-byte or whitespace-only `.md` is legitimately empty and still indexes under every `on_empty` mode. |
 | **F6** | Remote VLM caption deriver — rung 3 | OpenAI-compatible `/v1/chat/completions` over stdlib urllib, copying `embedders/openai_provider.py`; `base_url`/`api_key_env`/model from YAML; `response_format: json_schema`; **must handle reasoning models** (`enable_thinking:false`, and `content: None` is an error not an empty caption) | ✅ | SC-4 arm, SC-10, Job-A, NN-4 | Against `192.168.1.133:8000`, an image yields schema-valid JSON split into content + **structured metadata (art_style, dominant_colors, composition) that `promote_metadata` lifts to indexed columns**; a `content: None` response fails loudly | missing |
 | F7 | ASR deriver — audio → transcript | Audio file → transcript text + timestamp/duration/speaker metadata. Local (opt-in extra) and remote (rung 3) paths | ⬜ **v1.1** | Job-A, Job-B | A known recording ingests; transcript text searchable; `duration_s` promotable to a column | deferred to v1.1 |
 | F8 | Audio pre-segmentation | Long audio split before ASR (API duration/size ceilings), transcript reassembled with inline timestamps → **`→ Design`** (inverts Source→Chunker order) | ⬜ **v1.1** | 90-min meetings | A 90-minute recording ingests end-to-end; chunk metadata carries correct offsets | deferred to v1.1 |
@@ -457,6 +457,14 @@ fails without it. **Scope for v1: IMAGES + the full spine.** Audio (F7, F8) is *
 SC-1→F2,F22,F14 · SC-2→F22,F14 · SC-3→F3,F13,F22 (F16 is NOT required — deferred with F15) · SC-4→F6,F13 · SC-5→F5 · SC-6→F10 ·
 SC-7→F10 · SC-8→F1,F11 · SC-9→F12 · SC-10→F1,F2 · SC-11→F23 + D1 (with a real integration test, not asserted-by-design) · SC-12→F17 · SC-13→F14.
 Job-A→F1,F4,F6,F7,F9,F21 · Job-B→F7,F11,F21. **No SC or Job is unimplemented.**
+
+*`SC-5→F5` is unchanged by F5 shipping, but only half of SC-5 is closed by it.* F5's
+acceptance check allows **either** an explicit error **or** a recorded `derivation_failed`,
+and what shipped is the error: a file that held content and yielded no text aborts the run
+by default (or is skipped/indexed on request). That satisfies "no file is silently absent" —
+nothing is quietly indexed empty any more. It does **not** yet satisfy SC-5's stated signal,
+`count(source files) == count(indexed docs) + count(recorded failures)`, because an aborted
+run produces no failure ledger to count. A failure-row sink is still open work.
 
 **Feature → SC (no gold-plating):** every F1–F17 traces to ≥1 SC or Job. F18–F20 trace to
 nothing in v1 scope and are therefore correctly deferred, not built.
@@ -845,8 +853,13 @@ is accepted.
 - The cache stores **raw OCR'd claim text and call transcripts on local disk**. For the canonical
   insurance corpus that is a compliance surface, not a convenience. v1 must ship: a configurable
   cache root (so it can sit on an encrypted volume), a documented **retention/TTL**, a
-  `chunkshop cache purge` command, and an explicit **opt-out** (`cache: false`) for corpora that
-  must not persist derived text outside the target database.
+  `chunkshop cache purge` command, and an explicit **opt-out** for corpora that must not persist
+  derived text outside the target database. The opt-out's config shape is
+  `cache: {enabled: false}` — `DerivationCacheSettings` is a nested model
+  (`enabled: bool = True`, `root: Optional[str] = None`), and a bare `cache: false` is a
+  validation error under `extra="forbid"` / `deny_unknown_fields`.
+  **Shipped short of this:** cache root, opt-out and `chunkshop cache path|info|purge` exist;
+  **retention/TTL does not** — there is no eviction policy, and the cache grows until purged.
 - **No redaction and no encryption-at-rest in v1** — stated as a limitation, not implied to be solved.
 - **Cache schema version** is folded into `derivation_hash` and so into the key. If the key
   formula itself changes in a later release, the version bump invalidates cleanly instead of
@@ -1139,7 +1152,7 @@ tutorial defaults to GPT-4o."*
 
 | Gap | Resolution |
 |---|---|
-| **Cache holds raw claim text / transcripts unencrypted on local disk** | **FIXED** — configurable cache root, documented TTL, `chunkshop cache purge`, `cache: false` opt-out. No redaction/encryption-at-rest in v1, **stated as a limitation** rather than implied solved. |
+| **Cache holds raw claim text / transcripts unencrypted on local disk** | **PARTIAL** — configurable cache root, `chunkshop cache path\|info\|purge`, and a `cache: {enabled: false}` opt-out all shipped. **No TTL and no eviction policy exist**: the cache grows unbounded until purged by hand. No redaction/encryption-at-rest in v1. All three are **stated as limitations** rather than implied solved; retention is tracked as open in `docs/superpowers/plans/MEDIA-INGEST-ROADMAP.md`. |
 | **No cache-schema versioning** — a later change to the `derivation_hash` formula would silently serve mismatched entries | **FIXED** — `cache_schema_version` is part of the key. |
 | **Path-dependent derivers collide in a content-addressed cache** — `ImageMetaDeriver` derives text from the filename while the key held no path, so byte-identical images with different names were served each other's text | **FIXED** — per-deriver `cache_key_extra` is a third key component, and D5 now states the cache-soundness invariant that makes the key a valid provenance record. |
 | **No cost governance for the bakeoff**, the one feature explicitly allowed to spend money | **FIXED** — **F24**: budget ceiling, pre-run estimate, `cost` recorded in provenance. |

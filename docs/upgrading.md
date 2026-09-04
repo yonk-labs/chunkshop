@@ -83,38 +83,74 @@ and diffed the rows byte-for-byte, including the raw embedding blobs. The full
 result, and the list of what was *not* measured, is in
 [`media-ingest.md` → Upgrade impact](media-ingest.md#upgrade-impact).
 
-### The one thing to know: `on_empty` is derive-scoped
+### The one thing to know: what `on_empty` reaches
 
-`source.on_empty` defaults to `"error"`, but **it governs derivers only**. If
-a document is routed to a `derive:` rung and that rung returns no text, the
-cell raises `EmptyDerivationError` naming the file and the deriver — a model
-returning nothing is a failure, not a zero-length success, and it must not
-vanish silently from the index.
+`source.on_empty` defaults to `"error"`, and it is reached by exactly **two**
+routes. "The extracted text came out empty" is deliberately not one of them.
 
-A document handled by an **ordinary parser** — a plain `.md`, or a `.pdf` in a
-cell with no `derive:` rung for it — that yields empty text is indexed as an
-empty document regardless of this setting. That is the pre-`on_empty`
-behaviour, kept unconditionally for the plain-parser path.
+1. **A `derive:` rung returned no text.** A model returning nothing is a
+   failure, not a zero-length success, and it must not vanish silently from
+   the index.
+2. **A parser read real content and extracted nothing** — a PDF with pages, a
+   DOCX with tables, a PPTX with slides, an HTML page built from
+   `<img>`/`<svg>`/`<iframe>` and nothing else. The file demonstrably holds
+   content the parser could not turn into text. **This is new in this
+   release** — see the next section.
 
-So: **if you have no `derive:` block, `on_empty` cannot fire at all,** and
-this default is not reachable from your configs. Full semantics in
+Any other empty document is indexed unconditionally, whatever `on_empty` says.
+A zero-byte or whitespace-only `.md` is *legitimately* empty: bytes went in,
+no text came out, nothing was lost. `TextParser` has no notion of a content
+unit and never makes the route-2 claim, so **no text file can trip this, no
+matter how empty it is.**
+
+XLSX makes no route-2 claim either: a workbook of empty cells is a blank
+template, and neither port's library exposes non-cell content (charts, images)
+publicly, so there is no honest signal to raise on.
+
+Full semantics in
 [`media-ingest.md` → The empty-derivation policy](media-ingest.md#the-empty-derivation-policy-on_empty).
 
 ### Action required
 
-**None for text-only cells.** `on_empty` only becomes relevant once you add a
-`derive:` block. When you do, decide then between `error` (default — stop and
-tell me), `skip` (omit the document, continue the run) and `index` (index the
-empty document; kept for backward compatibility, not recommended).
+**None for text-only cells.** Route 1 needs a `derive:` block; route 2 needs a
+PDF/DOCX/PPTX/HTML file that yields nothing. If your corpus is prose files, no
+config change is needed and nothing new can fire.
 
-### What this release does *not* fix: scanned PDFs
+**If you ingest PDFs, read the next section** — the behaviour changed.
 
-If you came here expecting the scanned-PDF gap to be closed, it is not. **No
-shipped rung derives text from a PDF** — rungs 0 and 1 take images, rung 5
-takes images, audio and video. A scanned, image-only PDF still extracts to
-nothing and is still indexed as an empty document, and because `on_empty` is
-derive-scoped it does not catch that case. Closing it needs the OCR rung
-(rung 2), which is not built. See
+### Behaviour change: a scanned PDF now fails instead of indexing empty
+
+Up to and including `1.0.0-rc6`, a scanned, image-only PDF extracted to
+nothing and was indexed as a **silent empty document**. That was spec defect
+F5 ("empty-derivation is loud, not silent"), and it is now closed. Such a file
+raises by default:
+
+```
+/corpus/claim-0042.pdf: PDFParser read 12 page(s) but extracted no text. The
+file has content that produced no characters — typically a scanned PDF or an
+image-only page with no text layer. chunkshop does not OCR: preprocess it to
+markdown first (e.g. yonk-doctools, which does PDF/DOCX -> markdown with image
+captioning) and ingest that output. To continue past files like this instead,
+set source.on_empty='skip' (or 'index' to index it as an empty document
+anyway).
+```
+
+Three ways through, in order of preference:
+
+| Want | Do |
+|---|---|
+| The text in those PDFs | Preprocess to markdown ([`yonk-doctools`](https://github.com/yonk-labs/yonk-doctools) does PDF/DOCX → markdown with VLM image captioning) and point the `files` glob at its output |
+| The run to continue, those files omitted | `source.on_empty: skip` |
+| The exact pre-`rc6` behaviour back | `source.on_empty: index` — kept for compatibility, not recommended: it is the silent-empty-doc behaviour F5 exists to remove |
+
+The trigger is narrow on purpose. It fires only when the parser counted
+content units *and* produced zero characters — never on an empty text file,
+and never on a PDF that yielded any text at all.
+
+**Still not fixed: chunkshop does not OCR.** No shipped rung derives text from
+a PDF — rungs 0 and 1 take images, rung 5 takes images, audio and video. F5
+makes the gap *loud*; it does not close it. That needs the OCR rung (rung 2),
+which is not built. See
 [`media-ingest.md` → Limits of this release](media-ingest.md#limits-of-this-release).
 
 ### Rust-only differences

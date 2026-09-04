@@ -59,10 +59,14 @@ Rungs 2 (local OCR), 3 (remote VLM captioning as a first-class rung) and 4
 **not implemented**. See `docs/superpowers/plans/MEDIA-INGEST-ROADMAP.md`.
 
 > **Read this before you plan a PDF corpus:** every shipped rung takes images
-> (and, for rung 5, audio and video). **None takes a PDF.** A scanned,
-> image-only PDF still indexes as an empty document, and `on_empty` will not
-> catch it — see [Limits of this release](#limits-of-this-release). The rung
-> that would fix it is rung 2, and rung 2 is not built.
+> (and, for rung 5, audio and video). **None takes a PDF.** chunkshop does not
+> OCR. What it now does instead is *refuse to pretend*: a scanned, image-only
+> PDF raises `EmptyDerivationError` naming the file and its page count rather
+> than indexing as a silent empty document (spec defect F5, closed — see
+> [The empty-derivation policy](#the-empty-derivation-policy-on_empty)). The
+> remedy is preprocessing to markdown, or `on_empty: skip`. The rung that
+> would actually read the PDF is rung 2, and rung 2 is not built — see
+> [Limits of this release](#limits-of-this-release).
 
 ## A worked example, end to end
 
@@ -239,32 +243,73 @@ Nothing here degrades to a silent skip.
 
 ## The empty-derivation policy: `on_empty`
 
-`source.on_empty` governs what happens when a **deriver** produces no text at
-all. A model that returns nothing is a failure, not a zero-length success, and
-the point of the setting is that such a document must not silently disappear
-from the index.
+`source.on_empty` governs what happens when a file that **demonstrably held
+content** yields no text. Something that produced nothing is a failure, not a
+zero-length success, and the point of the setting is that such a document must
+not silently disappear into the index as a blank row.
 
 | Value | Behaviour |
 |---|---|
-| `error` (default) | Raise `EmptyDerivationError` naming the file and the deriver. |
+| `error` (default) | Raise `EmptyDerivationError` naming the file, what it held, and the remedy. |
 | `skip` | Omit the document and continue the run. |
 | `index` | Index the empty document. |
 
-**It is scoped to derive-routed documents, and only those.** A file handled by
-an ordinary parser — a plain `.md`, or a `.pdf` in a cell with no `derive:`
-rung for it — that yields empty text is indexed as an empty document
-regardless of this setting. That is the pre-`on_empty` behaviour, kept
-unconditionally for the plain-parser path: applying a *derivation* policy to
-it turned any corpus containing a zero-byte or whitespace-only file into an
-aborted run.
+### The scope rule
 
-Because the error is now unreachable from the plain-parser path, a text-only
-cell cannot see a media concept in an error message at all.
+`on_empty` is reached by exactly **two** routes, and "the extracted text is
+empty" is deliberately **not** one of them:
 
-Note the practical consequence for scanned PDFs: no shipped rung derives text
-from a PDF, so a scanned, image-only PDF cannot be derive-routed today and
-`on_empty` never fires for it. It is still indexed empty. Closing that needs
-the OCR rung, which is not built.
+1. **The document was derive-routed** — an extension claimed by the `derive:`
+   block, whose rung returned nothing.
+2. **Its parser made an affirmative claim** that the file held content it
+   failed to extract. A parser sets this only when it both counted at least
+   one content unit it knows how to read *and* produced zero characters.
+
+| Format | Route-2 signal | Evidence in the message |
+|---|---|---|
+| PDF | pages exist, no characters | `3 page(s)` |
+| DOCX | body has tables, no paragraph text | `2 table(s)` |
+| PPTX | slides exist, no text frames (Python only — Rust refuses `.pptx` outright) | `4 slide(s)` |
+| HTML | markup holds `<img>`/`<svg>`/`<canvas>`/`<video>`/`<audio>`/`<picture>`/`<object>`/`<embed>`/`<iframe>`, no text | `3 embedded element(s) (img, svg)` |
+| XLSX | **none — deliberately** | — |
+| text (`.md`, `.txt`, `.csv`, …) | **none — never** | — |
+
+**Anything else empty is indexed unconditionally, whatever this is set to.**
+A zero-byte or whitespace-only `.md` is *legitimately* empty: bytes went in,
+no text came out, nothing was lost. `TextParser` has no notion of a content
+unit and never makes the route-2 claim, so no text file can reach the loud
+branch no matter how empty it is. That separation is load-bearing — applying a
+*derivation* policy to the plain-text path once turned any corpus containing a
+blank file into an aborted run (see
+[One regression, found and fixed before release](#one-regression-found-and-fixed-before-release)).
+
+**Why XLSX is excluded.** A workbook whose cells are all empty is a blank
+template, not a failed extraction, and "sheet count > 0" would fire on every
+one of them. The only honest signal would be non-cell content (charts, images,
+embedded objects), and neither Python's openpyxl value view nor Rust's
+calamine exposes that through a public API. Inventing a heuristic there would
+buy false positives, so the parser stays silent.
+
+### The behaviour change for scanned PDFs
+
+Route 2 is new. Up to and including `1.0.0-rc6`, a scanned, image-only PDF
+extracted to nothing and was indexed as a silent empty document — spec defect
+F5, "empty-derivation is loud, not silent". It now raises by default:
+
+```
+/corpus/claim-0042.pdf: PDFParser read 12 page(s) but extracted no text. The
+file has content that produced no characters — typically a scanned PDF or an
+image-only page with no text layer. chunkshop does not OCR: preprocess it to
+markdown first (e.g. yonk-doctools, which does PDF/DOCX -> markdown with image
+captioning) and ingest that output. To continue past files like this instead,
+set source.on_empty='skip' (or 'index' to index it as an empty document
+anyway).
+```
+
+chunkshop still does not OCR, and no shipped rung derives text from a PDF. F5
+makes the gap loud; it does not close it. The remedy is preprocessing to
+markdown (`yonk-doctools`), or `on_empty: skip` to continue past those files,
+or `on_empty: index` to restore the pre-`rc6` silent-empty-doc behaviour.
 
 ## Provenance
 
@@ -627,6 +672,13 @@ restored: `docs=3 chunks=1` again, and a populated table survives a re-run
 (1 row before, 1 row after). It is recorded here because it shipped in an
 intermediate state of this branch, not because it is live.
 
+Closing F5 later added a **second** route into `on_empty` — a parser's
+affirmative "I read pages and got nothing" claim — and it does **not** reopen
+this. The trigger is the parser's claim, never empty text, and `TextParser`
+cannot make the claim; a parametrised guard in both ports asserts that a
+zero-byte and a whitespace-only `.md` still index under all three `on_empty`
+modes, and it fails if anyone widens the check back.
+
 ### What was not measured
 
 Only **SQLite sinks** and the **`files` source** were exercised end to end.
@@ -640,15 +692,14 @@ not run, and is not being claimed.
 Stated plainly, because the ladder is meant to be honest about what it does
 not do:
 
-- **No shipped rung derives text from a PDF, so the spec's motivating defect
-  is not closed by this release.** Rungs 0 and 1 take images; rung 5 takes
-  images, audio and video. None of them takes a PDF. A scanned, image-only PDF
-  therefore still extracts to nothing and is still indexed as an empty
-  document — and because `on_empty` is correctly scoped to derive-routed
-  documents, it cannot catch that case either. This is exactly the F5 defect
-  in `spec/chunkshop-media-ingest/SPEC.md` ("scanned PDF with no OCR
-  configured → explicit error, never a silent 0-chunk success"): **it remains
-  open.** Closing it needs the OCR rung (rung 2), which is not built.
+- **No shipped rung derives text from a PDF.** Rungs 0 and 1 take images;
+  rung 5 takes images, audio and video. None of them takes a PDF. A scanned,
+  image-only PDF still extracts to nothing, and chunkshop still cannot read
+  it. Closing *that* needs the OCR rung (rung 2), which is not built.
+  What **is** closed is F5 in `spec/chunkshop-media-ingest/SPEC.md` ("scanned
+  PDF with no OCR configured → explicit error, never a silent 0-chunk
+  success"): the file now raises by default instead of indexing empty, naming
+  its page count and the preprocessing remedy. The gap is loud, not gone.
 - **No first-class remote VLM captioning rung.** Rung 5 with `llm: true` is
   the available path, and it goes through `ross`, not through a chunkshop-native
   deriver with a configurable JSON schema.
