@@ -639,6 +639,14 @@ pub struct FilesSourceConfig {
     pub id_from: String,
     #[serde(default = "default_encoding")]
     pub encoding: String,
+    /// Scoped to documents routed through `derive:` below, and only those.
+    /// A file handled by an ordinary parser (a plain `.md`, a `.pdf` in a
+    /// cell with no `derive:` rung for it) that yields empty text is
+    /// indexed as an empty document regardless of this setting — applying a
+    /// derivation policy to the plain-parser path made an upgrade abort on
+    /// any corpus containing a zero-byte or whitespace-only file, after
+    /// `target.mode: overwrite` had already dropped the table. Enforced in
+    /// `FilesSource::iter_documents`.
     #[serde(default)]
     pub on_empty: OnEmpty,
     /// `BTreeMap`, not `HashMap`: Python (`files.py:65`) iterates

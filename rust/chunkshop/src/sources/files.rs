@@ -118,7 +118,19 @@ impl FilesSource {
                 .unwrap_or("")
                 .to_lowercase();
 
-            let (result, content_hash, parser_name) = if let Some(deriver) = self.derived.get(&ext) {
+            // `derived` is THE routing signal, set on the branch actually
+            // taken and reused below for `on_empty`. "this extension is in
+            // the `derive:` block" and "this document went through a
+            // Deriver" are the same fact here, not two: `self.derived`
+            // short-circuits the registry entirely, and a deriver that
+            // cannot be built fails in `load_deriver` (and again in
+            // `CellConfig::preflight_derive`, before the sink's DDL) rather
+            // than degrading to a text parser. Deriving it a second way —
+            // from the parser object, say — is the duplicated-routing
+            // defect class that produced the bug this gate fixes.
+            let (result, content_hash, parser_name, derived) = if let Some(deriver) =
+                self.derived.get(&ext)
+            {
                 let bytes = std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?;
                 let content_hash = hash_bytes(&bytes);
                 let (rung, model_id, model_version, params) = deriver.cache_key_parts();
@@ -139,7 +151,7 @@ impl FilesSource {
                 let (r, _hit) = cached_derive(self.cache.as_ref(), &content_hash, &d_hash, extra.as_deref(), || {
                     deriver.derive(&p)
                 })?;
-                (r, Some(content_hash), deriver.parser_name())
+                (r, Some(content_hash), deriver.parser_name(), true)
             } else {
                 let deriver = crate::sources::parsers::registry::get_deriver(&ext);
                 let name = deriver.parser_name();
@@ -149,11 +161,27 @@ impl FilesSource {
                         .with_context(|| format!("deriving {}", p.display()))?,
                     None,
                     name,
+                    false,
                 )
             };
 
             if result.text.trim().is_empty() {
-                match self.cfg.on_empty {
+                // `on_empty` is a DERIVATION policy, scoped to derive-routed
+                // documents — see `FilesSourceConfig::on_empty`. Applying it
+                // to the plain parser path was a data-loss regression for
+                // text-only corpora: the default `Error` aborted the whole
+                // run on a zero-byte or whitespace-only `.md`, and
+                // `iter_documents` builds the entire `Vec<Document>` eagerly,
+                // so NOTHING was written — after `mode: overwrite`'s
+                // DROP+CREATE had already emptied the target table. A
+                // non-derived document keeps the pre-`on_empty` behaviour
+                // unconditionally: it is indexed as an empty document.
+                let policy = if derived {
+                    self.cfg.on_empty
+                } else {
+                    OnEmpty::Index
+                };
+                match policy {
                     OnEmpty::Error => {
                         return Err(EmptyDerivationError {
                             path: p.clone(),
@@ -257,6 +285,136 @@ mod tests {
             path_segments: true,
             segment_depth: 3,
         })
+    }
+
+    // --- `on_empty` scope: derivation policy, not a text policy ---------
+
+    /// Stands in for a real rung that derives nothing (a blank scan).
+    ///
+    /// Reached by hand-building `FilesSource`'s `derived` table below
+    /// rather than through `load_deriver`, because every real rung this
+    /// build can construct deliberately yields non-empty text
+    /// (`ImageMetaDeriver` falls back to `"<format> image"`), so there is
+    /// no config that routes a stub deriver in. The tests are in the same
+    /// module as the struct, so its private fields are reachable.
+    struct EmptyDeriver;
+
+    impl crate::sources::parsers::Deriver for EmptyDeriver {
+        fn derive(&self, _path: &Path) -> Result<crate::sources::parsers::ParseResult> {
+            Ok(crate::sources::parsers::ParseResult::new("   \n  "))
+        }
+        fn parser_name(&self) -> &'static str {
+            "EmptyDeriver"
+        }
+    }
+
+    impl CacheableDeriver for EmptyDeriver {
+        fn cache_key_parts(&self) -> (String, String, String, serde_json::Value) {
+            (
+                "test_empty".to_string(),
+                "deterministic".to_string(),
+                "1".to_string(),
+                serde_json::json!({}),
+            )
+        }
+    }
+
+    /// A source whose `.blank` files are genuinely derive-routed.
+    fn derived_src(dir: &std::path::Path, on_empty: OnEmpty) -> FilesSource {
+        std::fs::write(dir.join("a.blank"), b"x").unwrap();
+        let mut derive = BTreeMap::new();
+        derive.insert("blank".to_string(), image_meta_cfg());
+        let mut cfg = base_cfg(format!("{}/*.blank", dir.display()), Some(derive));
+        cfg.on_empty = on_empty;
+        let mut derived: HashMap<String, Rc<dyn CacheableDeriver>> = HashMap::new();
+        derived.insert("blank".to_string(), Rc::new(EmptyDeriver));
+        FilesSource {
+            cfg,
+            derived,
+            // No cache: these tests must not touch the user's cache root.
+            cache: None,
+            derive_error: None,
+        }
+    }
+
+    #[test]
+    fn derive_routed_empty_errors_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = derived_src(dir.path(), OnEmpty::Error)
+            .iter_documents()
+            .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("a.blank"), "{msg}");
+        assert!(msg.contains("EmptyDeriver"), "{msg}");
+    }
+
+    #[test]
+    fn derive_routed_empty_is_omitted_under_skip() {
+        let dir = tempfile::tempdir().unwrap();
+        let docs = derived_src(dir.path(), OnEmpty::Skip)
+            .iter_documents()
+            .unwrap();
+        assert!(docs.is_empty(), "{docs:?}");
+    }
+
+    #[test]
+    fn derive_routed_empty_is_indexed_under_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let docs = derived_src(dir.path(), OnEmpty::Index)
+            .iter_documents()
+            .unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(docs[0].content.trim().is_empty(), "{:?}", docs[0].content);
+    }
+
+    /// One normal, one zero-byte, one whitespace-only. No `derive:` block.
+    fn text_corpus(dir: &std::path::Path) -> String {
+        std::fs::write(dir.join("doc-normal.md"), b"# Heading\n\nreal prose\n").unwrap();
+        std::fs::write(dir.join("doc-empty.md"), b"").unwrap();
+        std::fs::write(dir.join("doc-ws.md"), b"   \n\n\t\n").unwrap();
+        format!("{}/*.md", dir.display())
+    }
+
+    #[test]
+    fn text_only_corpus_with_empty_files_ingests_under_default_config() {
+        // THE regression test. Before the fix this returned
+        // EmptyDerivationError on `doc-empty.md` and — because
+        // `iter_documents` builds the whole Vec eagerly — nothing at all
+        // was written, after `mode: overwrite` had already dropped the
+        // populated target table.
+        let dir = tempfile::tempdir().unwrap();
+        let glob = text_corpus(dir.path());
+        let src = FilesSource::new(base_cfg(glob, None)).unwrap();
+        let docs = src.iter_documents().unwrap();
+        assert_eq!(
+            docs.len(),
+            3,
+            "{:?}",
+            docs.iter().map(|d| &d.id).collect::<Vec<_>>()
+        );
+        let empty: Vec<_> = docs
+            .iter()
+            .filter(|d| d.content.trim().is_empty())
+            .collect();
+        assert_eq!(
+            empty.len(),
+            2,
+            "the empty and whitespace-only docs must both survive"
+        );
+    }
+
+    #[test]
+    fn text_only_corpus_is_unaffected_by_every_on_empty_mode() {
+        // `Skip` included: a user who set it for their images must not
+        // silently lose empty text documents from the same cell.
+        for mode in [OnEmpty::Error, OnEmpty::Skip, OnEmpty::Index] {
+            let dir = tempfile::tempdir().unwrap();
+            let glob = text_corpus(dir.path());
+            let mut cfg = base_cfg(glob, None);
+            cfg.on_empty = mode;
+            let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
+            assert_eq!(docs.len(), 3, "on_empty: {mode:?}");
+        }
     }
 
     #[test]

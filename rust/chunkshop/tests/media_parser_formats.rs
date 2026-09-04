@@ -254,54 +254,62 @@ fn docx_with_a_paragraph_round_trips() {
     );
 }
 
+/// `on_empty` does NOT reach the plain-parser path, in ANY of its modes.
+///
+/// These three cases used to assert the opposite — that a whitespace-only
+/// `.txt` with no `derive:` block errored under `Error` and vanished under
+/// `Skip`. That was the data-loss regression: `on_empty` is a derivation
+/// policy ("what to do when a DERIVER produces no text"), and applying it
+/// to ordinary text aborted any text-only cell whose corpus contained a
+/// zero-byte or whitespace-only file — after `mode: overwrite` had already
+/// dropped the target table, and with no way to pre-stage `on_empty: index`
+/// on the older config model that rejects the key outright.
+///
+/// The derive path's own three-mode coverage lives in
+/// `src/sources/files.rs`'s unit tests, which can route a stub deriver in.
 #[test]
-fn on_empty_error_is_the_default() {
+fn on_empty_never_applies_to_a_plain_text_file() {
+    for mode in [OnEmpty::Error, OnEmpty::Skip, OnEmpty::Index] {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp(dir.path(), "a.txt", b"   \n  ");
+        let cfg = FilesSourceConfig {
+            glob: format!("{}/*.txt", dir.path().display()),
+            id_from: "stem".to_string(),
+            encoding: "utf-8".to_string(),
+            on_empty: mode,
+            derive: None,
+            cache: Default::default(),
+        };
+        let docs = FilesSource::new(cfg)
+            .unwrap()
+            .iter_documents()
+            .unwrap_or_else(|e| panic!("on_empty: {mode:?} must not fail a text-only cell: {e:#}"));
+        assert_eq!(docs.len(), 1, "on_empty: {mode:?}");
+        assert!(docs[0].content.trim().is_empty(), "on_empty: {mode:?}");
+    }
+}
+
+#[test]
+fn a_zero_byte_text_file_is_indexed_not_refused() {
+    // The upgrade-breaking shape in the wild: a `touch`ed placeholder, a
+    // scraped stub, a generated-but-empty note sitting in an otherwise
+    // ordinary markdown corpus.
     let dir = tempfile::tempdir().unwrap();
-    write_temp(dir.path(), "a.txt", b"   \n  ");
+    write_temp(dir.path(), "normal.md", b"# H\n\nreal prose\n");
+    write_temp(dir.path(), "empty.md", b"");
     let cfg = FilesSourceConfig {
-        glob: format!("{}/*.txt", dir.path().display()),
+        glob: format!("{}/*.md", dir.path().display()),
         id_from: "stem".to_string(),
         encoding: "utf-8".to_string(),
         on_empty: OnEmpty::Error,
         derive: None,
         cache: Default::default(),
     };
-    let err = FilesSource::new(cfg).unwrap().iter_documents().unwrap_err();
-    assert!(format!("{err:#}").contains("a.txt"));
-}
-
-#[test]
-fn on_empty_skip_omits_the_document() {
-    let dir = tempfile::tempdir().unwrap();
-    write_temp(dir.path(), "a.txt", b"   \n  ");
-    let cfg = FilesSourceConfig {
-        glob: format!("{}/*.txt", dir.path().display()),
-        id_from: "stem".to_string(),
-        encoding: "utf-8".to_string(),
-        on_empty: OnEmpty::Skip,
-        derive: None,
-        cache: Default::default(),
-    };
     let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
-    assert_eq!(docs.len(), 0);
-}
-
-#[test]
-fn on_empty_index_keeps_the_empty_document() {
-    // Not in the plan's Step 4 snippet, but the third enum variant deserves
-    // direct coverage at the FilesSource level too (config-layer coverage
-    // for `index` already exists in config.rs's on_empty_all_three_valid_values_parse).
-    let dir = tempfile::tempdir().unwrap();
-    write_temp(dir.path(), "a.txt", b"   \n  ");
-    let cfg = FilesSourceConfig {
-        glob: format!("{}/*.txt", dir.path().display()),
-        id_from: "stem".to_string(),
-        encoding: "utf-8".to_string(),
-        on_empty: OnEmpty::Index,
-        derive: None,
-        cache: Default::default(),
-    };
-    let docs = FilesSource::new(cfg).unwrap().iter_documents().unwrap();
-    assert_eq!(docs.len(), 1);
-    assert!(docs[0].content.trim().is_empty());
+    assert_eq!(
+        docs.len(),
+        2,
+        "{:?}",
+        docs.iter().map(|d| &d.id).collect::<Vec<_>>()
+    );
 }
