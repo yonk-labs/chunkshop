@@ -69,22 +69,26 @@ thiserror = "1"
 tracing = "0.1"
 # Task 6 (provenance): RFC3339 UTC timestamp for stamp_provenance()'s "ts"
 # field, mirroring Python's `datetime.now(timezone.utc).isoformat()`.
-# Already present transitively (sqlx's "chrono" feature, `sink` builds) —
-# declared directly here (not optional/feature-gated) so `derivers`
-# (always compiled, no feature gate — see sources/mod.rs) also builds
-# under `--no-default-features`, which pulls in no sqlx and therefore no
-# chrono otherwise. Adds no new crates in default builds (it's already in
-# Cargo.lock via sqlx); `--no-default-features` does newly compile it since
-# sqlx (and its transitive chrono) is excluded there.
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Already present transitively (sqlx's "chrono" feature, `sink` builds).
+#
+# OPTIONAL, and pulled by `source`/`media` only — the same gate
+# `sources::derivers` (its only user) now carries. It was briefly
+# unconditional so that an ungated `derivers` would build under
+# `--no-default-features`; that cost the slim build chrono + its
+# iana-time-zone/num-traits/libc tail for a module the slim build cannot
+# reach, so the module got the gate instead.
+chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 # Task 7 (DerivationCache): atomic cache-entry writes via
 # `tempfile::Builder::tempfile_in` + `.persist()` (same directory as the
 # final path, so the rename is atomic) — `raw_store/local.rs`'s `put` is a
 # direct `std::fs::write`, NOT atomic, so this deliberately does not reuse
-# that pattern. Promoted here from `[dev-dependencies]` (same version pin);
-# it remains available to test code as an ordinary dependency, so nothing
-# in the existing test suite breaks.
-tempfile = "3"
+# that pattern.
+#
+# OPTIONAL for the same reason as `chrono` above (it dragged
+# rustix/linux-raw-sys/fastrand/getrandom/bitflags into the slim tree). It
+# stays a `[dev-dependencies]` entry too — where it lived before
+# `DerivationCache` existed — so test code keeps it in every build.
+tempfile = { version = "3", optional = true }
 
 # --- Bin-only (kept always-on for diff minimality; clap + tracing-subscriber
 # are tiny relative to the heavy deps below) ---
@@ -205,6 +209,11 @@ futures = "0.3"
 # in tests/cross_port_proptest.rs (determinism, separator normalization,
 # output shape, project-id divergence).
 proptest = "1"
+# Test-only tempdirs, used well beyond the derivation cache (files.rs,
+# raw_store, image_meta, ...). Declared here as well as in the optional
+# `[dependencies]` entry above so tests compile in feature combinations
+# that don't enable `source`/`media`.
+tempfile = "3"
 
 [features]
 # Default = full feature set for backward compatibility. Existing consumers
@@ -254,7 +263,10 @@ extractor = ["dep:whatlang"]
 # Source loaders: files (glob), HTTP, S3. DB-table sources (PG/MariaDB/
 # SQLite/ClickHouse) additionally require `sink` since they reuse the
 # backend connection layer — they are gated on `all(source, sink)` in code.
-source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:tokio"]
+# `dep:chrono` / `dep:tempfile` are here (and in `media`) because
+# `sources::derivers` is gated on `any(source, media)` — provenance needs
+# chrono, the derivation cache needs tempfile, and nothing else does.
+source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:tokio", "dep:chrono", "dep:tempfile"]
 
 # The full modular sink/backend layer: PG (pgvector), MariaDB (sqlx mysql),
 # SQLite (rusqlite + sqlite-vec), ClickHouse (clickhouse + url/urlencoding).
@@ -304,4 +316,4 @@ code-aware-rust       = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-rust"
 # without embedder-hub built in should fail at config-load with a clear
 # message (F14/NN-6 convention), not a missing-symbol compile error for
 # users who only wanted image_meta.
-media = ["dep:pdf-extract", "dep:calamine", "dep:docx-rust", "dep:html2text", "dep:image", "dep:png", "dep:gif"]
+media = ["dep:pdf-extract", "dep:calamine", "dep:docx-rust", "dep:html2text", "dep:image", "dep:png", "dep:gif", "dep:chrono", "dep:tempfile"]

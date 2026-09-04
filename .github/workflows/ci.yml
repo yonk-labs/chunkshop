@@ -193,9 +193,13 @@ jobs:
             fastembed-rs-${{ runner.os }}-
 
       # The slim-build guarantee: chunkshop-rs must still compile with every
-      # optional feature off. `derivers` is compiled unconditionally (see
-      # sources/mod.rs), so this is the step that catches a deriver reaching
-      # for a feature-gated dep.
+      # optional feature off. `derivers` is gated on `any(source, media)`
+      # (see sources/mod.rs), so this step catches both a deriver reaching
+      # for a feature-gated dep AND anything outside that gate reaching into
+      # `derivers`. It does NOT catch dependency creep on its own — a slim
+      # build that compiles can still have grown crates. `cargo tree
+      # --no-default-features --locked` is the check for that; the count was
+      # 62 unique crates as of this comment.
       - name: cargo build --no-default-features (slim-build guarantee)
         working-directory: rust
         run: cargo build --workspace --no-default-features --locked
