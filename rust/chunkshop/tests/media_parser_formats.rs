@@ -193,6 +193,41 @@ fn pdf_with_extractable_text_round_trips() {
     );
 }
 
+/// GAP-004: `pdf-extract` 0.12 has roughly a hundred `unwrap()`/panic
+/// sites, and a malformed PDF really does reach one — this fixture is
+/// `hello.pdf` (the fixture above) with a single byte flipped, which
+/// reliably panics `pdf_extract::extract_text_by_pages` at
+/// `lib.rs:2408:74` on a missing `MediaBox` (verified against pdf-extract
+/// 0.12.0 directly before this fixture was committed). Without a
+/// `catch_unwind` boundary this aborts the whole ingest run instead of
+/// producing a named, per-file error.
+#[cfg(feature = "media")]
+#[test]
+fn a_malformed_pdf_that_panics_pdf_extract_is_a_named_error_not_a_process_abort() {
+    const MALFORMED_PDF: &[u8] = include_bytes!("fixtures/pdf_extract_panics.pdf");
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("evil.pdf");
+    std::fs::write(&p, MALFORMED_PDF).unwrap();
+
+    let cfg = FilesSourceConfig {
+        glob: format!("{}/*.pdf", dir.path().display()),
+        id_from: "stem".to_string(),
+        encoding: "utf-8".to_string(),
+        on_empty: OnEmpty::Error,
+        derive: None,
+        cache: Default::default(),
+    };
+    let err = FilesSource::new(cfg)
+        .unwrap()
+        .iter_documents()
+        .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("evil.pdf"),
+        "error must name the offending file: {msg}"
+    );
+}
+
 #[cfg(feature = "media")]
 #[test]
 fn xlsx_with_a_cell_round_trips() {
