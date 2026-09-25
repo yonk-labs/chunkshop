@@ -391,7 +391,7 @@ impl RossDeriver {
         metadata.insert(
             "ross_metadata".into(),
             match entry.get("metadata") {
-                Some(v @ Value::Object(_)) => v.clone(),
+                Some(Value::Object(obj)) => strip_filesystem_exif_keys(obj),
                 _ => Value::Object(Map::new()),
             },
         );
@@ -821,6 +821,40 @@ fn nullable(s: &str) -> Value {
 
 fn owned(v: Option<&Value>) -> Value {
     v.cloned().unwrap_or(Value::Null)
+}
+
+/// GAP-003: drop filesystem-derived EXIF keys from `ross_metadata` before
+/// it is ever mapped or cached.
+///
+/// ross's `metadata` block is exiftool -j output (minus SourceFile/
+/// ExifTool, already excluded upstream in `../ross/src/media.rs`), so it
+/// still carries `Directory`, `FileModifyDate`, `FileAccessDate`,
+/// `FileInodeChangeDate` and `FilePermissions` — every one a function of
+/// WHERE the file sits and WHEN it was last touched, never of its bytes.
+/// `cache_key_extra` keys this deriver on the file's BASENAME only (see its
+/// doc comment), so two byte-identical files under different directories
+/// deliberately share one cache entry — and without this filter, whichever
+/// file derived first would leak its `Directory` and mtimes into every
+/// other file sharing that entry, forever (the same bug class as the
+/// already-fixed `image_meta` cross-path bleed).
+///
+/// Called from the ONLY place `ross_metadata` is constructed
+/// (`build_result`), so a fresh derivation and a cache hit are provably
+/// identical: the cache stores exactly what this function returns, never
+/// the raw exiftool payload.
+///
+/// `SourceFile` is stripped defensively even though ross's own output
+/// already excludes it — belt and suspenders against a future ross build
+/// that stops excluding it upstream.
+fn strip_filesystem_exif_keys(obj: &Map<String, Value>) -> Value {
+    let cleaned: Map<String, Value> = obj
+        .iter()
+        .filter(|(k, _)| {
+            !(k.starts_with("File") || k.as_str() == "Directory" || k.as_str() == "SourceFile")
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    Value::Object(cleaned)
 }
 
 fn kind_of(v: &Value) -> &'static str {
@@ -1648,6 +1682,107 @@ mod tests {
         for banned in ["duration_ms", "mtime", "sha256", "bytes", "1788304249"] {
             assert!(!blob.contains(banned), "{banned} leaked into metadata: {blob}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ross_metadata_strips_filesystem_and_path_keys() {
+        // GAP-003: `cache_key_extra` keys this deriver on the basename
+        // only, so two byte-identical files under different directories
+        // share one cache entry — but ross's `metadata` block is exiftool
+        // output and carries `Directory`/`File*` fields that describe
+        // WHERE and WHEN the file sits on disk, not its bytes. Left
+        // unfiltered, whichever file derived first leaks its directory and
+        // mtimes into every other file sharing that cache entry forever.
+        let r = mapped(json!({
+            "description": "a cat",
+            "metadata": {
+                "Directory": "/one/two",
+                "SourceFile": "/one/two/x.png",
+                "FileModifyDate": "2026:01:01 00:00:00",
+                "FileAccessDate": "2026:01:01 00:00:00",
+                "FileInodeChangeDate": "2026:01:01 00:00:00",
+                "FilePermissions": "-rw-r--r--",
+                "width": 8,
+                "height": 8,
+            },
+        }));
+        let leaked: Vec<&String> = r.metadata["ross_metadata"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|k| k.starts_with("File") || k.as_str() == "Directory" || k.as_str() == "SourceFile")
+            .collect();
+        assert!(leaked.is_empty(), "filesystem keys survived: {leaked:?}");
+        assert_eq!(r.metadata["ross_metadata"]["width"], json!(8));
+        assert_eq!(r.metadata["ross_metadata"]["height"], json!(8));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn same_basename_different_directories_share_one_cache_entry_without_leaking_exif() {
+        // The end-to-end shape of GAP-003: two byte-identical files named
+        // `x.png` under different directories must derive to the exact
+        // same cached payload, and that payload must carry neither file's
+        // `Directory`/mtime fields.
+        use super::super::cache::{cached_derive, DerivationCache};
+
+        let dir = tempfile::tempdir().unwrap();
+        let a_dir = dir.path().join("a");
+        let b_dir = dir.path().join("b");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let bytes = b"identical png bytes";
+        std::fs::write(a_dir.join("x.png"), bytes).unwrap();
+        std::fs::write(b_dir.join("x.png"), bytes).unwrap();
+        let content_hash = {
+            let mut h = Sha256::new();
+            h.update(bytes);
+            format!("{:x}", h.finalize())
+        };
+
+        let body = |tag: &str| {
+            format!(
+                r#"printf '{{"type":"image","description":"a knight","metadata":{{"Directory":"/{tag}","FileModifyDate":"2026:01:01","width":8}}}}'"#
+            )
+        };
+        let cache = DerivationCache::new(Some(dir.path().join("cache")));
+
+        let a = deriver(&stub(&dir.path().join("bin_a"), &body("one")));
+        let hash_of = |d: &RossDeriver| {
+            let (r, mo, v, params) = d.cache_key_parts();
+            super::super::provenance::derivation_hash(&r, &mo, &v, d.engine(), &params)
+        };
+        let (ra, hit_a) = cached_derive(
+            Some(&cache),
+            &content_hash,
+            &hash_of(&a),
+            a.cache_key_extra(&a_dir.join("x.png")).as_deref(),
+            || a.derive(&a_dir.join("x.png")),
+        )
+        .unwrap();
+        assert!(!hit_a);
+
+        // A different stub (would emit a DIFFERENT Directory if it ever
+        // ran) proves the second lookup is genuinely served from cache,
+        // not from a second, coincidentally-identical derivation.
+        let b = deriver(&stub(&dir.path().join("bin_b"), &body("two")));
+        let (rb, hit_b) = cached_derive(
+            Some(&cache),
+            &content_hash,
+            &hash_of(&b),
+            b.cache_key_extra(&b_dir.join("x.png")).as_deref(),
+            || b.derive(&b_dir.join("x.png")),
+        )
+        .unwrap();
+        assert!(hit_b, "same basename + same content must be a cache hit");
+        assert_eq!(ra.metadata, rb.metadata, "cache hit must be byte-identical");
+
+        let obj = ra.metadata["ross_metadata"].as_object().unwrap();
+        assert!(
+            !obj.contains_key("Directory") && !obj.contains_key("FileModifyDate"),
+            "path/mtime keys leaked into a shared cache entry: {obj:?}"
+        );
     }
 
     #[cfg(unix)]
