@@ -265,6 +265,14 @@ impl DerivationCache {
 /// arises from chunkshop's own writes) rather than "fixed" by adding a
 /// general-recursion dependency for a case that can't occur from this
 /// cache's own output.
+/// `true` iff `s` is exactly `len` lowercase hex digits. Mirrors Python's
+/// `re.fullmatch(r'[0-9a-f]{2}/[0-9a-f]{64}\.json', ...)` (GAP-002): the
+/// walk below is a directory-listing scan, not a regex over a joined path,
+/// but this is the same character class applied per-segment.
+fn is_lowercase_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 fn walkdir_json_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(root)? {
@@ -272,11 +280,35 @@ fn walkdir_json_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
         if !sub.is_dir() {
             continue;
         }
+        // GAP-002: only descend into directories shaped like the cache's
+        // own `key[..2]` prefix. A `root` that happens to point at some
+        // unrelated real directory (a mis-set `--cache-dir`) must not have
+        // ITS subdirectories' `*.json` files treated as cache entries.
+        let Some(dir_name) = sub.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !is_lowercase_hex(dir_name, 2) {
+            continue;
+        }
         for inner in std::fs::read_dir(&sub)? {
             let inner_path = inner?.path();
-            if inner_path.extension().and_then(|e| e.to_str()) == Some("json") {
-                files.push(inner_path);
+            if !inner_path.is_file() {
+                continue;
             }
+            if inner_path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            // The filename (sans `.json`) must be the full 64-hex-char
+            // sha256 digest AND start with the parent directory's 2 hex
+            // chars — exactly `path_for`'s own layout, never a foreign
+            // same-shaped-by-coincidence file.
+            let Some(stem) = inner_path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if !is_lowercase_hex(stem, 64) || !stem.starts_with(dir_name) {
+                continue;
+            }
+            files.push(inner_path);
         }
     }
     Ok(files)
@@ -377,6 +409,49 @@ mod tests {
         c.put("c2", "d1", &ParseResult::new("y"), None).unwrap();
         assert_eq!(c.purge().unwrap(), 2);
         assert!(c.get("c1", "d1", None).is_none());
+    }
+
+    /// GAP-002: `purge()`/`stats()` must only ever touch files shaped like
+    /// the cache's own layout (`root/<2 hex>/<64 hex>.json`), never any
+    /// `*.json` a `root` happens to contain. A mis-set `--cache-dir`
+    /// pointed at a real directory (e.g. a repo checkout) must not have its
+    /// unrelated `package.json` or a nested `foo.json` deleted.
+    #[test]
+    fn purge_ignores_non_cache_shaped_json_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("real entry"), None)
+            .unwrap();
+
+        // A foreign top-level JSON file — never matched even by the old
+        // walk (it isn't inside a subdirectory), included here so the fix
+        // stays provably correct on this case too.
+        std::fs::write(tmp.path().join("package.json"), b"{}").unwrap();
+
+        // The actual gap: a JSON file one directory level deep, exactly the
+        // shape the old two-level walk accepted unconditionally, but whose
+        // directory name isn't 2 hex chars and whose filename isn't a
+        // 64-char sha256 hex digest.
+        std::fs::create_dir_all(tmp.path().join("nested")).unwrap();
+        std::fs::write(tmp.path().join("nested").join("foo.json"), b"{}").unwrap();
+
+        assert_eq!(
+            c.purge().unwrap(),
+            1,
+            "purge must remove exactly the one real cache entry"
+        );
+        assert!(
+            tmp.path().join("package.json").exists(),
+            "foreign top-level JSON must survive purge"
+        );
+        assert!(
+            tmp.path().join("nested").join("foo.json").exists(),
+            "foreign nested JSON must survive purge"
+        );
+        assert!(
+            c.get("c1", "d1", None).is_none(),
+            "the real entry must actually be gone"
+        );
     }
 
     #[test]
