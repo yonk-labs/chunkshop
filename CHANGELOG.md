@@ -104,6 +104,18 @@
   failed on its first derived document even though the derivation itself
   had already succeeded. `put()` now catches `OSError`, logs one warning per
   cache instance, and lets the already-computed result through uncached.
+- **`RossDeriver`'s `ross_metadata` no longer carries path- or time-dependent
+  exiftool fields.** `cache_key_extra` for rung 5 is the file's basename
+  only, so a byte-identical same-basename file in a different directory is
+  a deliberate cache hit — but the cached payload's `ross_metadata.exif`
+  included exiftool's filesystem-derived keys (`Directory`,
+  `FileModifyDate`, `FileAccessDate`, `FileInodeChangeDate`,
+  `FilePermissions`, `FileName`, `SourceFile`), which are per-path, not
+  per-(content, basename). The second file's cache hit would silently
+  inherit the first file's directory and mtimes. `_build_result` now drops
+  those keys before the result ever reaches the cache, in both ports.
+  `CACHE_SCHEMA_VERSION` is not bumped — rung 5 has not shipped, so there
+  are no existing entries carrying the poisoned keys to invalidate.
 - **Rust: `files` source config now rejects unknown fields instead of silently
   dropping them.** `FilesSourceConfig` gained `#[serde(deny_unknown_fields)]`.
   A YAML carrying `derive:`, `on_empty:` or `cache:` (Python-only for now) had

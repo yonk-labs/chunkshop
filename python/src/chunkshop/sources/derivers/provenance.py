@@ -26,6 +26,12 @@ from chunkshop.sources.parsers.result import ParseResult
 # `ClipTagsDeriver`, the first image's CLIP tags). Any pre-existing entry
 # may therefore hold poisoned data attributed to the wrong document, so
 # old entries must not merely be re-shaped, they must be unreachable.
+#
+# GAP-003 (2026-09) — stripping exiftool's `Directory`/`File*`/`SourceFile`
+# keys out of `RossDeriver._build_result`'s `ross_metadata.exif` is ALSO a
+# NON-bump, same reasoning as `engine` above: rung 5 (`ross`) has not
+# shipped either (feat/rust-media-parity is unmerged), so there are zero
+# `ross` cache entries in the wild carrying the poisoned keys to invalidate.
 CACHE_SCHEMA_VERSION = "2"
 
 

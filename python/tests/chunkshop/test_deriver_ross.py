@@ -529,6 +529,96 @@ def test_ross_model_never_claims_the_llm_when_the_llm_failed(tmp_path):
     assert md["ross_description"] == "a knight"
 
 
+def test_ross_metadata_strips_filesystem_and_directory_exif_keys(tmp_path):
+    """GAP-003: `cache_key_extra` is the BASENAME only (see its docstring),
+    so a byte-identical same-basename file in a different directory is a
+    deliberate cache HIT. exiftool's filesystem-derived exif fields
+    (`Directory`, and every `File*`-prefixed key — `FileModifyDate`,
+    `FileAccessDate`, `FileInodeChangeDate`, `FilePermissions`, `FileName`,
+    plus `SourceFile`) are per-PATH, not per-(content, basename) — so if
+    they ever reached the cached payload, the second file's cache-hit row
+    would silently inherit the FIRST file's directory and timestamps.
+    `_build_result` must strip them before they ever reach the cache."""
+    d = RossDeriver(binary=_stub_ross(tmp_path, "exit 0"))
+    md = d._build_result(
+        {
+            "type": "image",
+            "description": "a knight",
+            "metadata": {
+                "width": 10,
+                "height": 10,
+                "exif": {
+                    "Directory": "/some/dir",
+                    "FileModifyDate": "2024:01:01 00:00:00+00:00",
+                    "FileAccessDate": "2024:01:01 00:00:00+00:00",
+                    "FileInodeChangeDate": "2024:01:01 00:00:00+00:00",
+                    "FilePermissions": "-rw-r--r--",
+                    "FileName": "x.png",
+                    "SourceFile": "/some/dir/x.png",
+                    "ImageWidth": 10,
+                    "ImageHeight": 10,
+                },
+            },
+        }
+    ).metadata
+    exif = md["ross_metadata"]["exif"]
+    for key in exif:
+        assert not key.startswith("File"), key
+        assert key != "Directory", key
+        assert key != "SourceFile", key
+    assert exif == {"ImageWidth": 10, "ImageHeight": 10}
+    assert md["ross_metadata"]["width"] == 10, "non-exif metadata keys are untouched"
+
+
+def test_same_basename_different_dirs_share_a_clean_cache_entry(tmp_path):
+    """The 'rebuilt from cache' half of GAP-003. The stub reports a REAL
+    per-invocation `Directory` (exactly like exiftool would), so if the
+    strip in `_build_result` didn't run before `put()`, the second file's
+    cache-hit payload would carry the first file's directory."""
+    from chunkshop.sources.derivers.cache import DerivationCache, cached_derive
+    from chunkshop.sources.parsers.base import cache_key_extra_for
+
+    binary = _stub_ross(
+        tmp_path / "bin",
+        'dir=$(dirname "$1"); base=$(basename "$1"); '
+        'printf \'{"type":"image","mime":"image/png","description":"a knight",'
+        '"tags":[],"metadata":{"width":10,"height":10,"exif":{'
+        '"Directory":"%s","FileModifyDate":"2024:01:01","FileAccessDate":"2024:01:01",'
+        '"FileInodeChangeDate":"2024:01:01","FilePermissions":"-rw-r--r--",'
+        '"FileName":"%s","SourceFile":"%s","ImageWidth":10,"ImageHeight":10}}}\' '
+        '"$dir" "$base" "$1"',
+    )
+    d = RossDeriver(binary=binary)
+
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    a = dir_a / "x.png"
+    b = dir_b / "x.png"
+    a.write_bytes(b"same-bytes")
+    b.write_bytes(b"same-bytes")
+
+    cache = DerivationCache(root=tmp_path / "cache")
+    content_hash = hashlib.sha256(a.read_bytes()).hexdigest()
+
+    ra, hit_a = cached_derive(
+        cache, content_hash, d.derivation_hash(),
+        lambda: d.derive(a), cache_key_extra_for(d, a),
+    )
+    rb, hit_b = cached_derive(
+        cache, content_hash, d.derivation_hash(),
+        lambda: d.derive(b), cache_key_extra_for(d, b),
+    )
+    assert hit_a is False
+    assert hit_b is True, "same basename + same content must share the cache entry"
+    assert ra.metadata == rb.metadata, "the cache-hit payload must be IDENTICAL"
+    exif = rb.metadata["ross_metadata"]["exif"]
+    for key in exif:
+        assert not key.startswith("File"), key
+        assert key != "Directory", key
+
+
 # --- cross-port -----------------------------------------------------------
 
 

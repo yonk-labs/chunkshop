@@ -446,6 +446,25 @@ class RossDeriver:
           * `duration_ms` — wall-clock timing. Storing it would make a
             cache HIT differ from a fresh derivation on every row.
         """
+        ross_metadata = dict(entry.get("metadata") or {})
+        exif = ross_metadata.get("exif")
+        if isinstance(exif, dict):
+            # `cache_key_extra` is the BASENAME only (see its docstring), so
+            # a byte-identical same-basename file in a DIFFERENT directory
+            # is a deliberate cache hit. exiftool's filesystem-derived exif
+            # fields — `Directory`, `SourceFile`, and every `File*`-prefixed
+            # key (`FileModifyDate`, `FileAccessDate`, `FileInodeChangeDate`,
+            # `FilePermissions`, `FileName`, ...) — are per-PATH, not
+            # per-(content, basename), so a cache hit would otherwise
+            # silently serve the FIRST file's directory and mtimes to the
+            # second. Stripped here, before this ever reaches the cache, so
+            # a fresh derivation and one rebuilt from a cache hit are
+            # equally clean — the cache stores exactly what this returns.
+            ross_metadata["exif"] = {
+                k: v for k, v in exif.items()
+                if k != "Directory" and k != "SourceFile" and not k.startswith("File")
+            }
+
         description = _as_str(entry.get("description"))
         summary = _as_str(entry.get("summary"))
         tags = [t for t in (entry.get("tags") or []) if isinstance(t, str)]
@@ -493,7 +512,7 @@ class RossDeriver:
             # `llm_error` itself is carried in `ross_warnings`, so a null
             # here is always explicable from the same row.
             "ross_model": entry.get("model"),
-            "ross_metadata": entry.get("metadata") or {},
+            "ross_metadata": ross_metadata,
             "ross_warnings": warnings,
         }
         return stamp_provenance(
