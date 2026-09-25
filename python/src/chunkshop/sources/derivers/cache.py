@@ -3,11 +3,38 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 from chunkshop.sources.parsers.result import ParseResult
+
+#: The ONLY shape a real cache entry can have: `<2 hex>/<64 hex>.json`,
+#: relative to root. Anything else sharing the root — a stray
+#: `package.json`, a deeply/shallowly nested `.json`, or a `.json` in a
+#: `<2 hex>` directory that doesn't match its own filename prefix — is not
+#: chunkshop's and must survive both `stats()` and `purge()`.
+_ENTRY_RE = re.compile(r"^[0-9a-f]{2}/[0-9a-f]{64}\.json$")
+
+
+def _iter_entries(root: Path) -> Iterator[Path]:
+    for f in root.glob("*/*.json"):
+        rel = f.relative_to(root).as_posix()
+        if _ENTRY_RE.match(rel) and f.parent.name == f.name[:2]:
+            yield f
+
+
+def _iter_orphan_tmp(root: Path) -> Iterator[Path]:
+    """`put()`'s atomic write (`mkstemp` + `os.replace`) leaves a `*.tmp`
+    sibling in the entry's own `<2 hex>/` subdirectory if a crash lands
+    between the two. These are chunkshop's own leftovers — never counted
+    as entries (they never got renamed into place) but safe for `purge()`
+    to sweep.
+    """
+    for f in root.glob("*/*.tmp"):
+        if re.fullmatch(r"[0-9a-f]{2}", f.parent.name):
+            yield f
 
 
 def default_cache_root() -> Path:
@@ -98,9 +125,10 @@ class DerivationCache:
     def stats(self) -> tuple[int, int]:
         """Return ``(entry_count, total_bytes)`` for the entries under ``root``.
 
-        Walks exactly the same set ``purge()`` deletes — ``*.json`` under the
-        root — so ``chunkshop cache info``'s count is a truthful preview of
-        what a purge will remove, and unrelated files sharing the root are
+        Walks exactly the same set ``purge()`` deletes — files matching the
+        cache's own layout, ``<2 hex>/<64 hex>.json`` — so ``chunkshop cache
+        info``'s count is a truthful preview of what a purge will remove,
+        and unrelated files sharing the root (at any depth, any name) are
         neither counted nor deleted. A missing root walks to nothing and
         reports ``(0, 0)`` rather than raising; an entry that vanishes
         mid-walk still counts (purge would have counted it too) but
@@ -108,7 +136,7 @@ class DerivationCache:
         """
         count = 0
         total = 0
-        for f in self.root.rglob("*.json"):
+        for f in _iter_entries(self.root):
             count += 1
             try:
                 total += f.stat().st_size
@@ -118,9 +146,13 @@ class DerivationCache:
 
     def purge(self) -> int:
         count = 0
-        for f in self.root.rglob("*.json"):
+        for f in _iter_entries(self.root):
             f.unlink(missing_ok=True)
             count += 1
+        # Not counted in the return value (they were never entries), but
+        # chunkshop's own — sweep the crash leftovers while we're here.
+        for f in _iter_orphan_tmp(self.root):
+            f.unlink(missing_ok=True)
         return count
 
 

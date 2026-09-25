@@ -403,9 +403,13 @@ default root (`CHUNKSHOP_CACHE_DIR` > `XDG_CACHE_HOME` > `~/.cache`, then
 `chunkshop/derived`). The resolved root is printed **before** the purge
 confirmation, so it is never a surprise which directory is being emptied.
 
-Purge removes only chunkshop's own `*.json` entries; unrelated files sharing
-the root are left alone. A root that does not exist reports zero and exits 0 —
-purging a cache you never built is not an error.
+Purge removes only entries matching chunkshop's own cache layout —
+`<2 hex>/<64 hex>.json` under the root — plus any orphaned `*.tmp` leftovers
+from a crashed atomic write in those same subdirectories. Unrelated files
+sharing the root, at any depth and including any other `*.json` (a
+`package.json`, a differently-shaped file dropped in a `<2 hex>`-named
+directory), are left alone. A root that does not exist reports zero and
+exits 0 — purging a cache you never built is not an error.
 
 > **Purging is a decision, not housekeeping.** Rung-5 derivations are
 > non-deterministic, so the cache is what keeps a corpus stable. A purge

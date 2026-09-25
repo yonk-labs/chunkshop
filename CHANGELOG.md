@@ -88,6 +88,15 @@
 
 ### Fixed
 
+- **`chunkshop cache purge`/`cache info` no longer touch files outside the
+  derivation cache's own layout.** Both used `root.rglob("*.json")`, which
+  matched ANY `.json` file at ANY depth under the cache root — so a
+  mis-configured `source.cache.root` (pointed at a project checkout, say)
+  could `purge -y` files like `package.json`. Both now walk exactly
+  `<root>/<2 hex>/<64 hex>.json`, the cache's real shape, and `purge` also
+  sweeps orphaned `*.tmp` leftovers from a crashed atomic write in those same
+  subdirectories (not counted as entries). Python only; `cache.rs`'s Rust
+  equivalent is fixed in the same release by the parallel Rust effort.
 - **Rust: `files` source config now rejects unknown fields instead of silently
   dropping them.** `FilesSourceConfig` gained `#[serde(deny_unknown_fields)]`.
   A YAML carrying `derive:`, `on_empty:` or `cache:` (Python-only for now) had

@@ -712,10 +712,11 @@ def cache_purge(config_path, yes: bool):
     resolved root is printed BEFORE the prompt so it is never a surprise
     which directory is about to be emptied.
 
-    Only chunkshop's own `*.json` entries are removed — unrelated files
-    sharing the root are left alone, and the directories stay. A cache root
-    that does not exist reports zero and exits 0; there is nothing wrong
-    with purging a cache you never built.
+    Only entries matching chunkshop's own cache layout (`<2 hex>/<64 hex>.json`)
+    are removed — unrelated files sharing the root, at any depth and
+    including any other `*.json`, are left alone, and the directories stay.
+    A cache root that does not exist reports zero and exits 0; there is
+    nothing wrong with purging a cache you never built.
     """
     cache, root, note = _cache_for(config_path)
     if note:

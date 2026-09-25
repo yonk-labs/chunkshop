@@ -49,6 +49,56 @@ def test_purge_empties_the_cache(tmp_path):
     assert cache.get("c1", "d1") is None
 
 
+def test_purge_and_stats_ignore_non_entry_shaped_files(tmp_path):
+    """GAP-002: `rglob('*.json')` matched ANY .json anywhere under root,
+    so a mis-set cache root (e.g. pointed at a project checkout) would
+    delete files like `package.json` on `purge -y`. Only the real cache
+    layout — `<root>/<2 hex>/<64 hex>.json` — is chunkshop's; everything
+    else sharing the root, at any depth, must survive both stats() and
+    purge()."""
+    cache = DerivationCache(root=tmp_path)
+    cache.put("c1", "d1", ParseResult(text="real entry"))
+
+    foreign_top = tmp_path / "package.json"
+    foreign_top.write_text("{}")
+    nested = tmp_path / "nested" / "foo.json"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("{}")
+    # Same directory depth as a real entry, but not hash-shaped.
+    wrong_shape = tmp_path / "ab" / "not-a-hash.json"
+    wrong_shape.parent.mkdir(parents=True, exist_ok=True)
+    wrong_shape.write_text("{}")
+
+    count, _total = cache.stats()
+    assert count == 1
+
+    removed = cache.purge()
+    assert removed == 1
+    assert cache.get("c1", "d1") is None
+    assert foreign_top.exists()
+    assert nested.exists()
+    assert wrong_shape.exists()
+
+
+def test_purge_sweeps_orphaned_tmp_files_in_entry_shaped_dirs(tmp_path):
+    """A crash between `mkstemp` and `os.replace` in `put()` leaves a
+    `*.tmp` sibling in the same `<2 hex>/` subdirectory as a real entry.
+    `purge()` should sweep those too, without counting them as entries."""
+    cache = DerivationCache(root=tmp_path)
+    cache.put("c1", "d1", ParseResult(text="real entry"))
+
+    entry_dir = next((tmp_path).glob("*/*.json")).parent
+    orphan_tmp = entry_dir / "tmpabc123.tmp"
+    orphan_tmp.write_text("half-written")
+
+    count, _total = cache.stats()
+    assert count == 1, "orphan .tmp must not be counted as an entry"
+
+    removed = cache.purge()
+    assert removed == 1
+    assert not orphan_tmp.exists()
+
+
 def test_corrupt_entry_is_treated_as_a_miss(tmp_path):
     cache = DerivationCache(root=tmp_path)
     cache.put("c1", "d1", ParseResult(text="x"))
