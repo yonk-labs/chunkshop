@@ -131,3 +131,68 @@ async fn missing_cargo_feature_leaves_the_target_table_intact() {
         "target table was dropped by a cell that could never have run"
     );
 }
+
+/// GAP-001: a source failure that can ONLY surface from `iter_documents()`
+/// itself — not `preflight_derive()`, which sees nothing wrong with this
+/// config — must not have already dropped the target table either. F5's
+/// scanned-PDF "empty derivation is loud" error is exactly this shape:
+/// `derive:` routing is unambiguous and every feature it needs is built, so
+/// preflight passes clean, and the failure only surfaces once the source is
+/// actually drained.
+#[tokio::test]
+#[cfg(feature = "media")]
+async fn scanned_pdf_derivation_failure_leaves_the_target_table_intact() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("t.db");
+    seed(&db, "docs_table");
+    let env_var = format!("CHUNKSHOP_PREFLIGHT_PDF_{}", std::process::id());
+    std::env::set_var(&env_var, db.to_str().unwrap());
+
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("scanned.pdf"),
+        dir.path().join("scanned.pdf"),
+    )
+    .unwrap();
+
+    let cfg_path = dir.path().join("cell.yaml");
+    std::fs::write(
+        &cfg_path,
+        format!(
+            r#"cell_name: preflight_probe_pdf
+source:
+  type: files
+  glob: "{glob}/*.pdf"
+  id_from: stem
+  on_empty: error
+chunker: {{ type: fixed_overlap, window_words: 512, step_words: 512 }}
+embedder: {{ type: fastembed, model_name: Xenova/bge-base-en-v1.5-int8, dim: 768 }}
+target:
+  type: sqlite
+  dsn_env: {dsn_env}
+  database: ignored
+  table: docs_table
+  mode: overwrite
+  hnsw: false
+"#,
+            glob = dir.path().display(),
+            dsn_env = env_var,
+        ),
+    )
+    .unwrap();
+
+    let cfg = load_config(&cfg_path).expect("config itself is well-formed");
+    let err = format!("{:#}", run_cell(cfg).await.unwrap_err());
+
+    assert!(
+        err.contains("scanned.pdf") && err.contains("no text layer"),
+        "must fail on the F5 empty-derivation error, not something else: {err}"
+    );
+    assert_eq!(
+        row_count(&db, "docs_table"),
+        Some(1),
+        "target table was dropped before the source failure surfaced"
+    );
+}

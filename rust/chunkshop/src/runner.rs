@@ -82,11 +82,20 @@ pub async fn run_cell(mut cfg: CellConfig) -> Result<CellResult> {
     let sink =
         crate::sinks::load_sink(&cfg.target, backend, embedder.dim()).context("load sink")?;
 
+    // GAP-001: drain the source BEFORE the sink's DROP+CREATE. Some source
+    // failures (e.g. spec defect F5's "empty derivation is loud" scanned-PDF
+    // error) can only be observed here, at `iter_documents()`, not from
+    // `preflight_derive()` above — which only catches errors knowable from
+    // config alone (ambiguous `derive:` routing, a missing Cargo feature).
+    // Running `create_table()` first meant a `mode: overwrite` cell that hit
+    // one of these still dropped and emptied its live target table before
+    // ever reporting the error. `iter_documents()` already materializes a
+    // `Vec`, so nothing downstream needs it to stream.
+    let docs = source.iter_documents().await?;
+
     info!("creating target table");
     use crate::sinks::Sink;
     sink.create_table().await?;
-
-    let docs = source.iter_documents().await?;
     let limit = cfg.runtime.doc_limit.unwrap_or(usize::MAX);
     let heartbeat = cfg.runtime.heartbeat_every.unwrap_or(25);
 
