@@ -17,6 +17,8 @@
 //! test-for-test, on the byte-identical `scanned.pdf` / `table_only.docx` /
 //! `blank.xlsx` fixtures.
 
+#![cfg(feature = "media")]
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
