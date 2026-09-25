@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional
 
 from chunkshop.sources.parsers.result import ParseResult
+
+logger = logging.getLogger(__name__)
 
 #: The ONLY shape a real cache entry can have: `<2 hex>/<64 hex>.json`,
 #: relative to root. Anything else sharing the root — a stray
@@ -72,6 +75,9 @@ class DerivationCache:
 
     def __init__(self, root: Optional[Path] = None):
         self.root = Path(root) if root is not None else default_cache_root()
+        # Set on the first `put()` failure so a read-only root or a full
+        # disk logs exactly ONE warning per cell run, not once per document.
+        self._put_warned = False
 
     def _path(
         self,
@@ -109,18 +115,34 @@ class DerivationCache:
         result: ParseResult,
         extra: Optional[str] = None,
     ) -> None:
+        """Best-effort. A read-only root, a full disk, or any other OSError
+        while writing the entry is NOT fatal — the derivation itself already
+        succeeded and `compute()`'s result is what the caller gets back
+        either way (see `cached_derive`). Logs one warning per cache
+        instance rather than aborting the run, so a container/systemd host
+        with no writable $HOME still ingests, just without memoisation.
+        """
         path = self._path(content_hash, derivation_hash, extra)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps({"text": result.text, "metadata": result.metadata})
-        # Atomic write so a crash mid-write cannot leave a half entry.
-        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(payload)
-            os.replace(tmp, path)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps({"text": result.text, "metadata": result.metadata})
+            # Atomic write so a crash mid-write cannot leave a half entry.
+            fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(payload)
+                os.replace(tmp, path)
+            except BaseException:
+                Path(tmp).unlink(missing_ok=True)
+                raise
+        except OSError as exc:
+            if not self._put_warned:
+                logger.warning(
+                    "chunkshop derivation cache: could not write to %s (%s) "
+                    "— continuing without caching for this run.",
+                    self.root, exc,
+                )
+                self._put_warned = True
 
     def stats(self) -> tuple[int, int]:
         """Return ``(entry_count, total_bytes)`` for the entries under ``root``.

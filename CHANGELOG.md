@@ -97,6 +97,13 @@
   sweeps orphaned `*.tmp` leftovers from a crashed atomic write in those same
   subdirectories (not counted as entries). Python only; `cache.rs`'s Rust
   equivalent is fixed in the same release by the parallel Rust effort.
+- **A derivation-cache write failure (read-only `$HOME`, full disk) no
+  longer aborts the run.** `DerivationCache.put()` propagated any `OSError`
+  from `mkdir`/`mkstemp`/`os.replace` straight out of `cached_derive`, so a
+  media cell in a container or under systemd with no writable cache root
+  failed on its first derived document even though the derivation itself
+  had already succeeded. `put()` now catches `OSError`, logs one warning per
+  cache instance, and lets the already-computed result through uncached.
 - **Rust: `files` source config now rejects unknown fields instead of silently
   dropping them.** `FilesSourceConfig` gained `#[serde(deny_unknown_fields)]`.
   A YAML carrying `derive:`, `on_empty:` or `cache:` (Python-only for now) had

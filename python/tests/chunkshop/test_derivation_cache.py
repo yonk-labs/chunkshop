@@ -99,6 +99,36 @@ def test_purge_sweeps_orphaned_tmp_files_in_entry_shaped_dirs(tmp_path):
     assert not orphan_tmp.exists()
 
 
+def test_put_failure_is_non_fatal_and_warns_once(tmp_path, caplog):
+    """GAP-007: an unwritable cache root must not abort the run — `put()`
+    should log one warning and let the (already-computed) result through
+    uncached, not raise."""
+    root = tmp_path / "cache"
+    root.mkdir()
+    root.chmod(0o500)  # read + execute, no write: mkdir of a subdir fails
+    try:
+        cache = DerivationCache(root=root)
+        with caplog.at_level("WARNING"):
+            r1, hit1 = cached_derive(
+                cache, "c1", "d1", lambda: ParseResult(text="computed-1")
+            )
+            r2, hit2 = cached_derive(
+                cache, "c1", "d1", lambda: ParseResult(text="computed-2")
+            )
+        assert r1.text == "computed-1"
+        assert hit1 is False
+        # Every call is a miss forever — nothing was ever written.
+        assert r2.text == "computed-2"
+        assert hit2 is False
+        warnings = [
+            rec for rec in caplog.records
+            if rec.levelname == "WARNING" and "cache" in rec.getMessage().lower()
+        ]
+        assert len(warnings) == 1, f"expected exactly one warning, got {warnings}"
+    finally:
+        root.chmod(0o700)  # let tmp_path cleanup remove it
+
+
 def test_corrupt_entry_is_treated_as_a_miss(tmp_path):
     cache = DerivationCache(root=tmp_path)
     cache.put("c1", "d1", ParseResult(text="x"))
