@@ -147,12 +147,21 @@ pub fn relative_key_path(
 /// sharing behaviour they had before.
 pub struct DerivationCache {
     root: PathBuf,
+    /// GAP-007: a cache write failure (e.g. a read-only cache root) must
+    /// not abort the run — but a read-only root fails EVERY `put()`, and
+    /// warning on every single document would flood the log for the whole
+    /// ingest. This flips true on the first failed `put()` and gates every
+    /// subsequent one, so exactly one warning is emitted per
+    /// `DerivationCache` instance (one per `FilesSource`, i.e. one per
+    /// cell) no matter how many documents fail to cache after it.
+    put_failure_warned: std::sync::atomic::AtomicBool,
 }
 
 impl DerivationCache {
     pub fn new(root: Option<PathBuf>) -> Self {
         Self {
             root: root.unwrap_or_else(default_cache_root),
+            put_failure_warned: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -251,6 +260,14 @@ impl DerivationCache {
     }
 }
 
+/// `true` iff `s` is exactly `len` lowercase hex digits. Mirrors Python's
+/// `re.fullmatch(r'[0-9a-f]{2}/[0-9a-f]{64}\.json', ...)` (GAP-002): the
+/// walk below is a directory-listing scan, not a regex over a joined path,
+/// but this is the same character class applied per-segment.
+fn is_lowercase_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// Two-level walk mirroring `path_for`'s layout exactly: `root /
 /// key[..2] / key.json` nests exactly one directory deep, by construction
 /// — never more, since `path_for` never produces a deeper path. So this is
@@ -265,14 +282,12 @@ impl DerivationCache {
 /// arises from chunkshop's own writes) rather than "fixed" by adding a
 /// general-recursion dependency for a case that can't occur from this
 /// cache's own output.
-/// `true` iff `s` is exactly `len` lowercase hex digits. Mirrors Python's
-/// `re.fullmatch(r'[0-9a-f]{2}/[0-9a-f]{64}\.json', ...)` (GAP-002): the
-/// walk below is a directory-listing scan, not a regex over a joined path,
-/// but this is the same character class applied per-segment.
-fn is_lowercase_hex(s: &str, len: usize) -> bool {
-    s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
+///
+/// GAP-002: additionally, each candidate is now checked against
+/// `is_lowercase_hex` (directory name = 2 hex chars, filename = 64 hex
+/// chars prefixed by that directory name) rather than accepted on shape
+/// alone, so a `root` that happens to point at some unrelated real
+/// directory doesn't have ITS `*.json` files treated as cache entries.
 fn walkdir_json_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(root)? {
@@ -334,7 +349,22 @@ where
         return Ok((hit, true));
     }
     let result = compute()?;
-    cache.put(content_hash, derivation_hash, &result, extra)?;
+    // GAP-007: a cache WRITE failure must not fail the run — the document
+    // was successfully derived, and refusing to ingest it over a caching
+    // side effect (a read-only or full cache root) would be strictly
+    // worse than just re-deriving it next time. Warn once per cache
+    // instance (see `put_failure_warned`) and continue uncached.
+    if let Err(e) = cache.put(content_hash, derivation_hash, &result, extra) {
+        if !cache
+            .put_failure_warned
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::warn!(
+                "cache write to {} failed, continuing without caching this run: {e:#}",
+                cache.root.display()
+            );
+        }
+    }
     Ok((result, false))
 }
 
@@ -399,6 +429,55 @@ mod tests {
         assert_eq!(r2.text, "expensive");
         assert!(!hit1 && hit2);
         assert_eq!(calls.get(), 1, "second call must not recompute");
+    }
+
+    /// GAP-007: a `put()` failure (read-only cache root) must not fail the
+    /// run, and must warn only ONCE per `DerivationCache` instance even
+    /// when every document's write fails.
+    #[test]
+    #[cfg(unix)]
+    fn put_failure_is_non_fatal_and_warns_only_once() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("readonly");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let c = DerivationCache::new(Some(root.clone()));
+
+        let calls = std::cell::Cell::new(0);
+        let compute = || {
+            calls.set(calls.get() + 1);
+            Ok(ParseResult::new("x"))
+        };
+
+        assert!(
+            !c.put_failure_warned.load(std::sync::atomic::Ordering::Relaxed),
+            "must not be warned before any put() is attempted"
+        );
+
+        let (r1, hit1) = cached_derive(Some(&c), "c1", "d1", None, compute).unwrap();
+        assert_eq!(r1.text, "x");
+        assert!(!hit1, "a failed write is never a hit");
+        assert!(
+            c.put_failure_warned.load(std::sync::atomic::Ordering::Relaxed),
+            "the first failed put() must flip the warned flag"
+        );
+
+        // A second, different document also fails to cache — the run must
+        // still succeed (ingest continues uncached), and nothing panics or
+        // errors on the ALREADY-warned path.
+        let (r2, hit2) = cached_derive(Some(&c), "c2", "d1", None, compute).unwrap();
+        assert_eq!(r2.text, "x");
+        assert!(!hit2);
+        assert_eq!(
+            calls.get(),
+            2,
+            "with nothing ever cached, compute must run on every call"
+        );
+
+        // Cleanup: restore write perms so the tempdir can be removed.
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]
