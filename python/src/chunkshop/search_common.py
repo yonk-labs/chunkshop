@@ -346,10 +346,11 @@ def search(
     vector_metric: str = "cosine",
     ef_search: Optional[int] = None,
     compress_fn: Optional[Callable[[str], str]] = None,
+    hybrid_search_fn: Optional[Callable[..., list]] = None,
 ) -> SearchResult:
     """Hybrid search with optional summarization — the chunkshop read entry point.
 
-    Wraps :func:`chunkshop.search.hybrid_search` (Postgres default) and
+    Wraps a backend's ``hybrid_search`` (Postgres by default) and
     :func:`summarize_hits` into a single call with three return modes.
 
     SC-010: ``return_mode="chunks"`` performs NO summarization and triggers NO
@@ -357,7 +358,7 @@ def search(
     are never touched on this path.
 
     Args:
-        dsn: Postgres DSN.
+        dsn: backend connection string (Postgres DSN, sqlite file path, etc).
         schema / table: target table coordinates.
         query: free-text query (required when legs includes "fts").
         query_vec: embedding vector (required when legs includes "semantic").
@@ -376,11 +377,20 @@ def search(
         language: FTS language, forwarded to ``hybrid_search``.
         vector_metric: Postgres/pgvector semantic metric (``"cosine"``,
             ``"inner_product"``, or ``"l2"``), forwarded to ``hybrid_search``.
+        hybrid_search_fn: override for which backend's ``hybrid_search`` to
+            call — defaults to ``chunkshop.search.hybrid_search`` (Postgres)
+            when unset, preserving prior behavior for every existing caller.
+            Pass a callable (e.g. an adapter around
+            ``chunkshop.search_sqlite.hybrid_search``) to target another
+            backend; it receives the exact kwargs below.
 
     Returns:
         ``SearchResult(chunks, summary, query)``.
     """
-    from chunkshop.search import hybrid_search  # lazy: pg backend default
+    if hybrid_search_fn is not None:
+        hybrid_search = hybrid_search_fn
+    else:
+        from chunkshop.search import hybrid_search  # lazy: pg backend default
     hits = hybrid_search(
         dsn,
         schema=schema,

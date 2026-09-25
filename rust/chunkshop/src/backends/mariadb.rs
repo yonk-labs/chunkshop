@@ -16,26 +16,38 @@ use sqlx::{mysql::MySqlPoolOptions, MySql, MySqlPool, Transaction};
 use crate::backends::base::{BackendConn, BackendDialect, ColSpec};
 
 pub struct MariadbBackend {
-    dsn_env: String,
+    dsn: Option<String>,
+    dsn_env: Option<String>,
     pool: tokio::sync::OnceCell<MySqlPool>,
 }
 
 impl MariadbBackend {
+    /// `dsn_env`-only constructor. Kept for existing callers (mostly
+    /// dialect/parity tests that never set `dsn`); prefer `new_with_dsn`
+    /// wherever the config may carry a `dsn` field.
     pub fn new(dsn_env: String) -> Self {
+        Self::new_with_dsn(None, Some(dsn_env))
+    }
+
+    /// `dsn` (literal or `${VAR}` interpolated) takes precedence over
+    /// `dsn_env` (env-var-name, read lazily at first `pool()` call).
+    /// Mirrors Python's `_DsnResolvable`/`backend_dsn_kwargs` precedence.
+    pub fn new_with_dsn(dsn: Option<String>, dsn_env: Option<String>) -> Self {
         Self {
+            dsn,
             dsn_env,
             pool: tokio::sync::OnceCell::new(),
         }
     }
 
-    /// Lazily-initialized pool. Idempotent. The DSN env var is read at first
+    /// Lazily-initialized pool. Idempotent. The DSN is resolved at first
     /// `pool()` call, not at `new()`, so dialect-only consumers (parity tests,
     /// DDL emitters) need not set the env var.
     pub async fn pool(&self) -> Result<&MySqlPool> {
         self.pool
             .get_or_try_init(|| async {
-                let dsn = std::env::var(&self.dsn_env)
-                    .with_context(|| format!("DSN env var {} not set", self.dsn_env))?;
+                let dsn =
+                    crate::config::resolve_dsn(self.dsn.as_deref(), self.dsn_env.as_deref())?;
                 // max_connections(1) mirrors postgres.rs and the Python
                 // implementation's short-lived per-document connection
                 // discipline. Concurrent throughput comes from running
@@ -45,7 +57,7 @@ impl MariadbBackend {
                     .max_connections(1)
                     .connect(&dsn)
                     .await
-                    .with_context(|| format!("connecting to {}", self.dsn_env))
+                    .with_context(|| "connecting to mariadb".to_string())
             })
             .await
     }

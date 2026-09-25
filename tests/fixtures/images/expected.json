@@ -1,0 +1,250 @@
+{
+  "bmp_1.bmp": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "BMP",
+    "image_mode": "1",
+    "width": 8
+  },
+  "bmp_l.bmp": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "BMP",
+    "image_mode": "L",
+    "width": 8
+  },
+  "bmp_p.bmp": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "BMP",
+    "image_mode": "P",
+    "width": 8
+  },
+  "bmp_rgb.bmp": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "BMP",
+    "image_mode": "RGB",
+    "width": 8
+  },
+  "bmp_rgba.bmp": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "BMP",
+    "image_mode": "RGB",
+    "width": 8
+  },
+  "gif_p.gif": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "GIF",
+    "image_mode": "P",
+    "width": 8
+  },
+  "gif_p_trns.gif": {
+    "aspect_ratio": 1.0,
+    "has_alpha": true,
+    "height": 8,
+    "image_format": "GIF",
+    "image_mode": "P",
+    "width": 8
+  },
+  "jpeg_rgb.jpeg": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "JPEG",
+    "image_mode": "RGB",
+    "width": 8
+  },
+  "jpg_l.jpg": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "JPEG",
+    "image_mode": "L",
+    "width": 8
+  },
+  "jpg_rgb.jpg": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "JPEG",
+    "image_mode": "RGB",
+    "width": 8
+  },
+  "png_1.png": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "PNG",
+    "image_mode": "1",
+    "width": 8
+  },
+  "png_800x1024.png": {
+    "aspect_ratio": 0.7812,
+    "has_alpha": false,
+    "height": 1024,
+    "image_format": "PNG",
+    "image_mode": "RGB",
+    "width": 800
+  },
+  "png_big_palette.png": {
+    "aspect_ratio": 1.4934,
+    "has_alpha": true,
+    "height": 9664,
+    "image_format": "PNG",
+    "image_mode": "P",
+    "width": 14432
+  },
+  "png_i16.png": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "PNG",
+    "image_mode": "I;16",
+    "width": 8
+  },
+  "png_l.png": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "PNG",
+    "image_mode": "L",
+    "width": 8
+  },
+  "png_la.png": {
+    "aspect_ratio": 1.0,
+    "has_alpha": true,
+    "height": 8,
+    "image_format": "PNG",
+    "image_mode": "LA",
+    "width": 8
+  },
+  "png_p.png": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "PNG",
+    "image_mode": "P",
+    "width": 8
+  },
+  "png_p_trns.png": {
+    "aspect_ratio": 1.0,
+    "has_alpha": true,
+    "height": 8,
+    "image_format": "PNG",
+    "image_mode": "P",
+    "width": 8
+  },
+  "png_rgb.png": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "PNG",
+    "image_mode": "RGB",
+    "width": 8
+  },
+  "png_rgba.png": {
+    "aspect_ratio": 1.0,
+    "has_alpha": true,
+    "height": 8,
+    "image_format": "PNG",
+    "image_mode": "RGBA",
+    "width": 8
+  },
+  "tif_1.tiff": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "TIFF",
+    "image_mode": "1",
+    "width": 8
+  },
+  "tif_cmyk.tiff": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "TIFF",
+    "image_mode": "CMYK",
+    "width": 8
+  },
+  "tif_i16.tiff": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "TIFF",
+    "image_mode": "I;16",
+    "width": 8
+  },
+  "tif_l.tiff": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "TIFF",
+    "image_mode": "L",
+    "width": 8
+  },
+  "tif_la.tiff": {
+    "aspect_ratio": 1.0,
+    "has_alpha": true,
+    "height": 8,
+    "image_format": "TIFF",
+    "image_mode": "LA",
+    "width": 8
+  },
+  "tif_p.tiff": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "TIFF",
+    "image_mode": "P",
+    "width": 8
+  },
+  "tif_rgb.tif": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "TIFF",
+    "image_mode": "RGB",
+    "width": 8
+  },
+  "tif_rgb.tiff": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "TIFF",
+    "image_mode": "RGB",
+    "width": 8
+  },
+  "tif_rgba.tiff": {
+    "aspect_ratio": 1.0,
+    "has_alpha": true,
+    "height": 8,
+    "image_format": "TIFF",
+    "image_mode": "RGBA",
+    "width": 8
+  },
+  "webp_rgb.webp": {
+    "aspect_ratio": 1.0,
+    "has_alpha": false,
+    "height": 8,
+    "image_format": "WEBP",
+    "image_mode": "RGB",
+    "width": 8
+  },
+  "webp_rgba.webp": {
+    "aspect_ratio": 1.0,
+    "has_alpha": true,
+    "height": 8,
+    "image_format": "WEBP",
+    "image_mode": "RGBA",
+    "width": 8
+  }
+}

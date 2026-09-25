@@ -33,6 +33,24 @@ this directory. Copy-paste-tweak rather than full walkthroughs.
 | [`sample-multi-source.yaml`](sample-multi-source.yaml) | Schema-flex demo: `mode: create_if_missing` + `source_tag` + `promote_metadata`. Pair with a second cell using `mode: append` to get two sources in one table. Walkthrough in [`../tutorial-multi-source.md`](../tutorial-multi-source.md). |
 | [`bakeoff.yaml`](bakeoff.yaml) + [`bakeoff-gold.yaml`](bakeoff-gold.yaml) | Tiny bakeoff against this directory's 4 markdown docs (3 embedders × 2 chunkers = 6 combos, 14 gold queries). For the canonical full bakeoff, use [`bakeoff-ntsb/`](bakeoff-ntsb/README.md). |
 
+## Media ingest recipes
+
+Against the three PNG fixtures in [`images/`](images/) rather than the
+markdown ones. Both write to sqlite, so they need only `SQLITE_PATH` set —
+no Postgres. Guide: [`../media-ingest.md`](../media-ingest.md).
+
+| Config | Recipe |
+|---|---|
+| [`images-keyless.yaml`](images-keyless.yaml) | **Rung 1.** `clip_tags` — keyless zero-shot CLIP tagging against a five-label vocabulary, base install only (no extra, no API key, no GPU). The documented image quickstart; its YAML block is mirrored in the root README and pinned by CI. |
+| [`media-ross.yaml`](media-ross.yaml) | **Rung 5.** `ross` as a subprocess deriver — images, audio and video from one `derive:` key (magic-byte sniffing). Keyless by default; needs the `ross` binary on `$PATH`, plus `ffprobe`/`ffmpeg` for audio/video. |
+
+```bash
+export SQLITE_PATH=/tmp/chunkshop-images.db
+chunkshop ingest --config docs/samples/images-keyless.yaml
+chunkshop search --config docs/samples/images-keyless.yaml \
+  --query "pixel art game character" --k 3
+```
+
 ## Markdown fixtures
 
 | File | Used by |

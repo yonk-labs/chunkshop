@@ -60,7 +60,8 @@ async fn mariadb_table_source_emits_three_rows() {
     }
 
     let cfg = MariadbTableSourceConfig {
-        dsn_env: DSN_ENV.to_string(),
+        dsn: None,
+        dsn_env: Some(DSN_ENV.to_string()),
         database_name: database.to_string(),
         table: table.to_string(),
         id_column: "doc_id".to_string(),

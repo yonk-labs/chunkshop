@@ -1,0 +1,140 @@
+name: SC-1 quickstart clock
+
+# The 5-minute keyless claim is the wedge. It rots silently unless CI runs
+# the exact YAML printed in the README, on a base install, on a clock.
+on:
+  pull_request:
+  push: {branches: [main]}
+
+jobs:
+  quickstart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+
+      - name: Install chunkshop with the storage extra ONLY (no media extras)
+        run: pip install './python[sqlite]'
+
+      - name: Assert no media extra leaked into the base install
+        run: |
+          python - <<'EOF'
+          import importlib.util, sys
+          for mod in ("rapidocr", "faster_whisper", "torch", "av"):
+              if importlib.util.find_spec(mod) is not None:
+                  sys.exit(f"FAIL: media package {mod} present without its extra")
+          print("no media package present — the media path is genuinely keyless")
+          EOF
+
+      # The corpus this gate measures is `docs/samples/images/*.png` (the glob
+      # in docs/samples/images-keyless.yaml). Its ranking margin is a property
+      # of WHICH images are in that directory, so the directory is pinned here
+      # rather than left to whoever last dropped a file into it. This is not
+      # hypothetical: a batch of flat-colour `swatch_*` image_meta test
+      # fixtures was once committed here, and because the CLIP tagger labels a
+      # flat colour swatch "a game sprite or pixel art" too, they cut the
+      # rank-1-vs-rank-2 cosine margin from 0.2166 to 0.0562 while the gate
+      # stayed green. They have since been removed and the corpus is pinned at
+      # the three images listed below. Test fixtures belong in
+      # tests/fixtures/images/, not in the sample corpus.
+      - name: Pin the quickstart corpus (guards the measured margin below)
+        run: |
+          expected="chart_revenue.png screenshot_settings.png sprite_knight.png"
+          actual=$(cd docs/samples/images && ls *.png | sort | tr '\n' ' ' | sed 's/ $//')
+          if [ "$actual" != "$expected" ]; then
+            echo "FAIL: docs/samples/images/*.png changed."
+            echo "  expected: $expected"
+            echo "  actual:   $actual"
+            echo
+            echo "This directory IS the SC-1 corpus. Adding an image changes what"
+            echo "this gate measures and can silently erode the ranking margin"
+            echo "documented below. Put test fixtures in tests/fixtures/images/."
+            echo "If the corpus change is deliberate: re-measure the cosine margin"
+            echo "(see the comment below), update it here, and update this list."
+            exit 1
+          fi
+          echo "corpus pinned: $actual"
+
+      - name: Run the documented quickstart, on a clock
+        env:
+          SQLITE_PATH: /tmp/chunkshop-images.db
+        run: |
+          start=$(date +%s)
+          chunkshop ingest --config docs/samples/images-keyless.yaml
+          # -k 3 (not 1): matches the pinned corpus size exactly, so this is
+          # the WHOLE result set and the failure path below prints every hit
+          # instead of an undiagnosable single-row red gate. The pin step above
+          # is what keeps "3" and "the whole corpus" the same number.
+          chunkshop search --config docs/samples/images-keyless.yaml \
+            --query "pixel art" --k 3 --include-facts --json > result.json
+          elapsed=$(( $(date +%s) - start ))
+          echo "elapsed: ${elapsed}s (budget 300s, includes model download)"
+          test "$elapsed" -lt 300 || { echo "FAIL: SC-1 budget exceeded"; exit 1; }
+
+      # Real measured semantic margin over the pinned 3-image corpus above
+      # (bge-base-en-v1.5-int8, cosine, query "pixel art" vs. each image's
+      # derived embedded_content — the same texts and model this gate actually
+      # searches over). Re-measured 2026-09-01 against the corpus as it exists
+      # at this commit, not carried forward:
+      #   sprite_knight.png:        0.803519  (rank 1 — the expected winner)
+      #   screenshot_settings.png:  0.586941  (rank 2)
+      #   chart_revenue.png:        0.574639  (rank 3)
+      # Margin between rank 1 and rank 2 is 0.216579 cosine — genuine headroom,
+      # not the mechanical ~0.016 RRF rank-contribution spacing (1/(60+rank))
+      # a prior analysis mistook for the margin. NOTE the `score` field in
+      # result.json IS that RRF fusion score (0.016393 / 0.016129 / 0.015873
+      # here), so it is not the number to read this margin off of — recompute
+      # by embedding the query and each row's `embedded_content` with the
+      # cell's configured embedder and taking cosine similarity.
+      #
+      # "pixel art" appears only in the clip_tags vocabulary above, never in a
+      # filename or path segment — so the rank assertion below only passes if
+      # CLIP tagging actually ran. (A query like "a game sprite" would pass
+      # off the filename alone, via the FTS leg, even if derivation silently
+      # produced no tags.) The clip_tags assertion is leg-independent proof
+      # of the same thing: it proves CLIP chose the right label, which the
+      # rank assertion alone does not.
+      - name: Assert the right image ranked first, with the right CLIP tag
+        run: |
+          python - <<'EOF'
+          import json, sys
+          data = json.load(open("result.json"))
+          hits = data["chunks"]
+
+          def dump_hits():
+              for i, h in enumerate(hits):
+                  md = h.get("metadata", {})
+                  print(
+                      f"  #{i + 1}: source_path={md.get('source_path')!r} "
+                      f"score={h.get('score')!r} "
+                      f"clip_tags={md.get('clip_tags')!r}"
+                  )
+
+          if not hits:
+              print("FAIL: no hits returned")
+              dump_hits()
+              sys.exit(1)
+
+          top_meta = hits[0].get("metadata", {})
+          top_path = top_meta.get("source_path", "")
+          top_tags = top_meta.get("clip_tags", [])
+          failures = []
+          if "sprite" not in top_path:
+              failures.append(f"expected a sprite first, got source_path={top_path!r}")
+          if "a game sprite or pixel art" not in top_tags:
+              failures.append(
+                  f"expected clip_tags to contain 'a game sprite or pixel art', got {top_tags!r}"
+              )
+
+          if failures:
+              print("FAIL:")
+              for f in failures:
+                  print(f"  - {f}")
+              print("all hits:")
+              dump_hits()
+              sys.exit(1)
+
+          print("top hit:", top_path, "tags:", top_tags)
+          EOF

@@ -49,7 +49,8 @@ async fn projects_id_content_title_metadata_columns() -> anyhow::Result<()> {
         .await?;
 
     let cfg = ClickhouseTableSourceConfig {
-        dsn_env: DSN_ENV.to_string(),
+        dsn: None,
+        dsn_env: Some(DSN_ENV.to_string()),
         database_name: db.to_string(),
         table: "docs".to_string(),
         id_column: "id".to_string(),

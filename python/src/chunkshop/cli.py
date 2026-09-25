@@ -574,6 +574,173 @@ def eval_plan(config_path: Path, out_dir: Path, profiles, tags, smoke_limit: int
         click.echo(f"  llm-judge configs: {len(plan.llm_judge_configs)}")
 
 
+# --------------------------------------------------------------------------
+# `chunkshop cache` — surface for the derivation cache (sources/derivers/cache.py)
+# --------------------------------------------------------------------------
+#
+# Deliberately importable and runnable on a TEXT-ONLY install (NN-6): the
+# cache module is pure stdlib + `ParseResult`, and every import below is
+# function-local so `chunkshop cache --help` never drags in PIL, fastembed
+# or any media-gated dependency. A user who cannot install the media extras
+# must still be able to find and clear the cache on their disk.
+
+
+def _human_bytes(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} GB"
+
+
+def _resolve_cache_root(config_path):
+    """Resolve the cache root the way the library does, optionally per-cell.
+
+    Returns ``(root, note)``. ``note`` is a human-readable explanation of
+    WHERE the root came from, or None when it is simply the default. It is
+    printed to stderr so `cache path` stays a clean, scriptable one-liner.
+
+    Without ``--config`` this is `default_cache_root()` — the same
+    CHUNKSHOP_CACHE_DIR > XDG_CACHE_HOME > ~/.cache resolution every cell
+    without an explicit `source.cache.root` lands on. With ``--config`` the
+    cell's own `source.cache.root` wins, so a user debugging one cell acts
+    on the directory that cell actually writes.
+    """
+    from chunkshop.sources.derivers.cache import default_cache_root
+
+    if config_path is None:
+        return default_cache_root(), None
+
+    try:
+        cfg = load_config(config_path)
+    except Exception as exc:
+        raise click.ClickException(f"could not load {config_path}: {exc}")
+
+    source = getattr(cfg, "source", None)
+    cache_cfg = getattr(source, "cache", None)
+    if cache_cfg is None:
+        # Only `files` carries a derivation cache. Reporting the default root
+        # is more useful than an error — it is still the directory anything
+        # else on this machine would use — but say so plainly.
+        stype = getattr(source, "type", "?")
+        return default_cache_root(), (
+            f"source type {stype!r} has no derivation cache; "
+            "showing the default root"
+        )
+
+    notes = []
+    if cache_cfg.root:
+        root = Path(cache_cfg.root)
+        notes.append(f"root from {config_path} (source.cache.root)")
+    else:
+        root = default_cache_root()
+        notes.append(f"cell {cfg.cell_name!r} uses the default root")
+    if not cache_cfg.enabled:
+        notes.append("caching is DISABLED for this cell (source.cache.enabled: false)")
+    return root, "; ".join(notes)
+
+
+def _cache_for(config_path):
+    from chunkshop.sources.derivers.cache import DerivationCache
+
+    root, note = _resolve_cache_root(config_path)
+    return DerivationCache(root=root), root, note
+
+
+_CACHE_CONFIG_OPTION = click.option(
+    "--config", "config_path",
+    type=click.Path(exists=True, path_type=Path), default=None,
+    help="Resolve the root from this cell's `source.cache.root`. "
+         "Omit to act on the default cache root.",
+)
+
+
+@cli.group(name="cache")
+def cache_cmd():
+    """Inspect and purge the derivation cache.
+
+    The cache memoises expensive derivations (OCR, captioning, CLIP tags,
+    ross) on the provenance of the derivation, so re-chunking or changing
+    the target table re-derives nothing. See docs/media-ingest.md.
+
+    Purging is a real decision, not housekeeping. Rung-5 LLM derivations are
+    non-deterministic, so the cache is what keeps a corpus stable: a purge
+    followed by a re-ingest can legitimately change derived text — and
+    therefore the embeddings — with no config change at all.
+    """
+
+
+@cache_cmd.command(name="path")
+@_CACHE_CONFIG_OPTION
+def cache_path(config_path):
+    """Print the resolved cache root and exit.
+
+    Only the path goes to stdout, so it composes: `du -sh $(chunkshop cache path)`.
+    """
+    _root_unused, root, note = _cache_for(config_path)
+    if note:
+        click.echo(f"[cache] {note}", err=True)
+    click.echo(str(root))
+
+
+@cache_cmd.command(name="info")
+@_CACHE_CONFIG_OPTION
+def cache_info(config_path):
+    """Report entry count and total size on disk for the cache root."""
+    cache, root, note = _cache_for(config_path)
+    count, total = cache.stats()
+    if note:
+        click.echo(f"[cache] {note}", err=True)
+    click.echo(f"[cache] root:    {root}")
+    if not root.exists():
+        click.echo("[cache] status:  does not exist (nothing derived yet)")
+    click.echo(f"[cache] entries: {count}")
+    click.echo(f"[cache] size:    {_human_bytes(total)}")
+
+
+@cache_cmd.command(name="purge")
+@_CACHE_CONFIG_OPTION
+@click.option(
+    "--yes", "-y", is_flag=True,
+    help="Skip the confirmation prompt.",
+)
+def cache_purge(config_path, yes: bool):
+    """Delete every entry under the cache root.
+
+    Destructive, and irreversible in the sense that matters: a rung-5
+    re-derive can produce different text than the entry it replaced. The
+    resolved root is printed BEFORE the prompt so it is never a surprise
+    which directory is about to be emptied.
+
+    Only entries matching chunkshop's own cache layout (`<2 hex>/<64 hex>.json`)
+    are removed — unrelated files sharing the root, at any depth and
+    including any other `*.json`, are left alone, and the directories stay.
+    A cache root that does not exist reports zero and exits 0; there is
+    nothing wrong with purging a cache you never built.
+    """
+    cache, root, note = _cache_for(config_path)
+    if note:
+        click.echo(f"[cache] {note}", err=True)
+    click.echo(f"[cache] root: {root}")
+
+    count, total = cache.stats()
+    if count == 0:
+        # Not an error: a missing or already-empty cache is a legitimate
+        # state, and scripting `cache purge` before a re-ingest must not
+        # fail on the first run.
+        click.echo("[cache] nothing to purge — 0 entries.")
+        return
+
+    if not yes:
+        click.echo(f"[cache] {count} entries ({_human_bytes(total)}) will be deleted.")
+        if not click.confirm(f"Delete {count} cache entries?", default=False):
+            click.echo("Aborted.")
+            raise click.Abort()
+
+    removed = cache.purge()
+    click.echo(f"[cache] purged {removed} entries")
+
+
 def _parse_where(opts) -> dict:
     """Parse ``--where KEY=VALUE`` opts into a structured filter dict.
 
@@ -625,6 +792,28 @@ def _parse_by_symbol(value: str) -> tuple[list[str], list[str]]:
         else:
             exact.append(name)
     return exact, like
+
+
+def _hybrid_search_fn_for(target_type: str):
+    """Pick the backend's ``hybrid_search`` for the `search` command.
+
+    ``chunkshop.search_common.search`` defaults to the Postgres backend when
+    no override is given. sqlite ships its own hybrid_search
+    (`chunkshop.search_sqlite`) with the same `Hit` contract but without the
+    Postgres-only `vector_metric`/`ef_search` knobs, so it's wrapped to drop
+    those two kwargs before delegating. mariadb/clickhouse aren't wired here
+    yet — CLI search against those targets still requires a direct API call.
+    ``fact-search`` doesn't take this override yet either; it stays
+    Postgres-only for now.
+    """
+    if target_type == "sqlite":
+        from chunkshop.search_sqlite import hybrid_search as _sqlite_hybrid_search
+
+        def _adapted(*args, vector_metric=None, ef_search=None, **kwargs):
+            return _sqlite_hybrid_search(*args, **kwargs)
+
+        return _adapted
+    return None  # None => search_common.search's Postgres default
 
 
 @cli.command()
@@ -776,6 +965,7 @@ def search(config, query, k, return_mode, legs, vector_metric, ef_search, where_
             vector_metric=vector_metric or tgt.vector_metric,
             ef_search=ef_search,
             compress_fn=compress_fn,
+            hybrid_search_fn=_hybrid_search_fn_for(tgt.type),
         )
     except click.ClickException:
         raise

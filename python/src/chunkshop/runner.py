@@ -90,6 +90,20 @@ def run_cell(cfg: CellConfig) -> CellResult:
         extractor = load_extractor(cfg.extractor)
         sink = load_sink(cfg.target, embed_dim=cfg.embedder.dim)
 
+        if cfg.target.mode == "overwrite":
+            # ponytail: fully materialise the corpus before the DROP+CREATE
+            # below, so a source/derivation error (F5's EmptyDerivationError
+            # on a scanned PDF, a ross subprocess timeout, a lazy CLIP
+            # model-load failure -- anything raised while draining
+            # doc_source) aborts the run BEFORE the existing table is
+            # touched, matching the Rust port's iter_documents() -> Vec.
+            # Ceiling: the whole corpus must fit in memory. append /
+            # create_if_missing cells stay streaming, since they never drop
+            # existing data and so have nothing to protect here. A
+            # staging-table swap (COPY into `<table>__staging`, rename on
+            # success) is the upgrade path if a corpus outgrows this.
+            doc_source = list(doc_source)
+
         _log("creating target table", log_path)
         sink.create_table()
 

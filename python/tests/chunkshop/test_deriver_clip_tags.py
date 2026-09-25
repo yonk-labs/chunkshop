@@ -1,0 +1,174 @@
+import pytest
+
+from chunkshop.sources.derivers.clip_tags import ClipTagsDeriver
+
+VOCAB = [
+    "a solid red square",
+    "a solid blue square",
+    "a photograph of a cat",
+]
+
+
+@pytest.fixture
+def images(tmp_path):
+    Image = pytest.importorskip("PIL.Image")
+    red = tmp_path / "red.png"
+    blue = tmp_path / "blue.png"
+    Image.new("RGB", (224, 224), (220, 30, 30)).save(red)
+    Image.new("RGB", (224, 224), (30, 30, 220)).save(blue)
+    return red, blue
+
+
+def test_requires_a_non_empty_vocabulary():
+    with pytest.raises(ValueError, match="vocabulary"):
+        ClipTagsDeriver(vocabulary=[])
+
+
+@pytest.mark.slow
+def test_tags_are_text_and_correct(images):
+    """Downloads ~0.6GB of ONNX weights on first run; marked slow."""
+    pytest.importorskip("fastembed")
+    red, blue = images
+    d = ClipTagsDeriver(vocabulary=VOCAB, top_k=1)
+
+    red_result = d.derive(red)
+    assert red_result.metadata["clip_tags"][0] == "a solid red square"
+    assert "red" in red_result.text.lower()
+
+    blue_result = d.derive(blue)
+    assert blue_result.metadata["clip_tags"][0] == "a solid blue square"
+
+
+@pytest.mark.slow
+def test_provenance_names_the_models(images):
+    pytest.importorskip("fastembed")
+    md = ClipTagsDeriver(vocabulary=VOCAB).derive(images[0]).metadata
+    assert md["content_origin"] == "derived"
+    assert md["derived_rung"] == "clip_tags"
+    assert "clip-ViT-B-32" in md["derived"]["model"]
+
+
+@pytest.mark.slow
+def test_includes_rung_0_metadata(images):
+    """clip_tags is additive over image_meta, not a replacement."""
+    pytest.importorskip("fastembed")
+    md = ClipTagsDeriver(vocabulary=VOCAB).derive(images[0]).metadata
+    assert md["width"] == 224
+    assert md["image_format"] == "PNG"
+
+
+class _FakeVision:
+    """Stands in for fastembed's ImageEmbedding — no download, no slow mark."""
+
+    def embed(self, paths):
+        import numpy as np
+
+        for _ in paths:
+            yield np.array([1.0, 0.0, 0.0])
+
+
+def _fake_deriver(images):
+    """A ClipTagsDeriver with model loading bypassed entirely."""
+    import numpy as np
+
+    d = ClipTagsDeriver(vocabulary=VOCAB, top_k=1)
+    d._ensure_models = lambda: None  # instance override: never touches fastembed
+    d._vision = _FakeVision()
+    d._label_vectors = np.eye(len(VOCAB))
+    return d
+
+
+def test_derivation_hash_changes_when_fastembed_version_changes(images, monkeypatch):
+    """A fastembed upgrade must not serve stale cached tags forever."""
+    red, _blue = images
+    d = _fake_deriver(images)
+
+    monkeypatch.setattr(ClipTagsDeriver, "_model_version", staticmethod(lambda: "1.2.3"))
+    hash_a = d.derivation_hash()
+
+    monkeypatch.setattr(ClipTagsDeriver, "_model_version", staticmethod(lambda: "9.9.9"))
+    hash_b = d.derivation_hash()
+
+    assert hash_a != hash_b, "derivation_hash must change when fastembed's version changes"
+
+
+def test_derivation_hash_matches_what_stamp_provenance_records(images, monkeypatch):
+    """Key/record agreement: derivation_hash() and stamp_provenance() must
+    use the exact same model_version — this is load-bearing for the cache
+    (the cache key IS the provenance record, per provenance.py's docstring).
+    """
+    from chunkshop.sources.derivers.provenance import derivation_hash as _dhash
+
+    red, _blue = images
+    d = _fake_deriver(images)
+    monkeypatch.setattr(ClipTagsDeriver, "_model_version", staticmethod(lambda: "1.2.3"))
+
+    hash_ = d.derivation_hash()
+    result = d.derive(red)
+    recorded_version = result.metadata["derived"]["model_version"]
+    assert recorded_version == "1.2.3"
+    recorded_engine = result.metadata["derived"]["engine"]
+
+    recomputed = _dhash(
+        "clip_tags",
+        f"{d.vision_model}+{d.text_model}",
+        recorded_version,
+        recorded_engine,
+        {"vocabulary": d.vocabulary, "top_k": d.top_k, "min_score": d.min_score},
+    )
+    assert recomputed == hash_, "derivation_hash() must exactly match what was recorded"
+
+    # ...and the PARAMS too. The assertion above restates the params as a
+    # third literal, so it agrees with whichever side happens to match it and
+    # cannot see `derivation_hash()` and `stamp_provenance()` drift apart.
+    # `params_hash` read off the record is the only component that can. Same
+    # hole `test_deriver_image_meta.py`'s tripwire closes for rung 0.
+    from chunkshop.sources.derivers.provenance import _hash_from_parts
+
+    rec = result.metadata["derived"]
+    assert (
+        _hash_from_parts(
+            rec["rung"],
+            rec["model"],
+            rec["model_version"],
+            rec["engine"],
+            rec["params_hash"],
+        )
+        == hash_
+    ), "derivation_hash() and the params stamped by derive() have drifted"
+
+
+def test_model_version_falls_back_to_unknown_on_lookup_failure(monkeypatch):
+    """A broken/absent metadata lookup must degrade, never crash."""
+    import importlib.metadata
+
+    def _raise(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", _raise)
+    assert ClipTagsDeriver._model_version() == "unknown"
+
+
+def test_cache_key_extra_is_delegated_to_the_wrapped_image_meta_deriver():
+    """`derive()` builds text as `base.text + tags`, so this rung inherits
+    rung 0's path dependence — and, before the fix, rung 0's silent cache
+    collision. Two byte-identical images with different names would share
+    one clip_tags entry and the second would receive the first's filename
+    text AND the first image's CLIP tags.
+
+    No model download: `cache_key_extra` is pure path arithmetic, so this
+    is not marked slow.
+    """
+    from pathlib import Path
+
+    from chunkshop.sources.derivers.image_meta import ImageMetaDeriver
+
+    d = ClipTagsDeriver(vocabulary=VOCAB)
+    a = Path("/corpus/sprites/a_chart_revenue.png")
+    b = Path("/corpus/sprites/b_goblin_warrior.png")
+
+    assert d.cache_key_extra(a) == ImageMetaDeriver().cache_key_extra(a)
+    assert d.cache_key_extra(a) != d.cache_key_extra(b), (
+        "byte-identical images with different names must not share a "
+        "clip_tags cache entry"
+    )

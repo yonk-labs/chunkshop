@@ -43,7 +43,7 @@ pub struct CellResult {
     pub embed_seconds: f64,
 }
 
-pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
+pub async fn run_cell(mut cfg: CellConfig) -> Result<CellResult> {
     let start = Instant::now();
     info!(cell = %cfg.cell_name, "cell starting");
 
@@ -54,6 +54,23 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
              See docs/incremental.md (Pattern F) and docs/samples/inline-mode/."
         ));
     }
+
+    // Everything knowable from config alone that can still fail runs BEFORE
+    // the sink's DROP+CREATE — and before the embedder downloads its ONNX
+    // weights. Python raises these same conditions inside
+    // `FilesSource.__init__`, which `runner.py` calls before
+    // `sink.create_table()`; Rust deferred them to `iter_documents()` /
+    // point-of-use, so a `mode: overwrite` cell destroyed and emptied its
+    // target table and only then reported the error.
+    cfg.preflight_derive().context("source preflight")?;
+
+    // Idempotent re-application, for configs built by struct literal rather
+    // than deserialized (the bakeoff runner, library callers). Python gets
+    // this for free — its `@model_validator` fires on direct construction
+    // too — so without this line the two ports would disagree on the target
+    // schema for a programmatically-assembled media cell.
+    cfg.apply_default_media_promotions();
+
     let source: AnySource = crate::sources::load_source(&cfg.source).context("load source")?;
     let framer = build_framer(cfg.framer)?;
     let chunker = build_chunker(cfg.chunker)?;
@@ -65,11 +82,20 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     let sink =
         crate::sinks::load_sink(&cfg.target, backend, embedder.dim()).context("load sink")?;
 
+    // GAP-001: drain the source BEFORE the sink's DROP+CREATE. Some source
+    // failures (e.g. spec defect F5's "empty derivation is loud" scanned-PDF
+    // error) can only be observed here, at `iter_documents()`, not from
+    // `preflight_derive()` above — which only catches errors knowable from
+    // config alone (ambiguous `derive:` routing, a missing Cargo feature).
+    // Running `create_table()` first meant a `mode: overwrite` cell that hit
+    // one of these still dropped and emptied its live target table before
+    // ever reporting the error. `iter_documents()` already materializes a
+    // `Vec`, so nothing downstream needs it to stream.
+    let docs = source.iter_documents().await?;
+
     info!("creating target table");
     use crate::sinks::Sink;
     sink.create_table().await?;
-
-    let docs = source.iter_documents().await?;
     let limit = cfg.runtime.doc_limit.unwrap_or(usize::MAX);
     let heartbeat = cfg.runtime.heartbeat_every.unwrap_or(25);
 

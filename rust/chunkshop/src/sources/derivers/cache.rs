@@ -1,0 +1,685 @@
+//! Provenance-keyed memo cache for derivations. Mirrors
+//! `python/src/chunkshop/sources/derivers/cache.py`. Layout matches
+//! `raw_store/local.rs`'s content-addressed-directory pattern
+//! (`sha256(key)[:2]/sha256(key).json`) — but `local.rs`'s `put` is a
+//! direct `std::fs::write`, NOT atomic, unlike Python's cache.py
+//! (tempfile + os.replace). This cache does its own atomic write via
+//! `tempfile::Builder::tempfile_in` + `.persist()` rather than copying
+//! `local.rs`'s non-atomic pattern verbatim.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use serde_json::json;
+use sha2::{Digest, Sha256};
+
+use crate::sources::parsers::ParseResult;
+
+/// `Some(v)` only if `v` is non-empty — mirrors Python's truthiness for
+/// `os.environ.get(...)` (`if env:` is False for `""`, not just for
+/// missing). `export XDG_CACHE_HOME=` is ordinary in shell scripts and
+/// produces `Ok("")` from `std::env::var`, which is NOT the same as unset
+/// to a naive `if let Ok(env) = ...` — that was the exact divergence this
+/// helper closes.
+fn nonempty(v: Option<&str>) -> Option<&str> {
+    v.filter(|s| !s.is_empty())
+}
+
+/// Pure core of `default_cache_root`, taking the two raw env-var reads
+/// (and the resolved home directory) as plain arguments instead of reading
+/// `std::env` itself. Env vars are process-global state and Rust runs
+/// tests on multiple threads by default, so a test that mutates
+/// `CHUNKSHOP_CACHE_DIR`/`XDG_CACHE_HOME` in place would be flaky (or need
+/// a mutex/serial guard around every test in the binary, including ones
+/// that don't care about this behavior). Testing this pure fn instead
+/// sidesteps that entirely and is deterministic by construction.
+fn default_cache_root_from(
+    chunkshop_cache_dir: Option<&str>,
+    xdg_cache_home: Option<&str>,
+    home: &Path,
+) -> PathBuf {
+    if let Some(env) = nonempty(chunkshop_cache_dir) {
+        return PathBuf::from(env);
+    }
+    let base = nonempty(xdg_cache_home)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".cache"));
+    base.join("chunkshop").join("derived")
+}
+
+pub fn default_cache_root() -> PathBuf {
+    let cache_dir = std::env::var("CHUNKSHOP_CACHE_DIR").ok();
+    let xdg_cache_home = std::env::var("XDG_CACHE_HOME").ok();
+    default_cache_root_from(cache_dir.as_deref(), xdg_cache_home.as_deref(), &dirs_home())
+}
+
+/// Resolves the current user's home directory for the `$XDG_CACHE_HOME`
+/// unset/empty fallback (`$HOME/.cache`). The `dirs` crate is NOT a
+/// dependency of this workspace (checked `Cargo.toml` — it appears only
+/// transitively via other crates, which does not make it usable without
+/// declaring it explicitly), so this reads `$HOME` directly instead of
+/// adding a new dependency for one lookup. Not Windows-correct (no
+/// `%USERPROFILE%` fallback) — accepted here since the rest of this
+/// workspace already assumes a POSIX-ish environment (e.g. `raw_store`'s
+/// file paths).
+///
+/// If `HOME` is unset or empty (same empty-is-unset truthiness as
+/// `default_cache_root_from`), this deliberately does NOT panic — a
+/// cache-root lookup failing should degrade a library caller, not crash
+/// it. It falls back to `std::env::temp_dir()` (honours `TMPDIR`, else
+/// `/tmp`).
+///
+/// KNOWN DIVERGENCE FROM PYTHON, deliberate. Python's `Path.home()` falls
+/// back to the passwd database, so `default_cache_root()` there still
+/// resolves the real home with `HOME` unset or empty (verified: both cases
+/// yield `~/.cache/chunkshop/derived`). Rust's std has no `getpwuid`, and
+/// matching it would mean taking a new dependency (`libc`/`dirs`/`home` —
+/// none are present, even transitively) for an edge case. The temp dir is
+/// chosen over the obvious `.` fallback specifically because `.` would
+/// silently write a `.cache/` tree into the caller's working directory;
+/// `HOME` is routinely unset under systemd units without PAM, under cron,
+/// and in some containers. A cache in the temp dir is a legitimate cache;
+/// a cache in someone's repo is litter. Consequence: with `HOME` unset the
+/// two implementations do not share a cache directory. That costs a
+/// recompute, never correctness — the cache key is unchanged.
+///
+/// Callers who need a guaranteed location should pass an explicit `root`
+/// to `DerivationCache::new` rather than relying on `default_cache_root()`.
+fn dirs_home() -> PathBuf {
+    home_or_fallback(std::env::var("HOME").ok().as_deref())
+}
+
+/// Pure half of `dirs_home`, so the empty-vs-unset fallback is testable
+/// without mutating process env (same reason `default_cache_root_from`
+/// exists).
+fn home_or_fallback(home_env: Option<&str>) -> PathBuf {
+    nonempty(home_env)
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// The `key[..2]/key.json` half of the cache layout, independent of any
+/// particular `root`. `key` is `sha256(content_hash + "\0" +
+/// derivation_hash)` hex-encoded — the streaming `update()` calls below are
+/// equivalent to Python's single-shot `f"{a}\x00{b}".encode()` since
+/// SHA-256 is defined over a byte stream and chunk boundaries don't affect
+/// the digest.
+///
+/// Exposed (not just inlined into `path_for`) so the cross-language parity
+/// probe (`examples/hash_parity_probe.rs`) can call the SAME code the cache
+/// actually uses, rather than a probe-only reimplementation that could
+/// silently drift from it. This is the most parity-critical line in the
+/// whole cache: if Rust and Python compute different keys here, the two
+/// languages silently keep separate cache directories, which defeats the
+/// entire reason `engine` was folded into `derivation_hash` (Task 6) — so
+/// both languages can safely share one `--cache-dir`.
+pub fn relative_key_path(
+    content_hash: &str,
+    derivation_hash: &str,
+    extra: Option<&str>,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content_hash.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(derivation_hash.as_bytes());
+    // `extra` is always folded in — as the empty string when a deriver
+    // contributes nothing — so there is exactly ONE key formula rather than
+    // a two-shape scheme where a pure deriver and a deriver whose extra
+    // happens to be "" could land on different paths.
+    hasher.update(b"\0");
+    hasher.update(extra.unwrap_or("").as_bytes());
+    let key = format!("{:x}", hasher.finalize());
+    format!("{}/{}.json", &key[..2], key)
+}
+
+/// Memoises derivations on (content_hash, derivation_hash, extra).
+///
+/// `extra` is the deriver's own per-document cache-key contribution
+/// (`CacheableDeriver::cache_key_extra`), and it exists because
+/// content-addressing alone is only sound for a deriver that is a PURE
+/// function of (bytes, params). `ImageMetaDeriver` is not: it derives its
+/// output text from the filename and path segments, so two byte-identical
+/// images with different names must NOT share an entry. Rather than fold
+/// the path into every key — which would defeat content-addressing for the
+/// derivers that genuinely are pure, e.g. two copies of the same PDF that
+/// should derive once — each deriver declares what per-document material it
+/// actually consumes. Pure derivers contribute `None` and keep the exact
+/// sharing behaviour they had before.
+pub struct DerivationCache {
+    root: PathBuf,
+    /// GAP-007: a cache write failure (e.g. a read-only cache root) must
+    /// not abort the run — but a read-only root fails EVERY `put()`, and
+    /// warning on every single document would flood the log for the whole
+    /// ingest. This flips true on the first failed `put()` and gates every
+    /// subsequent one, so exactly one warning is emitted per
+    /// `DerivationCache` instance (one per `FilesSource`, i.e. one per
+    /// cell) no matter how many documents fail to cache after it.
+    put_failure_warned: std::sync::atomic::AtomicBool,
+}
+
+impl DerivationCache {
+    pub fn new(root: Option<PathBuf>) -> Self {
+        Self {
+            root: root.unwrap_or_else(default_cache_root),
+            put_failure_warned: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn path_for(
+        &self,
+        content_hash: &str,
+        derivation_hash: &str,
+        extra: Option<&str>,
+    ) -> PathBuf {
+        self.root
+            .join(relative_key_path(content_hash, derivation_hash, extra))
+    }
+
+    pub fn get(
+        &self,
+        content_hash: &str,
+        derivation_hash: &str,
+        extra: Option<&str>,
+    ) -> Option<ParseResult> {
+        let path = self.path_for(content_hash, derivation_hash, extra);
+        let bytes = std::fs::read(&path).ok()?;
+        let payload: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        // Missing, unreadable, malformed, OR structurally wrong (e.g. valid
+        // JSON that isn't an object, or an object missing "text"/"metadata")
+        // entries are all misses, never errors — mirrors Python's
+        // `except (OSError, ValueError, KeyError, TypeError)` catch-all,
+        // which the adversarial test below specifically exercises with a
+        // syntactically-valid-but-wrong-shape payload (e.g. a JSON array),
+        // not just malformed JSON.
+        //
+        // DELIBERATE DEVIATION from Python (documented, do not "fix"):
+        // Python's `get()` does `ParseResult(text=payload["text"],
+        // metadata=payload["metadata"])` with NO type check on the loaded
+        // values — a cache entry `{"text": 42, "metadata": {}}` is accepted
+        // there and yields a ParseResult whose `.text` is an int. The
+        // `.as_str()?` / `.as_object()?` calls below instead treat a
+        // wrong-typed entry as a miss. Rust's behavior here is correct;
+        // Python's is a latent bug this port does not reproduce.
+        let obj = payload.as_object()?;
+        let text = obj.get("text")?.as_str()?.to_string();
+        let metadata = obj.get("metadata")?.as_object()?.clone();
+        // `had_content` is not persisted, and must not be: the cache is
+        // scoped to derive-routed extensions in BOTH ports, and a
+        // derive-routed document already reaches `on_empty` by route 1, so
+        // no parser F5 claim ever passes through here. Python's `get()`
+        // likewise rebuilds `ParseResult(text=..., metadata=...)` and lets
+        // `had_content` default to None — same shape, same key, same
+        // entries readable from either port.
+        Some(ParseResult {
+            text,
+            metadata,
+            had_content: None,
+        })
+    }
+
+    pub fn put(
+        &self,
+        content_hash: &str,
+        derivation_hash: &str,
+        result: &ParseResult,
+        extra: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let path = self.path_for(content_hash, derivation_hash, extra);
+        let dir = path.parent().expect("path_for always has a parent");
+        std::fs::create_dir_all(dir)?;
+        let payload = json!({"text": result.text, "metadata": result.metadata});
+        let bytes = serde_json::to_vec(&payload)?;
+
+        // Atomic write: temp file in the SAME directory (same filesystem —
+        // required for persist()'s rename to be atomic), then persist().
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".tmp-")
+            .tempfile_in(dir)?;
+        tmp.write_all(&bytes)?;
+        tmp.persist(&path)
+            .map_err(|e| anyhow::anyhow!("atomic persist of cache entry failed: {e}"))?;
+        Ok(())
+    }
+
+    pub fn purge(&self) -> anyhow::Result<usize> {
+        let mut count = 0usize;
+        if !self.root.exists() {
+            return Ok(0);
+        }
+        for entry in walkdir_json_files(&self.root)? {
+            // Deliberately unconditional (matches Python's
+            // `unlink(missing_ok=True)` + `count += 1` regardless of
+            // outcome): a removal racing a concurrent purge, or a file
+            // that vanished between listing and removal, still counts.
+            // `purge()` reports "how many entries this pass touched", not
+            // "how many were provably deleted by this call".
+            let _ = std::fs::remove_file(&entry);
+            count += 1;
+        }
+        Ok(count)
+    }
+}
+
+/// `true` iff `s` is exactly `len` lowercase hex digits. Mirrors Python's
+/// `re.fullmatch(r'[0-9a-f]{2}/[0-9a-f]{64}\.json', ...)` (GAP-002): the
+/// walk below is a directory-listing scan, not a regex over a joined path,
+/// but this is the same character class applied per-segment.
+fn is_lowercase_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Two-level walk mirroring `path_for`'s layout exactly: `root /
+/// key[..2] / key.json` nests exactly one directory deep, by construction
+/// — never more, since `path_for` never produces a deeper path. So this is
+/// NOT a general recursive walk and does not need the `walkdir` crate
+/// (not a dependency of this workspace). Python's `purge()` uses
+/// `Path.rglob("*.json")`, which IS fully recursive: a cache `root`
+/// pointed at some deeper, non-chunkshop-owned directory tree (e.g. an
+/// existing directory with nested subfolders reused as the cache dir)
+/// would see Python delete nested `.json` files this two-level walk would
+/// skip. That divergence is accepted and documented here (chunkshop itself
+/// never writes anything deeper than two levels under `root`, so it never
+/// arises from chunkshop's own writes) rather than "fixed" by adding a
+/// general-recursion dependency for a case that can't occur from this
+/// cache's own output.
+///
+/// GAP-002: additionally, each candidate is now checked against
+/// `is_lowercase_hex` (directory name = 2 hex chars, filename = 64 hex
+/// chars prefixed by that directory name) rather than accepted on shape
+/// alone, so a `root` that happens to point at some unrelated real
+/// directory doesn't have ITS `*.json` files treated as cache entries.
+fn walkdir_json_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(root)? {
+        let sub = entry?.path();
+        if !sub.is_dir() {
+            continue;
+        }
+        // GAP-002: only descend into directories shaped like the cache's
+        // own `key[..2]` prefix. A `root` that happens to point at some
+        // unrelated real directory (a mis-set `--cache-dir`) must not have
+        // ITS subdirectories' `*.json` files treated as cache entries.
+        let Some(dir_name) = sub.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !is_lowercase_hex(dir_name, 2) {
+            continue;
+        }
+        for inner in std::fs::read_dir(&sub)? {
+            let inner_path = inner?.path();
+            if !inner_path.is_file() {
+                continue;
+            }
+            if inner_path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            // The filename (sans `.json`) must be the full 64-hex-char
+            // sha256 digest AND start with the parent directory's 2 hex
+            // chars — exactly `path_for`'s own layout, never a foreign
+            // same-shaped-by-coincidence file.
+            let Some(stem) = inner_path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if !is_lowercase_hex(stem, 64) || !stem.starts_with(dir_name) {
+                continue;
+            }
+            files.push(inner_path);
+        }
+    }
+    Ok(files)
+}
+
+/// Returns `(result, was_cache_hit)`. A `None` cache disables memoisation.
+/// `extra` is the deriver's `cache_key_extra(path)` contribution; see
+/// `DerivationCache` for why it is per-deriver rather than always the path.
+pub fn cached_derive<F>(
+    cache: Option<&DerivationCache>,
+    content_hash: &str,
+    derivation_hash: &str,
+    extra: Option<&str>,
+    compute: F,
+) -> anyhow::Result<(ParseResult, bool)>
+where
+    F: FnOnce() -> anyhow::Result<ParseResult>,
+{
+    let Some(cache) = cache else {
+        return Ok((compute()?, false));
+    };
+    if let Some(hit) = cache.get(content_hash, derivation_hash, extra) {
+        return Ok((hit, true));
+    }
+    let result = compute()?;
+    // GAP-007: a cache WRITE failure must not fail the run — the document
+    // was successfully derived, and refusing to ingest it over a caching
+    // side effect (a read-only or full cache root) would be strictly
+    // worse than just re-deriving it next time. Warn once per cache
+    // instance (see `put_failure_warned`) and continue uncached.
+    if let Err(e) = cache.put(content_hash, derivation_hash, &result, extra) {
+        if !cache
+            .put_failure_warned
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::warn!(
+                "cache write to {} failed, continuing without caching this run: {e:#}",
+                cache.root.display()
+            );
+        }
+    }
+    Ok((result, false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cache(tmp: &tempfile::TempDir) -> DerivationCache {
+        DerivationCache::new(Some(tmp.path().to_path_buf()))
+    }
+
+    #[test]
+    fn home_fallback_uses_temp_dir_not_the_cwd() {
+        // `.` would silently write a `.cache/` tree into the caller's working
+        // directory. HOME is routinely unset under systemd units without PAM,
+        // under cron, and in some containers, so this is reachable in practice.
+        let tmp = std::env::temp_dir();
+        assert_eq!(home_or_fallback(None), tmp, "unset HOME must not yield a relative path");
+        assert_eq!(home_or_fallback(Some("")), tmp, "empty HOME is treated as unset");
+        assert_ne!(home_or_fallback(None), PathBuf::from("."));
+        assert_eq!(home_or_fallback(Some("/home/someone")), PathBuf::from("/home/someone"));
+    }
+
+    #[test]
+    fn miss_then_hit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        assert!(c.get("c1", "d1", None).is_none());
+        c.put("c1", "d1", &ParseResult::new("cat"), None).unwrap();
+        let got = c.get("c1", "d1", None).unwrap();
+        assert_eq!(got.text, "cat");
+    }
+
+    #[test]
+    fn different_derivation_hash_is_a_miss() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("old"), None).unwrap();
+        assert!(c.get("c1", "d2", None).is_none());
+    }
+
+    #[test]
+    fn different_content_hash_is_a_miss() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("old"), None).unwrap();
+        assert!(c.get("c2", "d1", None).is_none());
+    }
+
+    #[test]
+    fn cached_derive_computes_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        let calls = std::cell::Cell::new(0);
+        let compute = || {
+            calls.set(calls.get() + 1);
+            Ok(ParseResult::new("expensive"))
+        };
+        let (r1, hit1) = cached_derive(Some(&c), "c1", "d1", None, compute).unwrap();
+        let (r2, hit2) = cached_derive(Some(&c), "c1", "d1", None, compute).unwrap();
+        assert_eq!(r1.text, "expensive");
+        assert_eq!(r2.text, "expensive");
+        assert!(!hit1 && hit2);
+        assert_eq!(calls.get(), 1, "second call must not recompute");
+    }
+
+    /// GAP-007: a `put()` failure (read-only cache root) must not fail the
+    /// run, and must warn only ONCE per `DerivationCache` instance even
+    /// when every document's write fails.
+    #[test]
+    #[cfg(unix)]
+    fn put_failure_is_non_fatal_and_warns_only_once() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("readonly");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let c = DerivationCache::new(Some(root.clone()));
+
+        let calls = std::cell::Cell::new(0);
+        let compute = || {
+            calls.set(calls.get() + 1);
+            Ok(ParseResult::new("x"))
+        };
+
+        assert!(
+            !c.put_failure_warned.load(std::sync::atomic::Ordering::Relaxed),
+            "must not be warned before any put() is attempted"
+        );
+
+        let (r1, hit1) = cached_derive(Some(&c), "c1", "d1", None, compute).unwrap();
+        assert_eq!(r1.text, "x");
+        assert!(!hit1, "a failed write is never a hit");
+        assert!(
+            c.put_failure_warned.load(std::sync::atomic::Ordering::Relaxed),
+            "the first failed put() must flip the warned flag"
+        );
+
+        // A second, different document also fails to cache — the run must
+        // still succeed (ingest continues uncached), and nothing panics or
+        // errors on the ALREADY-warned path.
+        let (r2, hit2) = cached_derive(Some(&c), "c2", "d1", None, compute).unwrap();
+        assert_eq!(r2.text, "x");
+        assert!(!hit2);
+        assert_eq!(
+            calls.get(),
+            2,
+            "with nothing ever cached, compute must run on every call"
+        );
+
+        // Cleanup: restore write perms so the tempdir can be removed.
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn purge_empties_the_cache() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("x"), None).unwrap();
+        c.put("c2", "d1", &ParseResult::new("y"), None).unwrap();
+        assert_eq!(c.purge().unwrap(), 2);
+        assert!(c.get("c1", "d1", None).is_none());
+    }
+
+    /// GAP-002: `purge()`/`stats()` must only ever touch files shaped like
+    /// the cache's own layout (`root/<2 hex>/<64 hex>.json`), never any
+    /// `*.json` a `root` happens to contain. A mis-set `--cache-dir`
+    /// pointed at a real directory (e.g. a repo checkout) must not have its
+    /// unrelated `package.json` or a nested `foo.json` deleted.
+    #[test]
+    fn purge_ignores_non_cache_shaped_json_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("real entry"), None)
+            .unwrap();
+
+        // A foreign top-level JSON file — never matched even by the old
+        // walk (it isn't inside a subdirectory), included here so the fix
+        // stays provably correct on this case too.
+        std::fs::write(tmp.path().join("package.json"), b"{}").unwrap();
+
+        // The actual gap: a JSON file one directory level deep, exactly the
+        // shape the old two-level walk accepted unconditionally, but whose
+        // directory name isn't 2 hex chars and whose filename isn't a
+        // 64-char sha256 hex digest.
+        std::fs::create_dir_all(tmp.path().join("nested")).unwrap();
+        std::fs::write(tmp.path().join("nested").join("foo.json"), b"{}").unwrap();
+
+        assert_eq!(
+            c.purge().unwrap(),
+            1,
+            "purge must remove exactly the one real cache entry"
+        );
+        assert!(
+            tmp.path().join("package.json").exists(),
+            "foreign top-level JSON must survive purge"
+        );
+        assert!(
+            tmp.path().join("nested").join("foo.json").exists(),
+            "foreign nested JSON must survive purge"
+        );
+        assert!(
+            c.get("c1", "d1", None).is_none(),
+            "the real entry must actually be gone"
+        );
+    }
+
+    #[test]
+    fn malformed_json_entry_is_a_miss() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("x"), None).unwrap();
+        for entry in std::fs::read_dir(tmp.path()).unwrap() {
+            let sub = entry.unwrap().path();
+            if sub.is_dir() {
+                for f in std::fs::read_dir(&sub).unwrap() {
+                    std::fs::write(f.unwrap().path(), b"{not json").unwrap();
+                }
+            }
+        }
+        assert!(c.get("c1", "d1", None).is_none());
+    }
+
+    #[test]
+    fn well_formed_but_wrong_shaped_json_is_also_a_miss() {
+        // The adversarial case the Python plan's own retro named:
+        // "corrupt entries are misses (tested malformed JSON, missed
+        // valid-non-dict)". A syntactically valid JSON ARRAY (not an
+        // object with text/metadata) must also degrade to a miss, not
+        // panic or silently return garbage.
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("x"), None).unwrap();
+        for entry in std::fs::read_dir(tmp.path()).unwrap() {
+            let sub = entry.unwrap().path();
+            if sub.is_dir() {
+                for f in std::fs::read_dir(&sub).unwrap() {
+                    std::fs::write(f.unwrap().path(), b"[1, 2, 3]").unwrap();
+                }
+            }
+        }
+        assert!(
+            c.get("c1", "d1", None).is_none(),
+            "a syntactically valid but wrong-shaped JSON payload must be a miss, not a panic"
+        );
+    }
+
+    #[test]
+    fn wrong_typed_text_field_is_a_miss() {
+        // Correction 3: proves the deliberate deviation documented on
+        // `get()` above. Python accepts this exact payload (its `.text`
+        // ends up an `int`); Rust must treat it as a miss.
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("x"), None).unwrap();
+        for entry in std::fs::read_dir(tmp.path()).unwrap() {
+            let sub = entry.unwrap().path();
+            if sub.is_dir() {
+                for f in std::fs::read_dir(&sub).unwrap() {
+                    std::fs::write(f.unwrap().path(), br#"{"text": 42, "metadata": {}}"#).unwrap();
+                }
+            }
+        }
+        assert!(
+            c.get("c1", "d1", None).is_none(),
+            "a wrong-typed `text` field must be a miss, not an int masquerading as a String"
+        );
+    }
+
+    #[test]
+    fn relative_key_path_is_pinned() {
+        // Literal known-good value so a future refactor of the hashing
+        // breaks LOUDLY here instead of silently diverging from Python.
+        // Computed independently via: printf 'c1\x00d1\x00' | sha256sum
+        assert_eq!(
+            relative_key_path("c1", "d1", None),
+            "c0/c025b0ee86847c86d25f74d8016c44c3db6d52378e26b5679ffeda0c9f98090a.json"
+        );
+        // A `None` extra and an EMPTY extra are the same key by
+        // construction: there is one formula, not two shapes.
+        assert_eq!(
+            relative_key_path("c1", "d1", None),
+            relative_key_path("c1", "d1", Some(""))
+        );
+        // printf 'c1\x00d1\x00a chart revenue' | sha256sum
+        assert_eq!(
+            relative_key_path("c1", "d1", Some("a chart revenue")),
+            "03/033455ba3ef8e3338f24e29cb3a1a2bd3f2d52aa4543ff7c6d1067d64cc219e1.json"
+        );
+    }
+
+    #[test]
+    fn different_extra_is_a_miss_on_identical_content_and_derivation() {
+        // The whole point of the third key component: same bytes, same
+        // deriver config, different per-document material -> separate
+        // entries, not one poisoned entry serving both documents.
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        c.put("c1", "d1", &ParseResult::new("a chart revenue"), Some("a chart revenue"))
+            .unwrap();
+        assert!(c.get("c1", "d1", Some("b goblin warrior")).is_none());
+        assert_eq!(
+            c.get("c1", "d1", Some("a chart revenue")).unwrap().text,
+            "a chart revenue"
+        );
+    }
+
+    #[test]
+    fn pure_derivers_still_share_one_entry() {
+        // The property being PRESERVED: with no extra, byte-identical
+        // input under the same derivation still hits. If this ever fails,
+        // the fix has been widened into "path in every key" and
+        // content-addressing is gone.
+        let tmp = tempfile::tempdir().unwrap();
+        let c = cache(&tmp);
+        let (_, hit1) =
+            cached_derive(Some(&c), "c1", "d1", None, || Ok(ParseResult::new("body"))).unwrap();
+        let (r2, hit2) =
+            cached_derive(Some(&c), "c1", "d1", None, || Ok(ParseResult::new("body"))).unwrap();
+        assert!(!hit1 && hit2);
+        assert_eq!(r2.text, "body");
+    }
+
+    #[test]
+    fn empty_chunkshop_cache_dir_env_treated_as_unset() {
+        // Correction 1: `export CHUNKSHOP_CACHE_DIR=` is `Ok("")` from
+        // `std::env::var`, not absent — Python's `if env:` truthiness
+        // treats both the same way, so Rust must too.
+        let home = Path::new("/home/testuser");
+        let unset = default_cache_root_from(None, None, home);
+        let empty = default_cache_root_from(Some(""), None, home);
+        assert_eq!(unset, empty);
+        assert_eq!(unset, home.join(".cache").join("chunkshop").join("derived"));
+    }
+
+    #[test]
+    fn empty_xdg_cache_home_env_treated_as_unset() {
+        let home = Path::new("/home/testuser");
+        let unset = default_cache_root_from(None, None, home);
+        let empty = default_cache_root_from(None, Some(""), home);
+        assert_eq!(unset, empty);
+    }
+
+    #[test]
+    fn nonempty_chunkshop_cache_dir_env_wins() {
+        let home = Path::new("/home/testuser");
+        let got = default_cache_root_from(Some("/explicit/cache"), Some("/xdg"), home);
+        assert_eq!(got, PathBuf::from("/explicit/cache"));
+    }
+
+    #[test]
+    fn nonempty_xdg_cache_home_env_used_when_chunkshop_cache_dir_unset() {
+        let home = Path::new("/home/testuser");
+        let got = default_cache_root_from(None, Some("/xdg"), home);
+        assert_eq!(got, PathBuf::from("/xdg").join("chunkshop").join("derived"));
+    }
+}

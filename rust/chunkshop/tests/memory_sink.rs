@@ -35,6 +35,7 @@ fn unique_database() -> String {
 
 fn mk_cfg(database: &str, source_tag: &str, namespace: Option<&str>) -> PostgresTargetConfig {
     PostgresTargetConfig {
+        dsn: None,
         dsn_env: DSN_ENV.to_string(),
         database_name: database.to_string(),
         table: "memory".to_string(),

@@ -11,6 +11,28 @@
 pub mod base;
 pub use base::Document;
 
+// `ParseResult` / `Deriver` are always available (no feature gate) — only the
+// format-specific submodules under `parsers/` are gated behind `media`.
+pub mod parsers;
+
+// Derivers (the `derive:` rungs, the derivation cache, and provenance).
+//
+// Gated on `source` OR `media`, NOT always-on. It used to be ungated on the
+// grounds that provenance should always be available like `parsers` above —
+// but `ParseResult`/`Deriver`/`CacheableDeriver` live in `parsers`, and
+// nothing outside this module needs `derivers` except `files.rs` (already
+// `source`-gated). Leaving it ungated forced `chrono` (provenance's RFC3339
+// timestamp) and `tempfile` (the cache's atomic write) to be unconditional
+// dependencies, which added 10 crates to a `--no-default-features` build —
+// breaking "a text-only user installs nothing extra", the property the whole
+// media layer is supposed to preserve.
+//
+// `media` is in the gate as well as `source`: that feature's contract
+// explicitly includes rung 0 (`image_meta`), which lives here, so a
+// `--features media` library build must keep it.
+#[cfg(any(feature = "source", feature = "media"))]
+pub mod derivers;
+
 #[cfg(all(feature = "source", feature = "sink"))]
 use anyhow::anyhow;
 #[cfg(feature = "source")]
@@ -116,7 +138,7 @@ impl AnySource {
 #[cfg(all(feature = "source", feature = "sink"))]
 pub fn load_source(cfg: &SourceConfig) -> Result<AnySource> {
     match cfg {
-        SourceConfig::Files(c) => Ok(AnySource::Files(FilesSource::new(c.clone()))),
+        SourceConfig::Files(c) => Ok(AnySource::Files(FilesSource::new(c.clone())?)),
         SourceConfig::JsonCorpus(c) => Ok(AnySource::JsonCorpus(JsonCorpusSource::new(c.clone()))),
         SourceConfig::PgTable(c) => Ok(AnySource::PgTable(PgTableSource::new(c.clone()))),
         SourceConfig::MariadbTable(c) => {

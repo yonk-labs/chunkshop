@@ -44,6 +44,16 @@ path = "src/bin/fqn-cli.rs"
 name = "lede_parity"
 required-features = ["lede"]
 
+[[example]]
+# Tag-agreement measurement harness for ClipTagsDeriver (not vector
+# agreement — see clip_tags.rs's module doc for why vision-tower cosine
+# divergence doesn't necessarily change which tags get selected). Prints
+# ranked (tag, score) pairs per fixture image as JSON so they can be diffed
+# against the Python reference (run_python_clip_tags.py, ad hoc, not
+# committed). Needs `media` + `embedder-hub`.
+name = "clip_tags_parity"
+required-features = ["media", "embedder-hub"]
+
 [dependencies]
 # --- Always-on core (small, used by the chunker module) ---
 anyhow = "1"
@@ -57,6 +67,28 @@ serde_yaml_ng = "0.10"
 sha2 = "0.10"
 thiserror = "1"
 tracing = "0.1"
+# Task 6 (provenance): RFC3339 UTC timestamp for stamp_provenance()'s "ts"
+# field, mirroring Python's `datetime.now(timezone.utc).isoformat()`.
+# Already present transitively (sqlx's "chrono" feature, `sink` builds).
+#
+# OPTIONAL, and pulled by `source`/`media` only — the same gate
+# `sources::derivers` (its only user) now carries. It was briefly
+# unconditional so that an ungated `derivers` would build under
+# `--no-default-features`; that cost the slim build chrono + its
+# iana-time-zone/num-traits/libc tail for a module the slim build cannot
+# reach, so the module got the gate instead.
+chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
+# Task 7 (DerivationCache): atomic cache-entry writes via
+# `tempfile::Builder::tempfile_in` + `.persist()` (same directory as the
+# final path, so the rename is atomic) — `raw_store/local.rs`'s `put` is a
+# direct `std::fs::write`, NOT atomic, so this deliberately does not reuse
+# that pattern.
+#
+# OPTIONAL for the same reason as `chrono` above (it dragged
+# rustix/linux-raw-sys/fastrand/getrandom/bitflags into the slim tree). It
+# stays a `[dev-dependencies]` entry too — where it lived before
+# `DerivationCache` existed — so test code keeps it in every build.
+tempfile = { version = "3", optional = true }
 
 # --- Bin-only (kept always-on for diff minimality; clap + tracing-subscriber
 # are tiny relative to the heavy deps below) ---
@@ -81,6 +113,33 @@ tokenizers = { version = "0.22.2", default-features = false, features = ["onig"]
 
 # --- `extractor` feature ---
 whatlang = { version = "0.16", optional = true }
+
+# --- `media` feature: SP-3 parser layer (pdf/docx/xlsx/html) + rung-0 image
+# metadata. Mirrors Python's per-format parser modules
+# (sources/parsers/{pdf,docx,xlsx,html}.py) and the free image_meta deriver.
+# `docx-rust` is the crates.io name for PoiScript's *reader* — NOT bokuweb's
+# `docx-rs`, which is writer-only and would silently fail to extract text.
+pdf-extract = { version = "0.12", optional = true }
+calamine = { version = "0.36", optional = true }
+docx-rust = { version = "0.1", optional = true }
+html2text = { version = "0.17", optional = true }
+# `image-models` already pulls `image` transitively via fastembed, but only
+# fastembed's own code can `use` it that way — a direct dependency is needed
+# for `image_meta.rs`'s own `image::open`/`ImageFormat`/`ColorType` calls.
+image = { version = "0.25", optional = true }
+# `png` and `gif` are already transitive dependencies of `image` (pinned in
+# Cargo.lock at 0.18/0.14 respectively) — declared directly here too, at the
+# SAME versions, so no new crate enters the tree. `image` decodes palette
+# PNGs and all GIFs into expanded RGB(A) buffers, which loses the PIL-visible
+# distinction between "P" (indexed) and "RGB"/"RGBA" mode, and (for GIF)
+# always reports `has_alpha=true` regardless of whether the file actually
+# declares a transparent color. `image_meta.rs` reads the IHDR color-type
+# byte + tRNS chunk (PNG) and the Graphic Control Extension's transparent
+# flag (GIF) directly via these crates' low-level readers to recover
+# Pillow-exact `mode`/`has_alpha` values instead of `image`'s post-expansion
+# `ColorType`. See Task 9 Correction 1.
+png = { version = "0.18", optional = true }
+gif = { version = "0.14", optional = true }
 
 # --- `source` feature: files (glob) / HTTP / S3 ---
 futures = { version = "0.3", optional = true }
@@ -140,7 +199,6 @@ tree-sitter-rust       = { version = "0.24", optional = true }
 # by `chunkshop::semantic` and `chunkshop::oversize` from inside integration
 # tests.
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
-tempfile = "3"
 # RM-B Task 1: tests/sync_primitives.rs drives the IncrementalSource and
 # PrunableSource futures via futures::executor::block_on (no tokio runtime
 # needed for the smoke path). Declared in dev-deps so the test compiles
@@ -151,6 +209,11 @@ futures = "0.3"
 # in tests/cross_port_proptest.rs (determinism, separator normalization,
 # output shape, project-id divergence).
 proptest = "1"
+# Test-only tempdirs, used well beyond the derivation cache (files.rs,
+# raw_store, image_meta, ...). Declared here as well as in the optional
+# `[dependencies]` entry above so tests compile in feature combinations
+# that don't enable `source`/`media`.
+tempfile = "3"
 
 [features]
 # Default = full feature set for backward compatibility. Existing consumers
@@ -200,7 +263,10 @@ extractor = ["dep:whatlang"]
 # Source loaders: files (glob), HTTP, S3. DB-table sources (PG/MariaDB/
 # SQLite/ClickHouse) additionally require `sink` since they reuse the
 # backend connection layer — they are gated on `all(source, sink)` in code.
-source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:tokio"]
+# `dep:chrono` / `dep:tempfile` are here (and in `media`) because
+# `sources::derivers` is gated on `any(source, media)` — provenance needs
+# chrono, the derivation cache needs tempfile, and nothing else does.
+source = ["dep:futures", "dep:glob", "dep:object_store", "dep:reqwest", "dep:tokio", "dep:chrono", "dep:tempfile"]
 
 # The full modular sink/backend layer: PG (pgvector), MariaDB (sqlx mysql),
 # SQLite (rusqlite + sqlite-vec), ClickHouse (clickhouse + url/urlencoding).
@@ -242,3 +308,12 @@ code-aware-go         = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-go", 
 code-aware-typescript = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-typescript", "dep:tree-sitter-tags"]
 code-aware-javascript = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-javascript", "dep:tree-sitter-tags"]
 code-aware-rust       = ["code-aware", "dep:tree-sitter", "dep:tree-sitter-rust",       "dep:tree-sitter-tags"]
+
+# SP-3 parser layer + rung 0 (image metadata, keyless/deterministic).
+# `clip_tags` (rung 1) additionally requires `embedder-hub` — gated in code
+# with #[cfg(all(feature = "media", feature = "embedder-hub"))], not a
+# separate Cargo feature, because a YAML that asks for `rung: clip_tags`
+# without embedder-hub built in should fail at config-load with a clear
+# message (F14/NN-6 convention), not a missing-symbol compile error for
+# users who only wanted image_meta.
+media = ["dep:pdf-extract", "dep:calamine", "dep:docx-rust", "dep:html2text", "dep:image", "dep:png", "dep:gif", "dep:chrono", "dep:tempfile"]

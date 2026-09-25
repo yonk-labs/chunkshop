@@ -2,6 +2,189 @@
 
 ## Unreleased
 
+### Added
+
+- **Media ingest: the `files` source can now derive text from non-text
+  bytes.** A new `Deriver`/`ParseResult` seam sits alongside the existing
+  `FileParser` protocol — fully backward-compatible, third-party
+  `FileParser`s keep working unchanged. Configure it with `source.derive`
+  (per-extension deriver mapping), `source.on_empty` (`error` / `skip` /
+  `index` — see the dedicated entry below), and `source.cache` (provenance-keyed
+  derivation cache, keyed on content hash + derivation hash + the deriver's
+  own `cache_key_extra`, so a deriver is never re-run on unchanged input).
+  Derived text flows through the ordinary chunk → embed → sink pipeline and
+  lands in the same table as any other document. Guide:
+  [`docs/media-ingest.md`](docs/media-ingest.md).
+- Two keyless image rungs ship out of the box: `image_meta` (deterministic
+  Pillow metadata — dimensions, format, path segments) and `clip_tags`
+  (zero-shot CLIP image tagging against a user-supplied vocabulary via
+  `fastembed`, no extra install required — see the `vision` extra below).
+- `content_origin` and `derived_rung` are promoted to real columns by
+  default on any cell that configures `source.derive`, so you can filter or
+  facet search results on which rung produced a chunk's text without a
+  jsonb reach-through.
+- **New `vision` extra (`chunkshop[vision]`), declared empty.** CLIP image
+  tagging runs on `fastembed`, which is already a core dependency — `vision`
+  exists only to name the capability for discoverability; it pulls in
+  nothing extra.
+- **Rung 5: `rung: ross`, an opt-in subprocess deriver for the `ross` sibling
+  binary** ([yonk-labs/ross](https://github.com/yonk-labs/ross), Apache-2.0).
+  Shipped in **both ports**, accepting byte-identical YAML (`binary`,
+  `labels_file`, `llm`, `timeout_s`). ross sniffs the file type by magic
+  bytes, so a single `derive:` key covers **images, audio and video** — this
+  is the only audio path anywhere in chunkshop. Keyless and offline by
+  default (`llm: false` passes `--no-llm`); `llm: true` adds one call per
+  file to any OpenAI-compatible endpoint, whose url/model/key ross resolves
+  from the **environment** (`ROSS_URL` / `ROSS_MODEL` / `ROSS_API_KEY`, or the
+  per-modality variants) and never from chunkshop config. There is **no
+  compile-time dependency in either language** — no Python extra, no Cargo
+  feature; `cargo build --no-default-features` builds this rung. `engine` is
+  recorded as `"ross"` rather than `"python"`/`"rust"`, because both ports
+  drive the same binary and therefore legitimately share one cache entry.
+  Requires the `ross` binary on `$PATH` at runtime, plus `ffprobe`/`ffmpeg`
+  for audio and video; a missing, non-executable, wrong or failing binary is a
+  named error at deriver **construction** — before the sink's DDL runs, so a
+  `mode: overwrite` cell does not drop your table first. Reference:
+  [`docs/reference/deriver-ross.md`](docs/reference/deriver-ross.md).
+- **Rust parity for media ingest.** The Rust port gained the parser/extension
+  dispatch layer it never had (`std::fs::read_to_string` on every match, no
+  extension dispatch), the SP-3 parser set (PDF/DOCX/XLSX/HTML), the
+  `Deriver`/`ParseResult` seam, `derive` / `on_empty` / `cache` on
+  `FilesSourceConfig`, the provenance stamp and derivation cache, and all
+  three rungs. The same YAML now drives both implementations. Rungs 0 and 1
+  are behind Cargo features — `image_meta` needs `media`, `clip_tags` needs
+  `media` **and** `embedder-hub` — and `media` is not part of the default
+  `full` set, so use `cargo build --features media`; a YAML asking for a rung
+  the binary lacks fails at config load naming the feature.
+- **Aspect-preserving CLIP vision preprocessing (`clip_preprocess`).**
+  `fastembed-rs` 5.13.3 implements `CLIPImageProcessor`'s `shortest_edge` as a
+  square `resize_exact`, squashing any non-square image to 224×224 and giving
+  a different field of view from the Python reference — measured at 13.2° and
+  26.2° on two ordinary non-square fixtures, and 7.1° at an aspect ratio as
+  mild as 1.04. chunkshop now does CLIP's geometry itself (RGB conversion,
+  aspect-preserving resize to a 224 shortest edge with Python's `int()`
+  truncation, 224×224 centre crop) and hands the already-224×224 image to
+  `embed_images`. SC-12's vision-tower bar is correspondingly two-tier, set
+  from a measured 28-image corpus: `1 − cosine ≤ 1e-9` and `max abs ≤ 1e-5`
+  for images needing no resize, `cosine ≥ 0.9995` and `max abs ≤ 1.2e-2` for
+  resampled ones. The residual is sub-LSB rounding in PIL's fixed-point 8-bit
+  resampler versus `image`'s f32 one, and is content-dependent rather than
+  shape-dependent. Upstream `fastembed-rs` issue not yet filed.
+- **`source.on_empty` (new, defaults to `"error"`) applies to derivers only.**
+  When a document is routed to a `derive:` rung and that rung returns no
+  text, the cell now raises `EmptyDerivationError` naming the file and the
+  deriver, instead of silently indexing an empty document. **A document
+  handled by an ordinary parser is unaffected** — a plain `.md`, or a `.pdf`
+  in a cell with no `derive:` rung for it, that yields empty text is still
+  indexed as an empty document, unconditionally. **A cell with no `derive:`
+  block therefore cannot reach this setting at all**, and no pre-existing
+  text-only config changes behaviour. `"skip"` omits the document and
+  continues; `"index"` restores unconditional empty-document indexing. See
+  [`docs/upgrading.md`](docs/upgrading.md#media-ingest) and
+  [`docs/media-ingest.md`](docs/media-ingest.md#the-empty-derivation-policy-on_empty).
+  Note that no shipped rung derives text from a PDF, so a scanned image-only
+  PDF cannot be derive-routed and `on_empty` does not catch it; that gap
+  needs the unbuilt OCR rung.
+
+### Fixed
+
+- **`chunkshop cache purge`/`cache info` no longer touch files outside the
+  derivation cache's own layout.** Both used `root.rglob("*.json")`, which
+  matched ANY `.json` file at ANY depth under the cache root — so a
+  mis-configured `source.cache.root` (pointed at a project checkout, say)
+  could `purge -y` files like `package.json`. Both now walk exactly
+  `<root>/<2 hex>/<64 hex>.json`, the cache's real shape, and `purge` also
+  sweeps orphaned `*.tmp` leftovers from a crashed atomic write in those same
+  subdirectories (not counted as entries). Python only; `cache.rs`'s Rust
+  equivalent is fixed in the same release by the parallel Rust effort.
+- **A derivation-cache write failure (read-only `$HOME`, full disk) no
+  longer aborts the run.** `DerivationCache.put()` propagated any `OSError`
+  from `mkdir`/`mkstemp`/`os.replace` straight out of `cached_derive`, so a
+  media cell in a container or under systemd with no writable cache root
+  failed on its first derived document even though the derivation itself
+  had already succeeded. `put()` now catches `OSError`, logs one warning per
+  cache instance, and lets the already-computed result through uncached.
+- **`RossDeriver`'s `ross_metadata` no longer carries path- or time-dependent
+  exiftool fields.** `cache_key_extra` for rung 5 is the file's basename
+  only, so a byte-identical same-basename file in a different directory is
+  a deliberate cache hit — but the cached payload's `ross_metadata.exif`
+  included exiftool's filesystem-derived keys (`Directory`,
+  `FileModifyDate`, `FileAccessDate`, `FileInodeChangeDate`,
+  `FilePermissions`, `FileName`, `SourceFile`), which are per-path, not
+  per-(content, basename). The second file's cache hit would silently
+  inherit the first file's directory and mtimes. `_build_result` now drops
+  those keys before the result ever reaches the cache, in both ports.
+  `CACHE_SCHEMA_VERSION` is not bumped — rung 5 has not shipped, so there
+  are no existing entries carrying the poisoned keys to invalidate.
+- **A `mode: overwrite` cell no longer drops the target table before
+  finding out the source can't be read.** `run_cell` called
+  `sink.create_table()` (the DROP+CREATE) before draining the source, so
+  F5's `EmptyDerivationError` on a scanned PDF, a ross subprocess timeout,
+  or a lazy CLIP model-load failure — any of which can raise partway
+  through a large corpus — left the existing table dropped and the run
+  aborted with an error. An overwrite cell now fully materialises its
+  source into memory before `create_table()` runs, matching the Rust
+  port's `iter_documents()` (already a `Vec`), so the same failure now
+  aborts the run with the existing table untouched. `append` and
+  `create_if_missing` cells are unaffected and keep streaming, since
+  neither ever drops existing data.
+- **Rust: `files` source config now rejects unknown fields instead of silently
+  dropping them.** `FilesSourceConfig` gained `#[serde(deny_unknown_fields)]`.
+  A YAML carrying `derive:`, `on_empty:` or `cache:` (Python-only for now) had
+  been silently discarded by the Rust binary, which then failed on the first
+  non-UTF-8 file with an I/O error that never mentioned the dropped config.
+  **User-visible behaviour change:** a `files` source with `incremental:` now
+  hard-fails at config load on Rust. Rust implements `IncrementalSource` for
+  `s3`, `pg_table` and `http` but *not* `files`, so such a config has been
+  silently running a full resync every time since v0.8.3. Failing loudly is the
+  correct outcome, but it will surface for anyone who had one.
+- **Rust: `files`-source rows now carry a `parser` metadata key**, reaching
+  parity with Python, which has always written it. Existing Rust `files`
+  deployments will see `"parser": "TextParser"` appear in `metadata` on newly
+  written rows. Low impact unless something promotes or schema-validates the
+  metadata object.
+
+- **`chunkshop search` was hardcoded to the Postgres backend and did not
+  work against sqlite targets**, a bug shipped in v1.0.0-rc6.
+  `chunkshop.search_common.search` always used `chunkshop.search`'s
+  psycopg-based `hybrid_search` regardless of `target.type`, even though
+  sqlite (and mariadb/clickhouse) ship their own `hybrid_search` module. Any
+  rc6 user on a sqlite target hitting `chunkshop search` from the CLI was
+  affected. Fixed with an additive `hybrid_search_fn` override on
+  `search_common.search` (defaults to `None`, so every existing caller's
+  behavior is unchanged) and a `_hybrid_search_fn_for(target_type)`
+  dispatcher wired into the CLI's `search` command for sqlite targets.
+  mariadb/clickhouse CLI search and the `fact-search` command remain
+  Postgres-only for now.
+- **SQLite search was broken for every target, media or not.** `cli.py`
+  injects a `{"metadata_not": {"kind": "fact"}}` filter unless
+  `--include-facts` is passed, and `search_sqlite._build_where` accepted only
+  `{tags, source, metadata}` — so `chunkshop search` against any sqlite cell
+  failed with `unsupported where keys: ['metadata_not']`, and the only
+  workaround changed the semantics of the query. `metadata_not` now mirrors
+  the Postgres leg using SQLite's NULL-safe `IS NOT`, so rows lacking the key
+  are kept and the default filter is a no-op for ordinary chunk rows.
+
+### Documentation
+
+- **New media-ingest guide, [`docs/media-ingest.md`](docs/media-ingest.md)** —
+  the rung ladder and when to reach for each, a worked example from YAML to
+  searchable rows, the provenance model, the derivation cache (including its
+  soundness invariant and two documented rung-5 limitations), `on_empty`,
+  cost/latency, and Python↔Rust parity.
+- **Three new reference cards** —
+  [`deriver-image-meta`](docs/reference/deriver-image-meta.md),
+  [`deriver-clip-tags`](docs/reference/deriver-clip-tags.md),
+  [`deriver-ross`](docs/reference/deriver-ross.md) — every config field, its
+  type, default and effect. Registered in
+  [`docs/reference/README.md`](docs/reference/README.md) under a new
+  "Derivers" group.
+- **[`docs/reference/parsers.md`](docs/reference/parsers.md) updated** — it
+  documented only the `FileParser.parse(path) -> str` signature, which the
+  `Deriver` seam widened.
+- `docs/samples/README.md` now lists the two media recipes
+  (`images-keyless.yaml`, `media-ross.yaml`).
+
 ## 1.0.0-rc6 — 2026-08-28
 
 Documentation refresh + dependency security patches — no source changes.

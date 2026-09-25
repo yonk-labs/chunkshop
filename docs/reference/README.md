@@ -56,6 +56,18 @@ For task-oriented walkthroughs, see [`docs/cookbook/`](../cookbook/).
 |---|---|
 | [`parsers`](parsers.md) | Per-extension parser layer for `FilesSource` (PDF/DOCX/PPTX/XLSX/HTML behind optional extras). |
 
+## Derivers (media → text)
+
+Configured under `source.derive` on the `files` source, keyed by a
+pipe-separated extension list. The discriminator is `rung`, not `type`.
+Guide: [`docs/media-ingest.md`](../media-ingest.md).
+
+| Surface | Rung | One-liner |
+|---|---|---|
+| [`deriver-image-meta`](deriver-image-meta.md) | 0 | Deterministic image header facts + humanised filename/path text. No model, no network, no extra. |
+| [`deriver-clip-tags`](deriver-clip-tags.md) | 1 | Keyless zero-shot CLIP tagging against a user-supplied vocabulary. Wraps rung 0. |
+| [`deriver-ross`](deriver-ross.md) | 5 | The `ross` sibling binary as a subprocess — images, audio and video, keyless by default, optional LLM pass. |
+
 ## OAuth
 
 | Surface | One-liner |

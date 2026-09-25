@@ -82,12 +82,112 @@ class FilesIncrementalSettings(_Base):
     detect: Literal["hash", "mtime"] = "hash"
 
 
+class ImageMetaDeriverConfig(_Base):
+    rung: Literal["image_meta"]
+    path_segments: bool = True
+    segment_depth: int = 3
+
+
+class ClipTagsDeriverConfig(_Base):
+    rung: Literal["clip_tags"]
+    vocabulary: list[str]
+    top_k: int = 3
+    min_score: float = 0.20
+    vision_model: str = "Qdrant/clip-ViT-B-32-vision"
+    text_model: str = "Qdrant/clip-ViT-B-32-text"
+
+
+class RossDeriverConfig(_Base):
+    """Rung 5: the `ross` sibling binary, run as a subprocess.
+
+    Opt-in and keyless by default (``llm: false`` passes ``--no-llm``, so a
+    run needs no endpoint and no network beyond ross's one-time model
+    download). Costs a text-only user nothing — there is no Python extra and
+    no Cargo feature behind this rung in either port, only a binary that must
+    be on ``$PATH`` (or named by ``binary``) when the rung is actually used.
+
+    Fields are deliberately few. ``--clip``/``--clap`` are NOT configurable:
+    without them ross emits no description at all and every document would
+    derive to empty text. See ``sources.derivers.ross``.
+    """
+    rung: Literal["ross"]
+    #: Path to (or name of) the ross executable. Default resolves on $PATH.
+    binary: str = "ross"
+    #: Replace ross's vendored 50-label vocabulary (``--labels-file``). Its
+    #: CONTENT is hashed into the derivation params, so editing the file
+    #: re-derives rather than serving stale cached tags.
+    labels_file: Optional[str] = None
+    #: Run ross's LLM pass. Off by default: keyless and offline is the point
+    #: of this rung. On, ross needs ROSS_URL + ROSS_MODEL (or the
+    #: per-modality variants) in the environment.
+    llm: bool = False
+    #: Per-file subprocess timeout, seconds. ross's first run downloads its
+    #: CLIP/CLAP weights, which is the slow case this must accommodate.
+    timeout_s: int = 120
+
+
+DeriverConfig = Annotated[
+    Union[ImageMetaDeriverConfig, ClipTagsDeriverConfig, RossDeriverConfig],
+    Field(discriminator="rung"),
+]
+
+
+class DerivationCacheSettings(_Base):
+    """Memoises derived text on (content_hash, derivation_hash).
+
+    Entries contain derived text, which for some corpora is sensitive: point
+    ``root`` at an encrypted volume, or set ``enabled: false`` to keep derived
+    text only in the target database. No encryption-at-rest in v1.
+    """
+    enabled: bool = True
+    root: Optional[str] = None
+
+
 class FilesSource(_Base):
     type: Literal["files"]
     glob: str
     id_from: Literal["path", "stem", "sha1"] = "stem"
     encoding: str = "utf-8"
     incremental: Optional[FilesIncrementalSettings] = None
+    on_empty: Literal["error", "skip", "index"] = "error"
+    """What to do when a file that demonstrably held content yields no text.
+
+    ``error`` (default) raises EmptyDerivationError — a scanned PDF that
+    yields nothing is a failure, not an empty success. ``skip`` omits the
+    document and lets the run continue. ``index`` restores the pre-1.0
+    behaviour of indexing an empty document; it is retained only for
+    backward compatibility and is not recommended.
+
+    **THE SCOPE RULE.** This setting is reached by exactly two routes, and
+    "the extracted text was empty" is deliberately NOT one of them:
+
+    1. the document was routed through the ``derive:`` block above; or
+    2. its parser made an affirmative claim that the file held content it
+       failed to extract — a PDF with pages, a DOCX with tables, a PPTX
+       with slides, an HTML page built from ``<img>``/``<svg>``/``<iframe>``
+       and nothing else. This is spec defect F5, "empty-derivation is loud,
+       not silent".
+
+    Any other empty document is indexed unconditionally, whatever this is
+    set to. A zero-byte or whitespace-only ``.md`` is LEGITIMATELY empty:
+    bytes went in, no text came out, nothing was lost. ``TextParser`` has
+    no notion of a content unit and never makes the route-2 claim, so no
+    text file can reach the loud branch. That separation is load-bearing —
+    applying a derivation policy to the plain-text path made an upgrade
+    abort mid-run on any corpus containing a blank file, after
+    ``target.mode: overwrite`` had already dropped the table.
+
+    XLSX makes no route-2 claim either: a workbook of empty cells is a
+    blank template, and neither port's library exposes non-cell content
+    (charts, images) publicly, so there is no honest signal to raise.
+
+    Route 2 is a deliberate behaviour change from chunkshop 1.0.0-rc6,
+    where a scanned PDF indexed as a silent empty document. If your corpus
+    really is scanned images, preprocess it to markdown (yonk-doctools) or
+    set ``on_empty: skip``.
+    """
+    derive: Optional[dict[str, DeriverConfig]] = None
+    cache: DerivationCacheSettings = DerivationCacheSettings()
 
 
 class CommentExtractsSource(_Base):
@@ -1091,6 +1191,18 @@ class PromoteColumn(_Base):
         return self.path.replace(".", "__").lower()
 
 
+DEFAULT_MEDIA_PROMOTIONS: list[PromoteColumn] = [
+    PromoteColumn(path="content_origin", type="text"),
+    PromoteColumn(path="derived_rung", type="text"),
+]
+"""Promoted by default whenever a cell configures ``source.derive``.
+
+A VLM caption and a verbatim email are byte-identical once both are
+``original_content``; these columns are what let a downstream consumer rank,
+filter, or refuse derived content in the query it already runs.
+"""
+
+
 # FTS language allowlist mirrored from chunkshop.search._ALLOWED_LANGUAGES.
 # A top-level `from chunkshop.search import _ALLOWED_LANGUAGES` would be circular
 # because search.py (via its backend import) pulls in chunkshop.config. Keep this
@@ -1235,6 +1347,24 @@ class CellConfig(_Base):
     extractor: ExtractorConfig = NoneExtractor()
     target: TargetConfig
     runtime: RuntimeConfig = RuntimeConfig()
+
+    @model_validator(mode="after")
+    def _promote_media_origin_columns(self) -> "CellConfig":
+        """Media cells always get content_origin + derived_rung as real columns.
+
+        Downstream consumers must be able to tell a verbatim document from a
+        model's guess in the query they already run — not via an opt-in join.
+        User-specified promotions win; defaults only fill gaps.
+        """
+        if not getattr(self.source, "derive", None):
+            return self
+        existing = {pc.column_name for pc in (self.target.promote_metadata or [])}
+        additions = [
+            pc for pc in DEFAULT_MEDIA_PROMOTIONS if pc.column_name not in existing
+        ]
+        if additions:
+            self.target.promote_metadata = list(self.target.promote_metadata or []) + additions
+        return self
 
 
 def load_config(path: str | Path) -> CellConfig:

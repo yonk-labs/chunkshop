@@ -308,7 +308,8 @@ fn cell_config(cell_name: &str, source: SourceConfig, target: TargetConfig) -> C
 
 fn pg_source(name: &str) -> SourceConfig {
     SourceConfig::PgTable(PgTableSourceConfig {
-        dsn_env: PG_DSN.to_string(),
+        dsn: None,
+        dsn_env: Some(PG_DSN.to_string()),
         schema_name: name.to_string(),
         table: "docs".to_string(),
         id_column: "id".to_string(),
@@ -322,7 +323,8 @@ fn pg_source(name: &str) -> SourceConfig {
 
 fn mariadb_source(name: &str) -> SourceConfig {
     SourceConfig::MariadbTable(MariadbTableSourceConfig {
-        dsn_env: MARIADB_DSN.to_string(),
+        dsn: None,
+        dsn_env: Some(MARIADB_DSN.to_string()),
         database_name: name.to_string(),
         table: "docs".to_string(),
         id_column: "id".to_string(),
@@ -335,7 +337,8 @@ fn mariadb_source(name: &str) -> SourceConfig {
 
 fn sqlite_source(env_var: &str) -> SourceConfig {
     SourceConfig::SqliteTable(SqliteTableSourceConfig {
-        dsn_env: env_var.to_string(),
+        dsn: None,
+        dsn_env: Some(env_var.to_string()),
         database_name: "ignored".to_string(),
         table: "docs".to_string(),
         id_column: "id".to_string(),
@@ -348,7 +351,8 @@ fn sqlite_source(env_var: &str) -> SourceConfig {
 
 fn clickhouse_source(name: &str) -> SourceConfig {
     SourceConfig::ClickhouseTable(ClickhouseTableSourceConfig {
-        dsn_env: CH_DSN.to_string(),
+        dsn: None,
+        dsn_env: Some(CH_DSN.to_string()),
         database_name: name.to_string(),
         table: "docs".to_string(),
         id_column: "id".to_string(),
@@ -366,6 +370,7 @@ fn clickhouse_source(name: &str) -> SourceConfig {
 
 fn pg_target(schema: &str) -> TargetConfig {
     TargetConfig::Postgres(PostgresTargetConfig {
+        dsn: None,
         dsn_env: PG_DSN.to_string(),
         database_name: schema.to_string(),
         table: "chunks".to_string(),
@@ -384,6 +389,7 @@ fn pg_target(schema: &str) -> TargetConfig {
 
 fn mariadb_target(database: &str) -> TargetConfig {
     TargetConfig::Mariadb(MariadbTargetConfig {
+        dsn: None,
         dsn_env: MARIADB_DSN.to_string(),
         database_name: database.to_string(),
         table: "chunks".to_string(),
@@ -400,7 +406,8 @@ fn mariadb_target(database: &str) -> TargetConfig {
 
 fn sqlite_target(env_var: &str) -> TargetConfig {
     TargetConfig::Sqlite(SqliteTargetConfig {
-        dsn_env: env_var.to_string(),
+        dsn: None,
+        dsn_env: Some(env_var.to_string()),
         database_name: "ignored".to_string(),
         table: "chunks".to_string(),
         overwrite: false,
@@ -416,6 +423,7 @@ fn sqlite_target(env_var: &str) -> TargetConfig {
 
 fn clickhouse_target(database: &str) -> TargetConfig {
     TargetConfig::Clickhouse(ClickhouseTargetConfig {
+        dsn: None,
         dsn_env: CH_DSN.to_string(),
         database_name: database.to_string(),
         table: "chunks".to_string(),

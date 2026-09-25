@@ -1,0 +1,33 @@
+# Keyless image search. Base install only — no extras, no API key, no GPU.
+cell_name: images_keyless
+source:
+  type: files
+  glob: docs/samples/images/*.png
+  id_from: stem
+  derive:
+    png|jpg|jpeg|webp:
+      rung: clip_tags
+      vocabulary:
+        - a screenshot of a user interface
+        - a photograph of a person
+        - a chart or diagram
+        - a game sprite or pixel art
+        - a scanned document page
+      top_k: 2
+chunker:
+  type: fixed_overlap
+  window_words: 512
+  step_words: 512
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+extractor:
+  type: none
+target:
+  type: sqlite
+  dsn_env: SQLITE_PATH
+  database: ignored      # SQLite has no schema concept; required by config but unused
+  table: images
+  mode: overwrite
+  hnsw: false            # sqlite-vec is brute-force KNN

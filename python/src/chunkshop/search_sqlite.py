@@ -57,18 +57,23 @@ def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
     """Parameterized WHERE fragment (no leading AND) + params, over the `c` alias.
 
     Supported keys:
-      - {"source": "..."}          -> c.source = ?
-      - {"tags": [...]}            -> EXISTS json_each(c.tags) overlap (case-insensitive)
-      - {"metadata": {k: v, ...}}  -> json_extract(c.metadata, '$.k') = ? per key
+      - {"source": "..."}              -> c.source = ?
+      - {"tags": [...]}                -> EXISTS json_each(c.tags) overlap (case-insensitive)
+      - {"metadata": {k: v, ...}}      -> json_extract(c.metadata, '$.k') = ? per key
+      - {"metadata_not": {k: v, ...}}  -> json_extract(c.metadata, '$.k') IS NOT ? per key
 
     Unlike Postgres there is no jsonb-containment operator; metadata containment
     is approximated by per-key equality on top-level keys, which covers the flat
     {"topic": "..."} metadata chunkshop writes. Nested containment is not
     supported (documented gap).
+
+    `column_in` / `column_like` (used by `--by-symbol`) are still Postgres-only
+    and remain rejected here by the allowlist below — a named error, not a
+    silently-ignored filter.
     """
     if not where:
         return "", []
-    unknown = set(where) - {"tags", "source", "metadata"}
+    unknown = set(where) - {"tags", "source", "metadata", "metadata_not"}
     if unknown:
         raise ValueError(f"unsupported where keys: {sorted(unknown)}")
 
@@ -101,6 +106,28 @@ def _build_where(where: Optional[dict]) -> tuple[str, list[Any]]:
         for key, val in meta.items():
             # json_extract path is a single top-level key; bind the value.
             clauses.append(f"json_extract(c.metadata, '$.' || ?) = ?")
+            params.extend([key, val])
+
+    # `metadata_not`: exclude rows whose metadata key EQUALS the given value.
+    # Mirrors the Postgres leg's `(metadata ->> %s) IS DISTINCT FROM %s`:
+    # SQLite's `IS NOT` is likewise the NULL-safe distinct-from operator, so a
+    # row that LACKS the key (json_extract -> NULL) is KEPT and the filter is a
+    # no-op for ordinary chunk rows. Plain `<>` would drop every such row.
+    #
+    # This is what makes `chunkshop search`'s DEFAULT fact-exclusion work on a
+    # sqlite target: cli.py injects {"metadata_not": {"kind": "fact"}} unless
+    # --include-facts is passed, so without this branch EVERY sqlite search
+    # failed with "unsupported where keys: ['metadata_not']".
+    #
+    # Type note, same as Postgres': json_extract returns the JSON value's
+    # native type, so this compares like-for-like on string-valued keys (the
+    # kind='fact' case). A bool/number value compares as that type.
+    meta_not = where.get("metadata_not")
+    if meta_not is not None:
+        if not isinstance(meta_not, dict):
+            raise ValueError("where['metadata_not'] must be a dict")
+        for key, val in meta_not.items():
+            clauses.append(f"json_extract(c.metadata, '$.' || ?) IS NOT ?")
             params.extend([key, val])
 
     return " AND ".join(clauses), params

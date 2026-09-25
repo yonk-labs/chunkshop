@@ -1,0 +1,165 @@
+{
+  "_comment": "Golden fixture for rust/chunkshop/tests/media_derivation_parity.rs. GENERATED \u2014 do not hand-edit; run tests/parity/generate_media_derivation_reference.py. KEY SETS ONLY, never values that legitimately differ between implementations: derived.ts is a timestamp, derived.model_version is the host fastembed version (python vs the rust crate), and derived.engine / the derivation hash differ BY DESIGN (engine participates in the hash so both languages can share one cache directory without masquerading as each other). The *_document sections are the same rungs seen through FilesSource, i.e. what a user actually reads off a row \u2014 they carry source_path and parser, which the deriver-level sections cannot see.",
+  "image_fixture": "docs/samples/images/sprite_knight.png",
+  "rung0": {
+    "deriver": "ImageMetaDeriver",
+    "metadata_keys": [
+      "aspect_ratio",
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "has_alpha",
+      "height",
+      "image_format",
+      "image_mode",
+      "width"
+    ],
+    "derived_keys": [
+      "engine",
+      "model",
+      "model_version",
+      "params_hash",
+      "rung",
+      "ts"
+    ]
+  },
+  "rung0_document": {
+    "metadata_keys": [
+      "aspect_ratio",
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "has_alpha",
+      "height",
+      "image_format",
+      "image_mode",
+      "parser",
+      "source_path",
+      "width"
+    ],
+    "parser": "ImageMetaDeriver"
+  },
+  "rung5": {
+    "deriver": "RossDeriver",
+    "config": {
+      "rung": "ross"
+    },
+    "metadata_keys": [
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "ross_description",
+      "ross_metadata",
+      "ross_mime",
+      "ross_model",
+      "ross_summary",
+      "ross_tag_confidence",
+      "ross_tags",
+      "ross_type",
+      "ross_warnings"
+    ],
+    "derived_keys": [
+      "engine",
+      "model",
+      "model_version",
+      "params_hash",
+      "rung",
+      "ts"
+    ],
+    "engine": "ross",
+    "rung": "ross",
+    "model": "ross"
+  },
+  "rung5_document": {
+    "metadata_keys": [
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "parser",
+      "ross_description",
+      "ross_metadata",
+      "ross_mime",
+      "ross_model",
+      "ross_summary",
+      "ross_tag_confidence",
+      "ross_tags",
+      "ross_type",
+      "ross_warnings",
+      "source_path"
+    ],
+    "parser": "RossDeriver"
+  },
+  "rung5_llm_params": {
+    "doctor_stdout": "ffprobe    ok\nffmpeg     ok\nexiftool   MISSING (optional)\nvision     http://192.168.1.189:8082/v1 model=mlx-community/gemma-4-e4b-it-4bit key=none\naudio      http://192.168.1.189:8082/v1 model=deepreinforce-ai/Ornith-1.0-9B key=set\nvideo      NOT SET\n\nclap       ok (/home/u/.cache/ross-clap/audio_model_int8.onnx)\nclip       not downloaded (fetched on first --clip) -> /home/u/.cache/ross-clap/clip_vision_int8.onnx\n",
+    "params": {
+      "llm": true,
+      "labels_sha256": null,
+      "llm_endpoints": {
+        "vision": {
+          "url": "http://192.168.1.189:8082/v1",
+          "model": "mlx-community/gemma-4-e4b-it-4bit",
+          "key_set": false
+        },
+        "audio": {
+          "url": "http://192.168.1.189:8082/v1",
+          "model": "deepreinforce-ai/Ornith-1.0-9B",
+          "key_set": true
+        },
+        "video": null
+      }
+    },
+    "params_llm_false": {
+      "llm": false,
+      "labels_sha256": null
+    }
+  },
+  "rung1": {
+    "deriver": "ClipTagsDeriver",
+    "vocabulary": [
+      "a knight sprite",
+      "a landscape photo",
+      "a chart"
+    ],
+    "top_k": 3,
+    "min_score": 0.2,
+    "metadata_keys": [
+      "aspect_ratio",
+      "clip_scores",
+      "clip_tags",
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "has_alpha",
+      "height",
+      "image_format",
+      "image_mode",
+      "width"
+    ],
+    "derived_keys": [
+      "engine",
+      "model",
+      "model_version",
+      "params_hash",
+      "rung",
+      "ts"
+    ]
+  },
+  "rung1_document": {
+    "metadata_keys": [
+      "aspect_ratio",
+      "clip_scores",
+      "clip_tags",
+      "content_origin",
+      "derived",
+      "derived_rung",
+      "has_alpha",
+      "height",
+      "image_format",
+      "image_mode",
+      "parser",
+      "source_path",
+      "width"
+    ],
+    "parser": "ClipTagsDeriver"
+  }
+}

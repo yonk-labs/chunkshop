@@ -43,9 +43,16 @@ extras installed; backing libraries import lazily inside each parser's
 ```python
 from chunkshop.sources.parsers import (
     FileParser,
+    Deriver,                # generalisation of FileParser (media ingest)
+    ParseResult,
     ParserError,
+    EmptyDerivationError,
+    AmbiguousDeriverError,
     DEFAULT_PARSERS,
     get_parser,
+    call_deriver,
+    cache_key_extra_for,
+    normalize_parse_result,
     TextParser,
     PDFParser,
     DOCXParser,
@@ -60,6 +67,21 @@ class ParserError(Exception):
 class FileParser(Protocol):
     supported_extensions: list[str]
     def parse(self, path: Path) -> str: ...
+
+# The generalisation. Everything on it is optional for backward
+# compatibility; FilesSource probes with getattr.
+class Deriver(Protocol):
+    supported_extensions: list[str]
+    def derive(self, path: Path) -> str | ParseResult: ...
+    def cache_key_extra(self, path: Path) -> str | None: ...  # default: None
+
+@dataclass(frozen=True)
+class ParseResult:
+    text: str
+    metadata: dict = field(default_factory=dict)
+
+def call_deriver(obj, path: Path) -> ParseResult: ...
+def cache_key_extra_for(obj, path: Path) -> str | None: ...
 
 DEFAULT_PARSERS: dict[str, FileParser]
 
@@ -93,6 +115,32 @@ def get_parser(
    its effective parser table without an explicit `parsers=` override,
    it overlays a `TextParser(encoding=cfg.encoding)` onto the text-family
    defaults — back-compat for legacy `cfg.encoding` config.
+9. **`derive()` wins over `parse()`, and a bare `str` is auto-wrapped.**
+   `call_deriver` prefers `.derive()` when an object has both, and
+   normalises either a `str` or a `ParseResult` into a `ParseResult` —
+   so a third-party parser written against the `parse(path) -> str`
+   signature keeps working unchanged.
+10. **Empty text from a *deriver* is a failure by default; empty text
+    from a parser is not.** A deriver returning `""` raises
+    `EmptyDerivationError` unless `source.on_empty` is `skip` or
+    `index`. The plain-parser path is unaffected by that setting — a
+    zero-byte or whitespace-only file handled by a `FileParser` is
+    indexed as an empty document, as it always was. `on_empty` is a
+    derivation policy, not a parser policy.
+
+## The `derive:` layer
+
+`source.derive` layers **derivers** over this parser table, keyed by a
+pipe-separated extension list, and is how non-text bytes (images, and
+audio/video via rung 5) become text. A deriver occupies the same slot a
+`FileParser` does; it just also returns metadata and provenance, and
+participates in a provenance-keyed derivation cache.
+
+Three rungs ship — see [`deriver-image-meta`](deriver-image-meta.md),
+[`deriver-clip-tags`](deriver-clip-tags.md),
+[`deriver-ross`](deriver-ross.md) and the guide at
+[`docs/media-ingest.md`](../media-ingest.md). Only extensions named in a
+`derive:` block are cache-routed; the parsers above never are.
 
 ## Inputs
 
@@ -100,8 +148,9 @@ def get_parser(
 
 ## Outputs
 
-- The parsed text body as a `str`. PDF / PPTX / XLSX use newlines
-  between pages / slides / rows.
+- The parsed text body as a `str`, or a `ParseResult(text, metadata)`
+  from a deriver. PDF / PPTX / XLSX use newlines between pages / slides
+  / rows.
 
 ## Errors
 
@@ -109,6 +158,8 @@ def get_parser(
 |---------------|------|
 | `RuntimeError` | Backing library missing — install the right `chunkshop[X]` extra. |
 | `ParserError`  | File recognized but failed to parse (corrupt, encrypted, malformed). |
+| `EmptyDerivationError` | A **derive-routed** file was read but produced no text, and `source.on_empty` is `error` (the default). Not raised on the plain-parser path. Subclass of `ParserError`. |
+| `AmbiguousDeriverError` | Two different `derive:` keys route the same extension. Rejected outright rather than letting insertion order decide, because Python and Rust would pick opposite winners for identical YAML. Subclass of `ParserError`. |
 
 ## Example: zero-config
 
@@ -166,10 +217,13 @@ src = FilesSource(
 ## How it integrates with the pipeline
 
 `FilesSource.iter_documents` calls `get_parser(ext, self._parsers)` per
-file, then `parser.parse(path)`. The returned text becomes
-`Document.content`. `Document.metadata["parser"]` records which parser
-class ran (`"PDFParser"`, `"TextParser"`, etc.) — useful for filtering
-in downstream queries.
+file, then `call_deriver(parser, path)`. The returned text becomes
+`Document.content` and any returned metadata is merged into
+`Document.metadata` with **source keys winning**.
+`Document.metadata["parser"]` records which parser or deriver class ran
+(`"PDFParser"`, `"TextParser"`, `"ClipTagsDeriver"`, …) — useful for
+filtering in downstream queries — and is stamped by `FilesSource` over
+anything a deriver emitted under that name.
 
 ## Tests proving the contract
 
@@ -185,6 +239,11 @@ in downstream queries.
 
 ## See also
 
+- [`docs/media-ingest.md`](../media-ingest.md) — the `derive:` layer:
+  rungs, provenance, the derivation cache
+- Reference: [`deriver-image-meta`](deriver-image-meta.md),
+  [`deriver-clip-tags`](deriver-clip-tags.md),
+  [`deriver-ross`](deriver-ross.md) — the three shipped rungs
 - [`docs/cookbook/file-parsing.md`](../cookbook/file-parsing.md) —
   the SP-3 cookbook (install matrix, behavior of each parser)
 - Reference: source-blob, source-gdrive — connector sources whose

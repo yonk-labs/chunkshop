@@ -1,0 +1,45 @@
+# Rung 5: media ingest through the `ross` sibling binary, as a subprocess.
+#
+# Opt-in and keyless. `llm: false` (the default) passes `--no-llm`, so this
+# cell needs no API key and no endpoint — ross tags locally with CLIP
+# (images/video) and CLAP (audio), fully offline after its one-time model
+# download into ~/.cache/ross-clap.
+#
+# Prerequisite: the `ross` binary on $PATH (https://github.com/yonk-labs/ross),
+# or `binary: /path/to/ross` below. Nothing else — this rung adds no Python
+# extra and no Cargo feature, so a text-only user pays nothing for it.
+#
+# AUDIO AND VIDEO COME FREE. ross sniffs the file type by MAGIC BYTES, not by
+# extension, so the same rung covers all three modalities. Listing the audio
+# and video extensions in the `derive:` key below is the whole of it — there
+# is no in-process audio tagger anywhere in chunkshop, and this is the only
+# path to one.
+cell_name: media_ross
+source:
+  type: files
+  glob: docs/samples/images/*.png
+  id_from: stem
+  derive:
+    png|jpg|jpeg|webp|gif|bmp|tiff|wav|mp3|flac|ogg|m4a|mp4|mov|webm:
+      rung: ross
+      # binary: ross          # default; set to a full path if not on $PATH
+      # labels_file: ./my-vocabulary.txt   # replace ross's vendored 50 labels
+      # llm: false            # true needs ROSS_URL + ROSS_MODEL
+      # timeout_s: 120        # per file; the first run downloads models
+chunker:
+  type: fixed_overlap
+  window_words: 512
+  step_words: 512
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+extractor:
+  type: none
+target:
+  type: sqlite
+  dsn_env: SQLITE_PATH
+  database: ignored      # SQLite has no schema concept; required by config but unused
+  table: media
+  mode: overwrite
+  hnsw: false            # sqlite-vec is brute-force KNN

@@ -7,11 +7,20 @@ with zero parser extras installed.
 
 from __future__ import annotations
 
-from chunkshop.sources.parsers.base import FileParser, ParserError
+from chunkshop.sources.parsers.base import (
+    AmbiguousDeriverError,
+    Deriver,
+    EmptyDerivationError,
+    FileParser,
+    ParserError,
+    cache_key_extra_for,
+    call_deriver,
+)
 from chunkshop.sources.parsers.docx import DOCXParser
 from chunkshop.sources.parsers.html import HTMLParser
 from chunkshop.sources.parsers.pdf import PDFParser
 from chunkshop.sources.parsers.pptx import PPTXParser
+from chunkshop.sources.parsers.result import ParseResult, normalize_parse_result
 from chunkshop.sources.parsers.text import TextParser
 from chunkshop.sources.parsers.xlsx import XLSXParser
 
@@ -58,4 +67,11 @@ __all__ = [
     "PPTXParser",
     "XLSXParser",
     "HTMLParser",
+    "Deriver",
+    "EmptyDerivationError",
+    "AmbiguousDeriverError",
+    "call_deriver",
+    "cache_key_extra_for",
+    "ParseResult",
+    "normalize_parse_result",
 ]

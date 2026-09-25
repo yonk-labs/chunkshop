@@ -31,7 +31,7 @@ pub struct ClickhouseTableSource {
 
 impl ClickhouseTableSource {
     pub fn new(cfg: ClickhouseTableSourceConfig) -> Self {
-        let backend = ClickhouseBackend::new(cfg.dsn_env.clone());
+        let backend = ClickhouseBackend::new_with_dsn(cfg.dsn.clone(), cfg.dsn_env.clone());
         Self { cfg, backend }
     }
 

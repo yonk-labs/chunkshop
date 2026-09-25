@@ -158,6 +158,95 @@ Already past step 3 and just want the runtime? `chunkshop ingest --config
 <your-cell>.yaml`. Same for Rust: `chunkshop-rs ingest --config
 <your-cell>.yaml`.
 
+## Search a folder of images — no API key, no GPU
+
+Images go through the same `Source → Chunker → Embedder → Sink` pipeline as
+everything else. A `source.derive` block turns each image into searchable
+text on the way in — deterministic Pillow metadata (filename, dimensions)
+plus zero-shot CLIP tags against a vocabulary you choose. Both rungs ship
+in fastembed, chunkshop's existing core dependency: no media extra, no API
+key, no GPU, and no model to pick beyond the vocabulary itself.
+
+<!-- BEGIN images-keyless -->
+```yaml
+# Keyless image search. Base install only — no extras, no API key, no GPU.
+cell_name: images_keyless
+source:
+  type: files
+  glob: docs/samples/images/*.png
+  id_from: stem
+  derive:
+    png|jpg|jpeg|webp:
+      rung: clip_tags
+      vocabulary:
+        - a screenshot of a user interface
+        - a photograph of a person
+        - a chart or diagram
+        - a game sprite or pixel art
+        - a scanned document page
+      top_k: 2
+chunker:
+  type: fixed_overlap
+  window_words: 512
+  step_words: 512
+embedder:
+  type: fastembed
+  model_name: Xenova/bge-base-en-v1.5-int8
+  dim: 768
+extractor:
+  type: none
+target:
+  type: sqlite
+  dsn_env: SQLITE_PATH
+  database: ignored      # SQLite has no schema concept; required by config but unused
+  table: images
+  mode: overwrite
+  hnsw: false            # sqlite-vec is brute-force KNN
+```
+<!-- END images-keyless -->
+
+```bash
+# Run from a repo clone — the sample images and YAML below ship in the
+# repo, not the published wheel.
+git clone https://github.com/yonk-labs/chunkshop && cd chunkshop
+pip install './python[sqlite]'    # storage backend only — NO media extra, no key, no GPU
+export SQLITE_PATH=/tmp/chunkshop-images.db
+chunkshop ingest --config docs/samples/images-keyless.yaml
+chunkshop search --config docs/samples/images-keyless.yaml \
+  --query "pixel art" --k 1
+```
+
+`docs/samples/images/` ships exactly three tiny fixture PNGs (a pixel-art
+sprite, a line chart, and a settings-screen mockup), plus the Pillow script
+that generated them, so the quickstart above is runnable as printed from a
+repo clone. That corpus is pinned by CI — the ranking margin asserted below
+is a property of *which* three images are in that directory, so adding a
+fourth fails the gate on purpose (test fixtures live in
+`tests/fixtures/images/` instead).
+
+`"pixel art"` appears only in the CLIP vocabulary above, never in a
+filename or path segment — so a correct top hit proves the CLIP tagging
+rung actually ran, not just that a filename happened to match. CI
+(`.github/workflows/sc1-quickstart-clock.yml`) runs this exact YAML on a
+clock every push, on a base install, and asserts the sprite ranks first for
+`"pixel art"` — so this claim can't quietly rot.
+
+That is rung 1 of an **escalation ladder**. Rung 0 (`image_meta`) is the same
+thing without the model — deterministic header facts plus humanised
+filename/path text. Rung 5 (`ross`) shells out to the
+[`ross`](https://github.com/yonk-labs/ross) sibling binary for
+natural-language descriptions of **images, audio and video**, keyless and
+offline by default. Every rung stamps provenance (`derived.rung`, `.model`,
+`.model_version`, `.engine`, `.params_hash`, `.ts`) and memoises into a
+provenance-keyed cache, and `content_origin` / `derived_rung` become real SQL
+columns automatically, so a downstream query can tell a verbatim document from
+a model's guess. Both implementations accept the same YAML.
+
+Full guide: [`docs/media-ingest.md`](docs/media-ingest.md). Per-rung reference:
+[`deriver-image-meta`](docs/reference/deriver-image-meta.md) ·
+[`deriver-clip-tags`](docs/reference/deriver-clip-tags.md) ·
+[`deriver-ross`](docs/reference/deriver-ross.md).
+
 ## CLI at a glance
 
 | Command | What it does |
@@ -307,6 +396,7 @@ Rust parity yet. See [`docs/storage-model.md`](docs/storage-model.md).
 | [`docs/embedder-catalogue.md`](docs/embedder-catalogue.md) | Verified-working models, known-broken ones, dim / size. |
 | [`docs/extractors.md`](docs/extractors.md) | Each extractor: why use it, config, promoted-column pairing. |
 | [`docs/summaries.md`](docs/summaries.md) | summary_embed + hierarchical chunker reference. |
+| [`docs/media-ingest.md`](docs/media-ingest.md) | Deriving text from non-text bytes: the rung ladder, provenance, the derivation cache, `on_empty`. |
 | [`docs/storage-model.md`](docs/storage-model.md) | What chunkshop writes per row + how to query each payload. |
 | [`docs/query-clients.md`](docs/query-clients.md) | Query the ingested table from Python, JS/TS, Rust, Go (raw SQL). |
 | [`docs/hybrid-search.md`](docs/hybrid-search.md) | Read-side Python API: semantic / keyword / hybrid search + fusion, and `summarize_hits` Fast-mode RAG. |
