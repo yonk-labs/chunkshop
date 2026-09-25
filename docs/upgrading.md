@@ -143,6 +143,13 @@ Three ways through, in order of preference:
 | The run to continue, those files omitted | `source.on_empty: skip` |
 | The exact pre-`rc6` behaviour back | `source.on_empty: index` — kept for compatibility, not recommended: it is the silent-empty-doc behaviour F5 exists to remove |
 
+On a `mode: overwrite` cell, this error (and any other source/derivation
+failure raised while the corpus is being read — a ross timeout, a lazy
+CLIP model-load failure) now aborts the run **before** the target table is
+touched, so a bad file in the middle of a large corpus can no longer wipe a
+live index; earlier builds dropped and recreated the table first and only
+then discovered the failure partway through.
+
 The trigger is narrow on purpose. It fires only when the parser counted
 content units *and* produced zero characters — never on an empty text file,
 and never on a PDF that yielded any text at all.

@@ -116,6 +116,18 @@
   those keys before the result ever reaches the cache, in both ports.
   `CACHE_SCHEMA_VERSION` is not bumped — rung 5 has not shipped, so there
   are no existing entries carrying the poisoned keys to invalidate.
+- **A `mode: overwrite` cell no longer drops the target table before
+  finding out the source can't be read.** `run_cell` called
+  `sink.create_table()` (the DROP+CREATE) before draining the source, so
+  F5's `EmptyDerivationError` on a scanned PDF, a ross subprocess timeout,
+  or a lazy CLIP model-load failure — any of which can raise partway
+  through a large corpus — left the existing table dropped and the run
+  aborted with an error. An overwrite cell now fully materialises its
+  source into memory before `create_table()` runs, matching the Rust
+  port's `iter_documents()` (already a `Vec`), so the same failure now
+  aborts the run with the existing table untouched. `append` and
+  `create_if_missing` cells are unaffected and keep streaming, since
+  neither ever drops existing data.
 - **Rust: `files` source config now rejects unknown fields instead of silently
   dropping them.** `FilesSourceConfig` gained `#[serde(deny_unknown_fields)]`.
   A YAML carrying `derive:`, `on_empty:` or `cache:` (Python-only for now) had
