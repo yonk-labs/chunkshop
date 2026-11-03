@@ -132,3 +132,37 @@ jobs:
       - name: Tear down test databases
         if: always()
         run: docker compose -f docker-compose.test.yaml down -v
+
+  rust-parsers:
+    name: chunkshop-parsers (rust)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-parsers-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            cargo-parsers-${{ runner.os }}-
+
+      # Every format, plus the sandboxed-worker tests (isolation.rs needs the worker binary
+      # that `isolate` builds). Fixtures are committed; no Python or macOS needed.
+      - name: Test (all parsers + isolate)
+        working-directory: rust
+        run: cargo test --locked -p chunkshop-parsers --features all-parsers,isolate
+
+      # Each parser feature must build and pass on its own (the cfg gating is easy to break).
+      - name: Test each feature alone
+        working-directory: rust
+        run: |
+          for f in pdf docx pptx xlsx odf html doc ppt; do
+            echo "::group::$f"
+            cargo test --locked -p chunkshop-parsers --no-default-features --features "$f"
+            echo "::endgroup::"
+          done
