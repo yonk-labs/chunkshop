@@ -1,0 +1,54 @@
+[package]
+name = "chunkshop-parsers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Optional add-on for chunkshop-rs: parse PDF/DOCX/PPTX/XLSX files into Documents. Local-only; core stays lean."
+keywords = ["rag", "pdf", "docx", "chunking", "ingest"]
+categories = ["text-processing"]
+publish = false # ponytail: unpublished until slice 0 verifies the parser crates
+
+[dependencies]
+# Core is consumed as a library only; add-on never edits core. `source` = Document + FilesSourceConfig.
+chunkshop = { package = "chunkshop-rs", path = "../chunkshop", default-features = false, features = ["source"] }
+anyhow = "1"
+glob = "0.3"
+serde_json = "1"
+sha1 = "0.10"
+thiserror = "1"
+tracing = "0.1"
+
+# Parser crates: user-approved 2026-11-02 after the local-only verification gate
+# (docs/superpowers/plans/2026-11-02-rust-file-parsers.md, SLICE 0 RESULTS). No network, no subprocesses.
+pdf-extract = { version = "0.12", optional = true }
+calamine = { version = "0.38", default-features = false, optional = true }
+zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
+quick-xml = { version = "0.42", optional = true } # >=0.38 required: parses untrusted XML (RUSTSEC-2026-0194/0195)
+
+[[bin]]
+name = "chunkshop-parsers-worker"
+path = "src/bin/worker.rs"
+required-features = ["isolate"]
+
+[features]
+pdf = ["dep:pdf-extract"]
+xlsx = ["dep:calamine"]
+docx = ["dep:zip", "dep:quick-xml"]
+pptx = ["dep:zip", "dep:quick-xml"]
+odf = ["dep:zip", "dep:quick-xml"] # odt, odp (ods rides on `xlsx`/calamine)
+html = []
+isolate = [] # parse binary formats in a sandboxed worker process (src/bin/worker.rs)
+doc = [] # legacy .doc/.ppt use a built-in lenient OLE reader (src/legacy.rs); no crate
+ppt = []
+office = ["pdf", "docx", "pptx", "xlsx", "odf", "doc", "ppt"]
+all-parsers = ["office", "html"]
+
+[dev-dependencies]
+zip = { version = "9", default-features = false, features = ["deflate"] } # test fixtures built in-process
+cfb = "0.16" # dev-only: builds OLE containers for the .doc/.ppt tests
+tempfile = "3"
+tracing-test = { version = "0.2", features = ["no-env-filter"] }
+sha2 = "0.10"
