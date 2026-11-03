@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **Rust:** new opt-in add-on crate `chunkshop-parsers` (workspace member, unpublished) — PDF
+  (`pdf-extract`), DOCX/PPTX (`zip` + `quick-xml` >= 0.38) and XLSX (`calamine`) parsing behind
+  cargo features `pdf` / `docx` / `pptx` / `xlsx` / `odf` / `html` (`office`, `all-parsers` umbrellas; also ODS/XLS/XLSB via calamine, ODT/ODP, HTML — no extra crates; legacy DOC/PPT behind `doc` / `ppt` via a built-in lenient OLE reader; opt-in `isolate` runs binary formats in a sandboxed worker process). Core
+  `chunkshop-rs` is unchanged and pulls none of these crates. Local-only (no network, no
+  subprocesses; crates verified per the plan's slice 0). `ParsedFilesSource` yields core
+  `Document`s with `metadata.parser`. DOCX/PPTX/XLSX output matches Python byte-for-byte; PDF
+  matches after whitespace collapse. Corrupt, encrypted and scanned PDFs are skipped with a
+  warning (Python fails the cell / returns empty). Dates in XLSX render as the Excel serial.
+
 ## 1.0.0-rc6 — 2026-08-28
 
 Documentation refresh + dependency security patches — no source changes.

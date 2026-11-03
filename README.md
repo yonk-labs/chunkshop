@@ -206,7 +206,8 @@ test-pinned. See [`docs/mixing-sources-and-sinks.md`](docs/mixing-sources-and-si
 | `chunkshop bakeoff` (matrix → leaderboard → recommended.yaml) | ✅ multi-backend | ✅ multi-backend |
 | `chunkshop orchestrate` (N cells as parallel subprocesses) | ✅ | ❌ |
 | Read side (`search` / `impact-of` / `fact-search`, hybrid search API) | ✅ | ❌ (query the tables directly — [`docs/query-clients.md`](docs/query-clients.md)) |
-| Connectors plugin layer, codeparse / code-aware chunkers, file parsers | ✅ | ❌ Python-only by design (spec D6) |
+| Connectors plugin layer, codeparse / code-aware chunkers | ✅ | ❌ Python-only by design (spec D6) |
+| File parsers (PDF / DOCX / PPTX / XLSX) | ✅ extras | ✅ opt-in add-on crate [`chunkshop-parsers`](rust/chunkshop-parsers) (core stays parser-free; D6 relaxed for this only) |
 | `target.documents` companion document table | ✅ Postgres only | ❌ fails loudly |
 | Embedder registry breadth | full fastembed catalogue + custom-registered HF | BGE int8 (bit-near-exact) + nomic v1.5 + stock fastembed-rs catalogue + YAML-driven HF |
 
