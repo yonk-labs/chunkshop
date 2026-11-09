@@ -1,0 +1,54 @@
+{
+  "_versions": {
+    "beautifulsoup4": "4.14.3",
+    "openpyxl": "3.1.5",
+    "pypdf": "6.14.2",
+    "python-docx": "1.2.0",
+    "python-pptx": "1.0.2"
+  },
+  "blank.pdf": {
+    "input_sha256": "3de2b3788e3232e4fcc07525e218a18d7d81a158d452654317a044163dfb710b",
+    "parser": "PDFParser",
+    "text": ""
+  },
+  "encrypted.pdf": {
+    "error": "ParserError",
+    "input_sha256": "58733344bb5e84a8a7a4c2967895ae1135501c173d5856925f695e384020bc45",
+    "parser": "PDFParser"
+  },
+  "rich.docx": {
+    "input_sha256": "9b0e15d04eede3d40089d582292a0fea53b5d3b7c559e751c85b4c043d9864a1",
+    "parser": "DOCXParser",
+    "text": "Title line\nbefore tab\tafter tab\nafter break\nplain paragraph\nlast paragraph"
+  },
+  "rich.html": {
+    "input_sha256": "e26b2a47bfd8a1af085739dae9a394f7c7282d9d3eba233ee16cb71871e25462",
+    "parser": "HTMLParser",
+    "text": "T & Co\nHead line\none\nbold\n<two> AB a < b\nlink\nspaced   text"
+  },
+  "rich.pdf": {
+    "input_sha256": "fde45bc74bf01db0be517796cae21f1edf9c0ae4dee6a16304ccceecee2ef93c",
+    "parser": "PDFParser",
+    "text": "Page one text\nPage two text"
+  },
+  "rich.pptx": {
+    "input_sha256": "1eefe3d3d94c88df6624df0e3ba36bcb5b048db2ebc177f3f6440d0bb707e8e3",
+    "parser": "PPTXParser",
+    "text": "Slide C\nbody C line1\nbody C line2\nSlide A\nbody A line1\nbody A line2\nSlide B\nbody B line1\u000bafter soft break\nbody B line2"
+  },
+  "rich.xlsx": {
+    "input_sha256": "896571ed6ea8db54f5f818791c3c4e3f75ba071d04cc5a17f621a7c164b33127",
+    "parser": "XLSXParser",
+    "text": "name\tcount\tratio\tok\nalpha\t3\t1.5\tTrue\nbeta\t\t2.25\tFalse\n\t\t\ttail\nonly\tsheet two"
+  },
+  "truncated.docx": {
+    "error": "ParserError",
+    "input_sha256": "440a72ede6e11408ec781fc4b4a5f795af95a2d2f56473859b38c7a9ec43b851",
+    "parser": "DOCXParser"
+  },
+  "truncated.pdf": {
+    "error": "ParserError",
+    "input_sha256": "05e8716a2e73907cfd5f4bc57697afa3de3c56427683d351ac3cb2352689b750",
+    "parser": "PDFParser"
+  }
+}
