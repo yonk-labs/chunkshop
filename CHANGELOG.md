@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0-rc7 — 2026-11-09
+
+Rust file-parsers add-on (#93) + dependency security patches.
 
 ### Added
 
@@ -12,6 +14,30 @@
   `Document`s with `metadata.parser`. DOCX/PPTX/XLSX output matches Python byte-for-byte; PDF
   matches after whitespace collapse. Corrupt, encrypted and scanned PDFs are skipped with a
   warning (Python fails the cell / returns empty). Dates in XLSX render as the Excel serial.
+
+### Security
+
+- **Python (lockfile, minimum fixed versions):** `pillow` 12.3.0 → 13.0.0 (needed
+  `fastembed` 0.8.0 → 0.9.1, which capped pillow < 13; default-model vectors verified
+  byte-identical across the bump), `pypdf` 6.16.2 → 6.21.4, `nltk` 3.10.0 → 3.10.4,
+  `filelock` 3.28.0 → 4.2.1, `transformers` 5.5.4 → 5.10.0, `sentence-transformers`
+  5.4.1 → 5.6.0, `urllib3` 2.7.0 → 2.8.0, `anyio` 4.13.0 → 4.14.2, `certifi` →
+  2026.10.18, `fsspec` → 2026.6.0, `setuptools` 84.0.0 → 84.1.0, `soupsieve` 2.8.4 →
+  2.9.0. `pip-audit` clean.
+- **Rust (lockfile, in-range):** `rustls` 0.23.46, `rustls-webpki` 0.103.16,
+  `quinn-proto` 0.11.19, `tokio` 1.54.1, `webpki-roots` / `webpki-root-certs` 1.0.11,
+  `event-listener` 5.4.2, `spin` 0.9.9. `cargo audit` clean modulo documented waivers;
+  new waiver RUSTSEC-2026-0459 (bundled C SQLite in `libsqlite3-sys` 0.30, SQLite
+  backend only) — the fix needs rusqlite 0.41, which conflicts on `links = "sqlite3"`
+  with sqlx 0.8, so it waits on a tracked sqlx 0.9 / pgvector / rusqlite upgrade.
+
+### Upgrade note
+
+- **nltk 3.10.4 refuses data directories writable by other accounts.** An existing
+  `~/nltk_data` created by older nltk under a group-writable umask (Ubuntu's default
+  `002`) makes the `rake` extractor raise `LookupError: Resource 'stopwords' not
+  found`. Fix: `chmod -R go-w ~/nltk_data`. Fresh downloads are created private and
+  are unaffected.
 
 ## 1.0.0-rc6 — 2026-08-28
 
