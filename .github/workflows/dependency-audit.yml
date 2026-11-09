@@ -80,7 +80,8 @@ jobs:
             --ignore RUSTSEC-2023-0071 \
             --ignore RUSTSEC-2024-0436 \
             --ignore RUSTSEC-2026-0194 \
-            --ignore RUSTSEC-2026-0195
+            --ignore RUSTSEC-2026-0195 \
+            --ignore RUSTSEC-2026-0459
 
           # RUSTSEC-2023-0071: rsa 0.9.10 via sqlx-mysql. No fixed upgrade is
           # available; Chunkshop documents the MariaDB mitigation in
@@ -98,3 +99,8 @@ jobs:
           # (operator controls the S3 endpoint); waived pending a tracked
           # object_store upgrade. anyhow (RUSTSEC-2026-0190) and crossbeam-epoch
           # (RUSTSEC-2026-0204) were fixed by in-range bumps in this same change.
+          # RUSTSEC-2026-0459: bundled C SQLite CVE in libsqlite3-sys 0.30 (rusqlite
+          # 0.32, SQLite backend only). The fix (libsqlite3-sys 0.39) needs rusqlite
+          # 0.41, which conflicts on `links = "sqlite3"` with sqlx 0.8's sqlx-sqlite
+          # -> needs sqlx 0.9 + pgvector 0.4.2 + rusqlite 0.41 together. Waived
+          # pending that tracked upgrade (rc7 bumped rustls/quinn/tokio/webpki in-range).
