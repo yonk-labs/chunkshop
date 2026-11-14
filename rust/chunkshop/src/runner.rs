@@ -65,11 +65,14 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     let sink =
         crate::sinks::load_sink(&cfg.target, backend, embedder.dim()).context("load sink")?;
 
+    // Read the source BEFORE create_table: in overwrite mode create_table
+    // drops the existing table, so a source error must surface first.
+    let docs = source.iter_documents().await?;
+
     info!("creating target table");
     use crate::sinks::Sink;
     sink.create_table().await?;
 
-    let docs = source.iter_documents().await?;
     let limit = cfg.runtime.doc_limit.unwrap_or(usize::MAX);
     let heartbeat = cfg.runtime.heartbeat_every.unwrap_or(25);
 
