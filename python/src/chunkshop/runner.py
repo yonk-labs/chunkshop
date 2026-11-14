@@ -1,5 +1,6 @@
 """Single-cell runner: wires source -> chunker -> embedder -> extractor -> sink."""
 from __future__ import annotations
+import itertools
 import logging
 import os
 import time
@@ -102,6 +103,15 @@ def run_cell(cfg: CellConfig) -> CellResult:
         )
         extractor = load_extractor(cfg.extractor)
         sink = load_sink(cfg.target, embed_dim=cfg.embedder.dim)
+
+        # Pull the first document BEFORE create_table(): in overwrite mode that
+        # drops the table, so a source that fails immediately (bad glob,
+        # unreachable DB) must abort with the existing table untouched.
+        doc_source = iter(doc_source)
+        _no_doc = object()
+        first_doc = next(doc_source, _no_doc)
+        if first_doc is not _no_doc:
+            doc_source = itertools.chain([first_doc], doc_source)
 
         _log("creating target table", log_path)
         sink.create_table()
