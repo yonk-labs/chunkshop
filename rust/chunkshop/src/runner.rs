@@ -76,6 +76,13 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     let limit = cfg.runtime.doc_limit.unwrap_or(usize::MAX);
     let heartbeat = cfg.runtime.heartbeat_every.unwrap_or(25);
 
+    let delete_orphans = match &cfg.target {
+        crate::config::TargetConfig::Postgres(t) => t.delete_orphans,
+        crate::config::TargetConfig::Mariadb(t) => t.delete_orphans,
+        crate::config::TargetConfig::Sqlite(t) => t.delete_orphans,
+        crate::config::TargetConfig::Clickhouse(t) => t.delete_orphans,
+    };
+
     let mut docs_processed = 0usize;
     let mut chunks_written = 0usize;
 
@@ -88,6 +95,12 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
         for doc in framed {
             let chunks = chunker.chunk(&doc);
             if chunks.is_empty() {
+                if delete_orphans {
+                    // Doc now yields nothing: drop its stale rows.
+                    sink.delete_document(&doc.id)
+                        .await
+                        .context("delete_document")?;
+                }
                 docs_processed += 1;
                 continue;
             }
