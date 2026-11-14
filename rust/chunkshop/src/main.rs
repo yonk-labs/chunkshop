@@ -145,18 +145,35 @@ enum Command {
         /// Bypass the >50-cell matrix confirmation prompt.
         #[arg(long)]
         yes: bool,
-        /// Keep the bakeoff schema after run (default: drop CASCADE on exit).
-        /// Only applies to legacy single-PG bakeoffs.
+        /// Accepted for backward compatibility; now a no-op because the
+        /// bakeoff schema is kept by default.
         #[arg(long)]
         keep_schema: bool,
+        /// Drop the legacy single-PG bakeoff schema (DROP SCHEMA ... CASCADE)
+        /// after the run. Requires --dsn. Off by default.
+        #[arg(long)]
+        drop_schema: bool,
     },
+}
+
+/// Decide which legacy bakeoff schema (if any) to drop after a run.
+/// Keep by default; drop only when explicitly requested, and only after the
+/// name passes the same identifier validation the config uses.
+fn schema_to_drop(drop_schema: bool, schema_name: Option<&str>) -> Result<Option<String>> {
+    match (drop_schema, schema_name) {
+        (true, Some(name)) => {
+            chunkshop::config::validate_ident(name, "target.schema_name")?;
+            Ok(Some(name.to_string()))
+        }
+        _ => Ok(None),
+    }
 }
 
 async fn run_bakeoff_command(
     config: PathBuf,
     dsn: Option<String>,
     yes: bool,
-    keep_schema: bool,
+    drop_schema: bool,
 ) -> Result<()> {
     let text = std::fs::read_to_string(&config)?;
     let cfg: BakeoffConfig =
@@ -236,11 +253,12 @@ async fn run_bakeoff_command(
     eprintln!("Report:  {}", report_path.display());
     eprintln!("Recommended cell: {}", rec_path.display());
 
-    if !keep_schema && cfg.target.is_some() {
-        // Legacy single-PG cleanup only. Multi-target bakeoffs don't auto-drop
-        // (caller's responsibility — many backends, many concerns, easy to mess up).
+    if let Some(schema) = schema_to_drop(
+        drop_schema,
+        cfg.target.as_ref().map(|t| t.schema_name.as_str()),
+    )? {
+        // Legacy single-PG cleanup only, and only on explicit --drop-schema.
         use sqlx::postgres::PgPoolOptions;
-        let legacy = cfg.target.as_ref().unwrap();
         let dsn_str = dsn
             .as_ref()
             .ok_or_else(|| anyhow!("--dsn required for legacy single-PG cleanup"))?;
@@ -248,12 +266,9 @@ async fn run_bakeoff_command(
             .max_connections(1)
             .connect(dsn_str)
             .await?;
-        let stmt = format!(r#"DROP SCHEMA IF EXISTS "{}" CASCADE"#, legacy.schema_name);
+        let stmt = format!(r#"DROP SCHEMA IF EXISTS "{schema}" CASCADE"#);
         sqlx::query(&stmt).execute(&pool).await?;
-        eprintln!(
-            "Dropped schema {} (use --keep-schema to preserve)",
-            legacy.schema_name
-        );
+        eprintln!("Dropped schema {schema}");
     }
     Ok(())
 }
@@ -309,7 +324,36 @@ async fn main() -> Result<()> {
             config,
             dsn,
             yes,
-            keep_schema,
-        } => run_bakeoff_command(config, dsn, yes, keep_schema).await,
+            keep_schema: _,
+            drop_schema,
+        } => run_bakeoff_command(config, dsn, yes, drop_schema).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_schema_by_default() {
+        assert_eq!(schema_to_drop(false, Some("bakeoff_x")).unwrap(), None);
+        assert_eq!(schema_to_drop(false, None).unwrap(), None);
+    }
+
+    #[test]
+    fn drops_only_when_requested_and_valid() {
+        assert_eq!(
+            schema_to_drop(true, Some("bakeoff_x")).unwrap().as_deref(),
+            Some("bakeoff_x")
+        );
+        assert_eq!(schema_to_drop(true, None).unwrap(), None);
+    }
+
+    #[test]
+    fn refuses_unsafe_schema_name_when_dropping() {
+        let err = schema_to_drop(true, Some(r#"x"; DROP TABLE y; --"#)).unwrap_err();
+        assert!(err.to_string().contains("schema"), "{err}");
+        // Not dropping: an unvalidated name is never used, so no error.
+        assert_eq!(schema_to_drop(false, Some("Bad Name")).unwrap(), None);
     }
 }
