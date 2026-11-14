@@ -174,9 +174,10 @@ impl Sink for MemorySink {
                 };
                 if !already {
                     let fq = self.inner.fq_pub();
-                    let source = self.inner.source_tag().unwrap_or("default");
+                    // NULL-safe: a cell without source_tag writes source = NULL.
+                    let source = self.inner.source_tag();
                     sqlx::query(&format!(
-                        "DELETE FROM {fq} WHERE doc_id = $1 AND source = $2"
+                        "DELETE FROM {fq} WHERE doc_id = $1 AND source IS NOT DISTINCT FROM $2"
                     ))
                     .bind(doc_id)
                     .bind(source)
@@ -196,7 +197,8 @@ impl Sink for MemorySink {
             // retracted. Scoped by source_tag — cross-namespace facts are
             // independent. Explicit ::timestamptz casts so the ISO-string
             // params line up with the column type unambiguously.
-            let source = self.inner.source_tag().unwrap_or("default");
+            // NULL-safe: a cell without source_tag writes source = NULL.
+            let source = self.inner.source_tag();
             let fq = self.inner.fq_pub();
             for c in stamped.iter() {
                 let meta = match c.metadata.as_object() {
@@ -222,7 +224,7 @@ impl Sink for MemorySink {
                     "UPDATE {fq} \
                      SET retracted = true, retracted_at = now(), \
                          effective_to = $1::timestamptz \
-                     WHERE source = $2 AND subject = $3 AND predicate = $4 \
+                     WHERE source IS NOT DISTINCT FROM $2 AND subject = $3 AND predicate = $4 \
                        AND effective_from < $5::timestamptz \
                        AND coalesce(retracted, false) = false"
                 ))
