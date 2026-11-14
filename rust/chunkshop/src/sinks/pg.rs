@@ -450,7 +450,13 @@ impl Sink for PgSink {
                     .bind(self.cfg.source_tag.as_deref());
 
                 for pc in promote {
-                    q = q.bind(promote_value_for(&c.metadata, pc));
+                    q = match promote_value_for(&c.metadata, pc)? {
+                        Promoted::Null => q.bind(None::<String>),
+                        Promoted::Text(s) => q.bind(s),
+                        Promoted::Int(i) => q.bind(i),
+                        Promoted::Bool(b) => q.bind(b),
+                        Promoted::TextArray(a) => q.bind(a),
+                    };
                 }
 
                 q.execute(&mut *tx).await.context("INSERT chunk row")?;
@@ -647,10 +653,109 @@ fn pg_build_where(
 /// promoted column's typed cast. Postgres handles the actual cast via the
 /// `::<type>` placeholder. Mirrors the helper of the same name in the legacy
 /// `sink.rs` (see write_document).
-fn promote_value_for(metadata: &serde_json::Value, pc: &PromoteColumn) -> Option<String> {
-    let v = jsonb_path_get(metadata, &pc.path)?;
-    Some(match v {
+enum Promoted {
+    Null,
+    Text(String),
+    Int(i64),
+    Bool(bool),
+    TextArray(Vec<String>),
+}
+
+/// `json.dumps(value, ensure_ascii=False, sort_keys=True)` — Python's default
+/// ", " / ": " separators. Map keys are already sorted (no preserve_order).
+struct PyJsonFormatter;
+
+impl serde_json::ser::Formatter for PyJsonFormatter {
+    fn begin_array_value<W: ?Sized + std::io::Write>(
+        &mut self,
+        w: &mut W,
+        first: bool,
+    ) -> std::io::Result<()> {
+        if first {
+            Ok(())
+        } else {
+            w.write_all(b", ")
+        }
+    }
+    fn begin_object_key<W: ?Sized + std::io::Write>(
+        &mut self,
+        w: &mut W,
+        first: bool,
+    ) -> std::io::Result<()> {
+        if first {
+            Ok(())
+        } else {
+            w.write_all(b", ")
+        }
+    }
+    fn begin_object_value<W: ?Sized + std::io::Write>(&mut self, w: &mut W) -> std::io::Result<()> {
+        w.write_all(b": ")
+    }
+}
+
+fn py_json(v: &serde_json::Value) -> String {
+    use serde::Serialize;
+    let mut buf = Vec::new();
+    let mut ser = serde_json::Serializer::with_formatter(&mut buf, PyJsonFormatter);
+    v.serialize(&mut ser).expect("serialize json value");
+    String::from_utf8(buf).expect("json is utf-8")
+}
+
+/// Python `str(value)` for a JSON-decoded value.
+fn py_str(v: &serde_json::Value) -> String {
+    match v {
         serde_json::Value::String(s) => s.clone(),
-        other => serde_json::to_string(other).unwrap_or_default(),
+        serde_json::Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
+        serde_json::Value::Null => "None".to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        other => py_json(other),
+    }
+}
+
+/// Mirror of Python `_promote_value` (sinks/pg.py): a missing path or JSON null
+/// is SQL NULL; otherwise the value is converted per the declared type.
+fn promote_value_for(metadata: &serde_json::Value, pc: &PromoteColumn) -> Result<Promoted> {
+    use serde_json::Value;
+    let v = match jsonb_path_get(metadata, &pc.path) {
+        None | Some(Value::Null) => return Ok(Promoted::Null),
+        Some(v) => v,
+    };
+    Ok(match pc.type_.as_str() {
+        "jsonb" => Promoted::Text(serde_json::to_string(v)?),
+        "text" => match v {
+            Value::Array(_) | Value::Object(_) => Promoted::Text(py_json(v)),
+            other => Promoted::Text(py_str(other)),
+        },
+        "text[]" => match v {
+            Value::Array(items) => Promoted::TextArray(items.iter().map(py_str).collect()),
+            other => Promoted::TextArray(vec![py_str(other)]),
+        },
+        "int" | "bigint" => match v {
+            Value::Bool(b) => Promoted::Int(*b as i64),
+            Value::Number(n) => Promoted::Int(
+                n.as_i64()
+                    .or_else(|| n.as_f64().map(|f| f as i64))
+                    .ok_or_else(|| anyhow!("promote {}: {n} is not an integer", pc.path))?,
+            ),
+            Value::String(s) => Promoted::Int(
+                s.trim()
+                    .parse::<i64>()
+                    .with_context(|| format!("promote {}: invalid integer {s:?}", pc.path))?,
+            ),
+            other => return Err(anyhow!("promote {}: cannot convert {other} to int", pc.path)),
+        },
+        "boolean" => Promoted::Bool(match v {
+            Value::Bool(b) => *b,
+            Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+            Value::String(s) => !s.is_empty(),
+            Value::Array(a) => !a.is_empty(),
+            Value::Object(o) => !o.is_empty(),
+            Value::Null => false,
+        }),
+        // timestamptz / date: text, cast server-side.
+        _ => Promoted::Text(match v {
+            Value::String(s) => s.clone(),
+            other => serde_json::to_string(other)?,
+        }),
     })
 }

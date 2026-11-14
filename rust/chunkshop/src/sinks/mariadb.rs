@@ -658,9 +658,16 @@ fn mariadb_build_where(
 /// TIMESTAMP, DATE) infer from the column declaration — we just hand them a
 /// string. JSON columns accept JSON-encoded text. Mirrors `pg.rs::promote_value_for`.
 fn promote_value_for(metadata: &serde_json::Value, pc: &PromoteColumn) -> Option<String> {
+    use serde_json::Value;
+    // Mirrors Python `_promote_value` (sinks/mariadb.py): null/missing is SQL
+    // NULL; text[]/jsonb columns and any list/dict get compact JSON text.
     let v = jsonb_path_get(metadata, &pc.path)?;
     Some(match v {
-        serde_json::Value::String(s) => s.clone(),
+        Value::Null => return None,
+        Value::Bool(b) if !matches!(pc.type_.as_str(), "text[]" | "jsonb") => {
+            (*b as i64).to_string()
+        }
+        Value::String(s) if !matches!(pc.type_.as_str(), "text[]" | "jsonb") => s.clone(),
         other => serde_json::to_string(other).unwrap_or_default(),
     })
 }

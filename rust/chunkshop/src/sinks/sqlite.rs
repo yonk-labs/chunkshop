@@ -395,12 +395,20 @@ impl SqliteSink {
                 Box::new(self.cfg.source_tag.clone()),
             ];
             for pc in promote {
+                // Mirrors Python `_promote_value` (sinks/sqlite.py): null/missing is
+                // SQL NULL, bool binds as 1/0, list/dict are compact JSON text.
                 let v = jsonb_path_get(&c.metadata, &pc.path);
-                let s: Option<String> = v.map(|val| match val {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => serde_json::to_string(other).unwrap_or_default(),
-                });
-                params.push(Box::new(s));
+                match v {
+                    None | Some(serde_json::Value::Null) => params.push(Box::new(None::<String>)),
+                    Some(serde_json::Value::Bool(b)) => params.push(Box::new(*b)),
+                    Some(val) => {
+                        let s = match val {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => serde_json::to_string(other).unwrap_or_default(),
+                        };
+                        params.push(Box::new(Some(s)));
+                    }
+                }
             }
             let p_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
             main_q
