@@ -94,6 +94,32 @@ impl SessionStagingSource {
     /// Python generator semantics provide.
     pub async fn commit_processed(&self) -> Result<()> {
         let pending = self.pending_watermark.lock().unwrap().take();
+        self.commit_pending(pending).await
+    }
+
+    /// Like `commit_processed`, but only advances the watermark for the
+    /// emitted sessions listed in `written` (what the runner actually wrote);
+    /// sessions skipped by `runtime.doc_limit` stay eligible for the next run.
+    pub async fn commit_processed_for(&self, written: &[String]) -> Result<()> {
+        let pending = self
+            .pending_watermark
+            .lock()
+            .unwrap()
+            .take()
+            .map(|(wm, key, sessions)| {
+                let kept = sessions
+                    .into_iter()
+                    .filter(|s| written.contains(s))
+                    .collect();
+                (wm, key, kept)
+            });
+        self.commit_pending(pending).await
+    }
+
+    async fn commit_pending(
+        &self,
+        pending: Option<(String, &'static str, Vec<String>)>,
+    ) -> Result<()> {
         let Some((watermark, wm_key, sessions)) = pending else {
             return Ok(());
         };

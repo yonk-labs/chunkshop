@@ -79,6 +79,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
     // Source emits raw documents; framer expands each raw into one or more
     // framed documents; chunker chunks each framed doc independently. The
     // doc limit applies at the raw level (matches Python).
+    let mut written_raw_ids: Vec<String> = Vec::new();
     for raw in docs.into_iter().take(limit) {
         let framed = framer.frame(&raw)?;
         for doc in framed {
@@ -130,15 +131,17 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
                 info!(docs = docs_processed, chunks = chunks_written, "heartbeat");
             }
         }
+        written_raw_ids.push(raw.id.clone());
     }
 
     // RM-A O3: advance the source's post-iteration watermark ONLY after
     // the per-doc write loop above succeeds. A mid-loop error (which
     // would have `?`-bubbled out above) leaves the watermark unadvanced,
     // so the next run reselects the same sessions. No-op for non-memory
-    // sources.
+    // sources. Only raw documents the loop actually wrote are passed, so
+    // sessions skipped by `doc_limit` stay eligible for the next run.
     source
-        .commit_processed()
+        .commit_processed(&written_raw_ids)
         .await
         .context("commit_processed")?;
 
