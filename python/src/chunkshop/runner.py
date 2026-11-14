@@ -118,6 +118,10 @@ def run_cell(cfg: CellConfig) -> CellResult:
             for doc in framer.frame(raw):
                 chunks = chunker.chunk(doc)
                 if not chunks:
+                    if cfg.target.delete_orphans:
+                        # Doc now yields nothing: drop its stale rows (the
+                        # incremental case is also covered after this loop).
+                        sink.delete_document(doc.id)
                     continue
                 doc_record_metadata = dict(doc.metadata or {})
                 if cfg.target.documents.enabled and getattr(cfg.extractor, "type", None) == "lede_report":
