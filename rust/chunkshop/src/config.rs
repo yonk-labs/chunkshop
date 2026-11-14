@@ -1212,6 +1212,13 @@ impl PostgresTargetConfig {
             ));
         }
         validate_no_document_store(&self.documents)?;
+        if self.memory.is_some() && self.delete_orphans {
+            return Err(anyhow!(
+                "target.delete_orphans is not supported for memory targets \
+                 (memory tiers manage their own supersede; seq_nums are offset \
+                 per session, so orphan deletion would remove earlier episodes)"
+            ));
+        }
         if !matches!(
             self.vector_metric.as_str(),
             "cosine" | "inner_product" | "l2"
@@ -2210,6 +2217,35 @@ target:
             msg.contains("bogus_field") || msg.contains("unknown"),
             "expected unknown-field complaint, got: {msg}"
         );
+    }
+
+    #[test]
+    fn memory_target_with_delete_orphans_rejected() {
+        let yaml = r#"
+cell_name: m
+source: { type: files, glob: "x", id_from: stem }
+chunker: { type: sentence_aware }
+embedder: { type: fastembed, model_name: BAAI/bge-base-en-v1.5, dim: 768 }
+target:
+  type: postgres
+  dsn_env: D
+  database: agent_memory
+  table: memory
+  mode: create_if_missing
+  source_tag: ns1
+  hnsw: false
+  delete_orphans: true
+  memory: { tier: consolidated, supersede: true, namespace: ns1 }
+"#;
+        let err = load_config(&write_yaml(yaml)).expect_err("memory + delete_orphans must fail");
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("delete_orphans is not supported for memory targets"),
+            "got: {msg}"
+        );
+        // Same target without delete_orphans still loads.
+        let ok = yaml.replace("  delete_orphans: true\n", "");
+        load_config(&write_yaml(&ok)).expect("memory without delete_orphans loads");
     }
 
     // --- RM-A Task 2: SessionEpisodeFramerConfig --------------------------
