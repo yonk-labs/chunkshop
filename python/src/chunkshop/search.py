@@ -235,33 +235,44 @@ def _execute_read(
     via ``set_config(..., is_local=true)`` — transaction-scoped, so it resets at
     txn end and never leaks across pooled connection reuse.
     """
-    def _run(cur) -> list[tuple]:
-        if ef_search is not None:
-            cur.execute("SELECT set_config('hnsw.ef_search', %s, true)", [str(ef_search)])
-        cur.execute(sql, params)
-        return cur.fetchall()
+    def _run(conn) -> list[tuple]:
+        with conn.cursor() as cur:
+            if ef_search is None:
+                cur.execute(sql, params)
+                return cur.fetchall()
+            # is_local=true only lives inside one transaction; pooled conns are
+            # autocommit, so wrap set_config + query in an explicit block.
+            with conn.transaction():
+                cur.execute("SELECT set_config('hnsw.ef_search', %s, true)", [str(ef_search)])
+                cur.execute(sql, params)
+                return cur.fetchall()
 
     if not _pool_enabled():
-        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-            return _run(cur)
+        with psycopg.connect(dsn) as conn:
+            return _run(conn)
 
     conn, reused = _pool_acquire(dsn)
     try:
-        with conn.cursor() as cur:
-            rows = _run(cur)
+        rows = _run(conn)
     except _CONN_ERRORS:
         _close_quietly(conn)
         if not reused:
             raise
         conn2 = _open_read_conn(dsn)
         try:
-            with conn2.cursor() as cur:
-                rows = _run(cur)
+            rows = _run(conn2)
         except BaseException:
             _close_quietly(conn2)
             raise
         _pool_release(dsn, conn2, ok=True)
         return rows
+    except psycopg.Error:
+        # Non-connection DB error (e.g. SQL error): conn is still healthy.
+        _pool_release(dsn, conn, ok=True)
+        raise
+    except BaseException:
+        _close_quietly(conn)
+        raise
     _pool_release(dsn, conn, ok=True)
     return rows
 
