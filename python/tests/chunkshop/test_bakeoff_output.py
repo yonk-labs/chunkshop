@@ -101,9 +101,11 @@ def test_recommended_yaml_parses_as_cell_config(tmp_path):
     cfg = _fixture_cfg()
     r = _fixture_results()
     p = write_recommended_yaml(cfg, r, tmp_path)
+    # The file must be usable as written: `chunkshop ingest --config recommended.yaml`.
+    # The explanatory note is a YAML comment, not a data key (extra keys are forbidden).
+    assert p.read_text().startswith("# ")
     raw = yaml.safe_load(p.read_text())
-    # Strip the comment-only marker field (YAML has no native comment-as-data).
-    raw.pop("# NOTE", None)
+    assert "# NOTE" not in raw
     CellConfig.model_validate(raw)
 
 
