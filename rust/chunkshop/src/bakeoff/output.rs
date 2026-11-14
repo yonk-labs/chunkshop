@@ -209,10 +209,13 @@ pub fn write_recommended_yaml(
         &crate::config::FramerConfig::Identity(crate::config::IdentityFramerConfig {}),
     ));
 
+    // Written as real YAML comment lines: cell configs forbid unknown keys, so
+    // a "# NOTE" data key made the file fail `chunkshop ingest` / `search`.
     let note = format!(
-        "Top combo from bakeoff '{}' (MRR={:.3}, r@1={:.3}). Point `source` \
-         at your real corpus before running `chunkshop ingest`.",
+        "# Top combo from bakeoff '{}' (backend={}, MRR={:.3}, r@1={:.3}).\n\
+         # Point `source` at your real corpus before running `chunkshop ingest`.\n",
         results.run_name,
+        top.backend,
         top.aggregate.get("mrr").copied().unwrap_or(0.0),
         top.aggregate.get("recall_at_1").copied().unwrap_or(0.0),
     );
@@ -259,7 +262,6 @@ pub fn write_recommended_yaml(
     };
 
     let recommended = json!({
-        "# NOTE": note,
         "cell_name": format!("{}_recommended", results.run_name),
         "source": source_yaml,
         "framer": framer_yaml,
@@ -268,7 +270,7 @@ pub fn write_recommended_yaml(
         "target": target_yaml,
     });
 
-    let yaml_text = serde_yaml_ng::to_string(&recommended)?;
+    let yaml_text = format!("{}{}", note, serde_yaml_ng::to_string(&recommended)?);
     let out = out_dir.join("recommended.yaml");
     std::fs::write(&out, yaml_text).with_context(|| format!("write {}", out.display()))?;
     Ok(out)
