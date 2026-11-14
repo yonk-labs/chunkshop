@@ -1,5 +1,6 @@
 """MariaDB sink — chunks-table writer using the MariaDBBackend dialect."""
 from __future__ import annotations
+import json
 import os
 from typing import Any
 
@@ -20,6 +21,16 @@ def _jsonb_path_get(meta: dict, path: str):
             return None
         cur = cur[seg]
     return cur
+
+
+def _promote_value(value, pc):
+    """JSON-encode what pymysql can't bind, and anything headed for a JSON column
+    (text[] and jsonb map to JSON, which rejects non-JSON text; pg parity)."""
+    if value is None:
+        return None
+    if pc.type in ("text[]", "jsonb") or isinstance(value, (list, dict)):
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    return value
 
 
 def _canonical_cols(dim: int) -> list[ColSpec]:
@@ -210,7 +221,7 @@ class MariaDbSink:
                 # embedding handled inline above
                 self.cfg.source_tag,
             ]
-            promote_params = [_jsonb_path_get(c.metadata, pc.path) for pc in promote]
+            promote_params = [_promote_value(_jsonb_path_get(c.metadata, pc.path), pc) for pc in promote]
             sql_per_row.append(row_sql)
             params_per_row.append(tuple(base_params + promote_params))
 

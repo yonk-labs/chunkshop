@@ -5,6 +5,7 @@ owns the two-table dance: every `write_document` writes both atomically; every
 `delete_orphans` deletes from both.
 """
 from __future__ import annotations
+import json
 import logging
 import sqlite3
 from typing import Any
@@ -28,6 +29,13 @@ def _jsonb_path_get(meta: dict, path: str):
             return None
         cur = cur[seg]
     return cur
+
+
+def _promote_value(value):
+    """SQLite can't bind list/dict; store them as JSON text (pg parity)."""
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    return value
 
 
 def _canonical_cols(dim: int) -> list[ColSpec]:
@@ -230,7 +238,7 @@ class SqliteSink:
                 self.backend.json_literal(c.metadata),
                 self.cfg.source_tag,
             ]
-            promoted = [_jsonb_path_get(c.metadata, pc.path) for pc in promote]
+            promoted = [_promote_value(_jsonb_path_get(c.metadata, pc.path)) for pc in promote]
             main_rows.append(tuple(base + promoted))
             vec_ids.append((chunk_id,))
             vec_rows.append((chunk_id, self.backend.vector_literal(emb)))
