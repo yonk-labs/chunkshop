@@ -121,7 +121,7 @@ pub async fn run_cell(cfg: CellConfig) -> Result<CellResult> {
                 });
             }
 
-            sink.write_document(&raw.id, &chunks_with_meta, &embeddings, &tags_per_chunk)
+            sink.write_document(&doc.id, &chunks_with_meta, &embeddings, &tags_per_chunk)
                 .await
                 .context("write_document")?;
             chunks_written += chunks_with_meta.len();
