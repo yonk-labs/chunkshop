@@ -243,7 +243,9 @@ def validate(config: Path):
     click.echo(f"  source:   {cfg.source.type}")
     click.echo(f"  framer:   {cfg.framer.type}")
     click.echo(f"  chunker:  {cfg.chunker.type}")
-    click.echo(f"  embedder: {cfg.embedder.model_name} (dim={cfg.embedder.dim})")
+    # fastembed configs name the model `model_name`; openai-type configs use `model`.
+    emb_model = getattr(cfg.embedder, "model_name", None) or getattr(cfg.embedder, "model", "?")
+    click.echo(f"  embedder: {emb_model} (dim={cfg.embedder.dim})")
     click.echo(f"  extractor:{cfg.extractor.type}")
     click.echo(f"  target:   {cfg.target.type} -> {cfg.target.database_name}.{cfg.target.table} (mode={cfg.target.mode})")
 
