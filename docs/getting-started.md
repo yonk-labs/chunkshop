@@ -4,11 +4,11 @@ This doc walks the canonical chunkshop loop using a real corpus: 20 NTSB
 aviation-accident reports shipped under `docs/samples/bakeoff-ntsb/corpus/`.
 By the end, you'll have:
 
-- A leaderboard ranking 12 (chunker × embedder) combos against 12 hand-written gold queries
+- A leaderboard ranking 12 (chunker × embedder) combos against 12 hand-written gold queries, on Postgres
 - A `recommended.yaml` cell containing the winning combo
 - That cell ingested into your pgvector database, ready to query
 
-Time budget: **~10 minutes** of reading, **~90 seconds** of bakeoff compute on a laptop.
+Time budget: **~10 minutes** of reading, plus the bakeoff compute (12 combos; the first run also downloads the embedder models).
 
 ## The journey, in one diagram
 
@@ -56,7 +56,7 @@ ls docs/samples/bakeoff-ntsb/corpus/*.md | wc -l
 # 20
 ```
 
-Each file is one NTSB final-accident report. Reasonably structured markdown with a heading and ~5 pages of analysis. Realistic-but-bounded — small enough that the bakeoff finishes in ~90 seconds.
+Each file is one NTSB final-accident report. Reasonably structured markdown with a heading and ~5 pages of analysis. Realistic-but-bounded — small enough for a quick bakeoff.
 
 If you're following along with your *own* corpus, point `source.glob` in the bakeoff YAML at it. Anywhere you have markdown files (or a Postgres table, or an S3 bucket — see [`docs/samples/`](samples/) for variants) chunkshop can read.
 
@@ -75,11 +75,11 @@ The gold set is a list of `{query, gold_doc_id}` pairs. ~10 queries is the floor
 
 The trick: write queries the way a *user* would, not the way a *retrieval engineer* would. Real users don't say "documents matching predicate X." They say "the one about the elderly pilot in Pennsylvania." Match that energy.
 
-The `gold_doc_id` is just the file stem (chunkshop's `id_from: stem` default). Multiple queries can point at the same doc.
+The `gold_doc_id` is just the file stem (chunkshop's `id_from: stem` default; ingest fails if two matched files share a stem, so use `id_from: path` for a nested corpus). Multiple queries can point at the same doc.
 
 ## Step 3: Run the bakeoff
 
-The matrix lives in [`docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml`](samples/bakeoff-ntsb/bakeoff-ntsb.yaml):
+The Postgres-only matrix lives in [`docs/samples/bakeoff-ntsb/bakeoff-ntsb-pg.yaml`](samples/bakeoff-ntsb/bakeoff-ntsb-pg.yaml):
 
 ```yaml
 matrix:
@@ -97,11 +97,10 @@ matrix:
 3 embedders × 4 chunkers = 12 combos. Run it:
 
 ```bash
-chunkshop bakeoff --config docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml \
-                  --dsn "$CHUNKSHOP_DSN" --yes
+chunkshop bakeoff --config docs/samples/bakeoff-ntsb/bakeoff-ntsb-pg.yaml --yes
 ```
 
-`--yes` skips the matrix-size confirmation prompt. The first run downloads ~3 ONNX model files (~150 MB total, cached for next time). After that, expect ~90 seconds wall on a 4-core laptop.
+The DSN comes from the `CHUNKSHOP_DSN` env var named in the YAML's `targets:` entry; `bakeoff` takes only `--config` and `--yes`. `--yes` skips the matrix-size confirmation prompt (it only matters above 50 cells). The first run downloads ~3 ONNX model files (~150 MB total, cached for next time). The four-backend, 63-cell version is `bakeoff-ntsb.yaml`; it also needs `MARIADB_DSN`, `SQLITE_BAKEOFF_PATH` and `CLICKHOUSE_DSN` exported.
 
 When it's done, you get three files:
 
@@ -149,12 +148,15 @@ embedder:
   model_name: nomic-ai/nomic-embed-text-v1.5-Q
   dim: 768
 target:
-  schema: chunkshop_bakeoff_ntsb
+  type: postgres
+  dsn_env: CHUNKSHOP_DSN
+  database: chunkshop_bakeoff_ntsb_pg
   table: ntsb_bakeoff_production
   mode: overwrite
+  vector_metric: cosine
 ```
 
-Edit the `source` block to point at *your* corpus (or your production Postgres table, or your S3 bucket), pick the target schema/table you want, then run:
+Edit the `source` block to point at *your* corpus (or your production Postgres table, or your S3 bucket), pick the target `database` (the schema name) and `table` you want, then run:
 
 **Python:**
 ```bash
@@ -168,7 +170,12 @@ chunkshop-rs ingest --config skill-output/bakeoff/ntsb_bakeoff/recommended.yaml
 
 Same YAML. Same target table. Same chunk ordering. The cell-level pipeline is at parity, so vectors written by either implementation are interchangeable. Pick whichever runtime fits your deployment.
 
-> Reminder: today only Python can do step 3 (the bakeoff). The Rust port is in flight. Once it lands, `chunkshop-rs bakeoff` will accept the same YAML and produce a leaderboard whose ordering matches Python's (modulo a documented tie band for combos within ~5e-3 MRR of each other).
+Then search it. The cell above has no `target.fts:` block, so `chunkshop search` returns semantic results only and prints `Note: FTS leg skipped: ... has no search_vector column` on stderr; add an `fts:` block under `target:` and re-ingest to get hybrid search.
+
+```bash
+chunkshop search --config skill-output/bakeoff/ntsb_bakeoff/recommended.yaml \
+    --query "icy runway landing accident" --k 3
+```
 
 ## Step 5: New corpus → repeat from step 2
 

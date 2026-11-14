@@ -42,9 +42,10 @@ matrix:
   chunkers:
     - {type: hierarchy}
 
-target:
-  dsn_env: CHUNKSHOP_DSN
-  schema: bakeoff_embedder_pick
+targets:
+  - type: postgres
+    dsn_env: CHUNKSHOP_DSN
+    database: bakeoff_embedder_pick
 
 scoring: {k: [1, 3, 5], include_mrr: true, top_k: 5}
 ```
@@ -73,9 +74,10 @@ matrix:
     - {type: fixed_overlap, window_words: 300, step_words: 150}
     - {type: neighbor_expand, window: 1, base: {type: hierarchy}}
 
-target:
-  dsn_env: CHUNKSHOP_DSN
-  schema: bakeoff_chunker_pick
+targets:
+  - type: postgres
+    dsn_env: CHUNKSHOP_DSN
+    database: bakeoff_chunker_pick
 
 scoring: {k: [1, 3, 5], include_mrr: true, top_k: 5}
 ```
@@ -105,9 +107,10 @@ matrix:
     - {type: fixed_overlap, window_words: 300, step_words: 150}
     - {type: neighbor_expand, window: 1, base: {type: hierarchy}}
 
-target:
-  dsn_env: CHUNKSHOP_DSN
-  schema: bakeoff_full
+targets:
+  - type: postgres
+    dsn_env: CHUNKSHOP_DSN
+    database: bakeoff_full
 
 scoring: {k: [1, 3, 5], include_mrr: true, top_k: 5}
 ```
@@ -133,9 +136,7 @@ Outputs land in `skill-output/bakeoff/{name}/`:
 - `recommended.yaml` — the top-MRR combo as a runnable `chunkshop ingest`
   cell. Edit `source.glob` / `target.table` and run it.
 
-**Keep the schema for debugging:** pass `--keep-schema` to skip the
-`DROP SCHEMA CASCADE` on exit. Useful when a surprising leaderboard needs a
-hand-eyeball of a combo's actual top-K results in psql.
+**Cleanup:** the bakeoff does not drop its schemas or tables after the run, so a surprising leaderboard can be inspected in psql. Drop the schema yourself before re-running.
 
 ## Gold-query tips
 

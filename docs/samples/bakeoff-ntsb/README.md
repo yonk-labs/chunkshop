@@ -43,10 +43,9 @@ export CHUNKSHOP_DSN=postgresql://postgres:postgres@localhost:5434/age_bakeoff_p
 cd /path/to/chunkshop      # repo root, not python/
 cd python && uv sync --extra dev && cd ..
 
-# 12 combos, ~90 seconds on a laptop:
+# Postgres only, 12 combos (the DSN is read from CHUNKSHOP_DSN):
 uv run --project python chunkshop bakeoff \
-    --config docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml \
-    --dsn "$CHUNKSHOP_DSN" \
+    --config docs/samples/bakeoff-ntsb/bakeoff-ntsb-pg.yaml \
     --yes
 ```
 
@@ -64,9 +63,9 @@ cd /path/to/chunkshop      # repo root
     --yes
 ```
 
-`--yes` bypasses the matrix-size confirmation prompt. `--keep-schema` preserves
-the per-combo tables in Postgres for post-hoc inspection (default behavior
-drops the schema after the leaderboard is written).
+`--yes` bypasses the matrix-size confirmation prompt. The per-combo tables are
+kept in Postgres for post-hoc inspection; pass `--drop-schema` to drop the
+schema after the leaderboard is written.
 
 ## Verify cross-language parity
 
