@@ -241,13 +241,15 @@ class SqliteSink:
             cur.executemany(vec_delete_stmt, vec_ids)
             cur.executemany(vec_insert_stmt, vec_rows)
             if self.cfg.delete_orphans:
+                # Vec rows first, by exact id from the main rows about to go
+                # (LIKE is case-insensitive and treats `_`/`%` as wildcards).
                 cur.execute(
-                    f"DELETE FROM {self._fq_main()} WHERE doc_id = ? AND seq_num >= ?",
+                    f"DELETE FROM {self._fq_vec()} WHERE id IN "
+                    f"(SELECT id FROM {self._fq_main()} WHERE doc_id = ? AND seq_num >= ?)",
                     (doc_id, len(chunks)),
                 )
                 cur.execute(
-                    f"DELETE FROM {self._fq_vec()} WHERE id LIKE ? || '::%' "
-                    f"AND CAST(substr(id, instr(id, '::') + 2) AS INTEGER) >= ?",
+                    f"DELETE FROM {self._fq_main()} WHERE doc_id = ? AND seq_num >= ?",
                     (doc_id, len(chunks)),
                 )
             conn.commit()
