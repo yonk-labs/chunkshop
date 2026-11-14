@@ -55,6 +55,15 @@ class MemorySink(PgSink):
 
     def write_document(self, doc_id, chunks, embeddings, tags_per_chunk) -> None:
         chunks = self._stamp(chunks)
+        if doc_id not in self._seq_base and self._mem.tier == "provisional":
+            # Realtime runs are fresh processes: resume after rows an earlier
+            # run already wrote for this doc instead of restarting at 0.
+            with self.backend.connect() as conn, conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT coalesce(max(seq_num) + 1, 0) FROM {self._fq()} "
+                    f"WHERE doc_id = %s AND source IS NOT DISTINCT FROM %s",
+                    (doc_id, self.cfg.source_tag))
+                self._seq_base[doc_id] = cur.fetchone()[0]
         base = self._seq_base.get(doc_id, 0)
         chunks = [replace(c, seq_num=base + i) for i, c in enumerate(chunks)]
         self._seq_base[doc_id] = base + len(chunks)
