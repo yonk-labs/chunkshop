@@ -26,6 +26,10 @@ def _event_id(session_id: str, seq, ts, content: str) -> str:
 def ensure_staging_table(dsn: str, *, table: str, schema: str = "public") -> None:
     fq = _ident(schema, table)
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        # Serialize concurrent first calls: CREATE ... IF NOT EXISTS still races on
+        # the catalog's unique indexes. Released at commit. Same key as the Rust
+        # port, so Python and Rust cells serialize against each other too.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"chunkshop_staging:{schema}",))
         cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
         cur.execute(sql.SQL(
             "CREATE TABLE IF NOT EXISTS {fq} ("
