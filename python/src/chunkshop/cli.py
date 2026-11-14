@@ -712,6 +712,7 @@ def search(config, query, k, return_mode, legs, vector_metric, ef_search, where_
     from chunkshop.config import CellConfig
     from chunkshop.embedders import load_embedder
     from chunkshop.search_common import search as _search
+    from chunkshop.search import fts_skipped_notes_to_stderr as _fts_notes
 
     try:
         cfg = CellConfig.model_validate(_yaml.safe_load(Path(config).read_text()))
@@ -761,22 +762,23 @@ def search(config, query, k, return_mode, legs, vector_metric, ef_search, where_
                         [p.rstrip("%") for p in like]
                     )
 
-        res = _search(
-            tgt.resolve_dsn(),
-            schema=tgt.database_name,
-            table=tgt.table,
-            query=query,
-            query_vec=qv,
-            k=k,
-            legs=tuple(legs.split(",")),
-            where=parsed_where or None,
-            return_mode=return_mode,
-            summarize_fn=summarize_fn,
-            language=(tgt.fts.language if tgt.fts else "english"),
-            vector_metric=vector_metric or tgt.vector_metric,
-            ef_search=ef_search,
-            compress_fn=compress_fn,
-        )
+        with _fts_notes():
+            res = _search(
+                tgt.resolve_dsn(),
+                schema=tgt.database_name,
+                table=tgt.table,
+                query=query,
+                query_vec=qv,
+                k=k,
+                legs=tuple(legs.split(",")),
+                where=parsed_where or None,
+                return_mode=return_mode,
+                summarize_fn=summarize_fn,
+                language=(tgt.fts.language if tgt.fts else "english"),
+                vector_metric=vector_metric or tgt.vector_metric,
+                ef_search=ef_search,
+                compress_fn=compress_fn,
+            )
     except click.ClickException:
         raise
     except Exception as exc:
@@ -1332,6 +1334,7 @@ def fact_search(config, query, k, confidence_floor, want_summary, as_json):
     from chunkshop.config import CellConfig
     from chunkshop.embedders import load_embedder
     from chunkshop.search_common import search as _search
+    from chunkshop.search import fts_skipped_notes_to_stderr as _fts_notes
 
     try:
         cfg = CellConfig.model_validate(_yaml.safe_load(Path(config).read_text()))
@@ -1342,18 +1345,19 @@ def fact_search(config, query, k, confidence_floor, want_summary, as_json):
         schema = tgt.database_name
         table = tgt.table
 
-        res = _search(
-            dsn,
-            schema=schema,
-            table=table,
-            query=query,
-            query_vec=qv,
-            k=k,
-            where={"metadata": {"kind": "fact"}},
-            return_mode="chunks",
-            language=(tgt.fts.language if tgt.fts else "english"),
-            vector_metric=tgt.vector_metric,
-        )
+        with _fts_notes():
+            res = _search(
+                dsn,
+                schema=schema,
+                table=table,
+                query=query,
+                query_vec=qv,
+                k=k,
+                where={"metadata": {"kind": "fact"}},
+                return_mode="chunks",
+                language=(tgt.fts.language if tgt.fts else "english"),
+                vector_metric=tgt.vector_metric,
+            )
 
         summarize = None
         if want_summary:

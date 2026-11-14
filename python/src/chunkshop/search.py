@@ -29,8 +29,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import threading
 import time
+import warnings
 from contextlib import contextmanager
 from typing import Any, Optional
 
@@ -582,6 +584,37 @@ def semantic_search(
     ]
 
 
+class FtsUnavailableError(RuntimeError):
+    """The FTS leg was requested but the table has no ``search_vector`` column."""
+
+
+class FtsSkippedWarning(UserWarning):
+    """The FTS leg was skipped (no ``search_vector`` column); semantic results returned."""
+
+
+def _fts_guidance(schema: str, table: str) -> str:
+    return (
+        f"{schema}.{table} has no search_vector column. Add `target.fts:` to the "
+        f"cell config and re-ingest to enable hybrid search."
+    )
+
+
+@contextmanager
+def fts_skipped_notes_to_stderr():
+    """Route :class:`FtsSkippedWarning` to stderr as a plain one-line note (CLI use).
+
+    Other warnings are re-emitted untouched.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        yield
+    for w in caught:
+        if issubclass(w.category, FtsSkippedWarning):
+            print(f"Note: {w.message}", file=sys.stderr)
+        else:
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+
+
 def hybrid_search(
     dsn: str,
     *,
@@ -635,10 +668,20 @@ def hybrid_search(
             where=where, vector_metric=vector_metric, ef_search=ef_search,
         )
     if "fts" in legs:
-        leg_thunks["fts"] = lambda: keyword_search(
-            dsn, schema=schema, table=table, query=query, k=cand_k, where=where,
-            language=language,
-        )
+        def _fts_leg() -> list[Hit]:
+            try:
+                return keyword_search(
+                    dsn, schema=schema, table=table, query=query, k=cand_k,
+                    where=where, language=language,
+                )
+            except psycopg.errors.UndefinedColumn as exc:
+                if "search_vector" not in str(exc):
+                    raise
+                raise FtsUnavailableError(
+                    f"FTS leg unavailable: {_fts_guidance(schema, table)}"
+                ) from exc
+
+        leg_thunks["fts"] = _fts_leg
 
     leg_results: dict[str, list[Hit]] = {}
     if len(leg_thunks) > 1:
@@ -650,7 +693,14 @@ def hybrid_search(
             futures = {name: pool.submit(thunk) for name, thunk in leg_thunks.items()}
             # .result() re-raises any leg exception, matching sequential behavior.
             for name, fut in futures.items():
-                leg_results[name] = fut.result()
+                try:
+                    leg_results[name] = fut.result()
+                except FtsUnavailableError:
+                    # Semantic is also requested: degrade to it, tell the user once.
+                    warnings.warn(
+                        f"FTS leg skipped: {_fts_guidance(schema, table)}",
+                        FtsSkippedWarning, stacklevel=2,
+                    )
     else:
         for name, thunk in leg_thunks.items():
             leg_results[name] = thunk()
