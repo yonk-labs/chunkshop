@@ -74,7 +74,7 @@ class MemorySink(PgSink):
                 and doc_id not in self._superseded):
             with self.backend.connect() as conn, conn.cursor() as cur:
                 cur.execute(
-                    f"DELETE FROM {self._fq()} WHERE doc_id = %s AND source = %s",
+                    f"DELETE FROM {self._fq()} WHERE doc_id = %s AND source IS NOT DISTINCT FROM %s",
                     (doc_id, self.cfg.source_tag))
                 conn.commit()
             self._superseded.add(doc_id)
@@ -93,7 +93,7 @@ class MemorySink(PgSink):
                 cur.execute(
                     f"UPDATE {self._fq()} SET retracted = true, "
                     f"retracted_at = now(), effective_to = %s::timestamptz "
-                    f"WHERE source = %s AND subject = %s AND predicate = %s "
+                    f"WHERE source IS NOT DISTINCT FROM %s AND subject = %s AND predicate = %s "
                     f"AND effective_from < %s::timestamptz "
                     f"AND coalesce(retracted, false) = false",
                     (m.get("effective_from"), self.cfg.source_tag,
