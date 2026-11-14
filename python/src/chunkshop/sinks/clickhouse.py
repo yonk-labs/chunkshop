@@ -27,6 +27,7 @@ from chunkshop.backends.base import ColSpec
 from chunkshop.backends.clickhouse import ClickHouseBackend
 from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
+from chunkshop.sinks.base import filter_framed_ids, frame_prefix
 
 _log = logging.getLogger(__name__)
 _DELETE_ORPHANS_WARNED: set[int] = set()  # PID-keyed: warn once per process
@@ -310,6 +311,22 @@ class ClickHouseSink:
                 parameters=params,
             )
             return n
+
+    def framed_doc_ids(self, raw_id: str) -> list[str]:
+        """Doc ids that are frames (`raw_id#<digits>`) of `raw_id`."""
+        prefix = frame_prefix(raw_id)
+        # substringUTF8 counts characters; plain substring would count bytes.
+        scope = "AND source = {tag:String}" if self.cfg.source_tag else ""
+        params: dict = {"n": len(prefix), "prefix": prefix}
+        if self.cfg.source_tag:
+            params["tag"] = self.cfg.source_tag
+        with self.backend.connect() as client:
+            r = client.query(
+                f"SELECT DISTINCT doc_id FROM {self._fq()} "
+                f"WHERE substringUTF8(doc_id, 1, {{n:UInt32}}) = {{prefix:String}} {scope}",
+                parameters=params,
+            )
+            return filter_framed_ids(raw_id, (row[0] for row in r.result_rows))
 
     def count_docs(self) -> int:
         with self.backend.connect() as client:

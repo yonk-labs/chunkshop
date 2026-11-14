@@ -15,6 +15,7 @@ from chunkshop.backends.base import ColSpec
 from chunkshop.backends.sqlite import SQLiteBackend
 from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
+from chunkshop.sinks.base import filter_framed_ids, frame_prefix
 
 _log = logging.getLogger(__name__)
 _HNSW_WARNED: set[int] = set()  # process-id keyed so we warn once per process
@@ -278,6 +279,19 @@ class SqliteSink:
             cur.execute(f"DELETE FROM {self._fq_vec()} WHERE id IN ({placeholders})", ids)
             conn.commit()
         return deleted
+
+    def framed_doc_ids(self, raw_id: str) -> list[str]:
+        """Doc ids that are frames (`raw_id#<digits>`) of `raw_id`."""
+        prefix = frame_prefix(raw_id)
+        sql = f"SELECT DISTINCT doc_id FROM {self._fq_main()} WHERE substr(doc_id, 1, ?) = ?"
+        params: list = [len(prefix), prefix]
+        if self.cfg.source_tag:
+            sql += " AND source = ?"
+            params.append(self.cfg.source_tag)
+        with self.backend.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return filter_framed_ids(raw_id, (r[0] for r in cur.fetchall()))
 
     def count_docs(self) -> int:
         with self.backend.connect() as conn:

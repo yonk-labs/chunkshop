@@ -35,6 +35,18 @@ class CellResult:
     error: Optional[str] = None
 
 
+def _delete_raw_doc(sink, raw_id: str, keep=frozenset(), framed: bool = True) -> None:
+    """Delete a raw doc's rows: its own id plus every framed id (`raw_id#N`) not in `keep`.
+
+    `framed=False` (identity framer) skips the frame lookup: no `raw_id#N` rows
+    can belong to this doc, and a live doc named `meeting#1` must not be
+    mistaken for a frame of `meeting`.
+    """
+    frames = sink.framed_doc_ids(raw_id) if framed else ()
+    for did in {raw_id, *frames} - set(keep):
+        sink.delete_document(did)
+
+
 def _log(msg: str, log_path: Optional[Path]) -> None:
     line = f"[{time.strftime('%H:%M:%S')}] {msg}"
     logger.info("%s", line)
@@ -75,6 +87,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
         else:
             doc_source = source.iter_documents()
         framer = load_framer(cfg.framer)
+        framed = cfg.framer.type != "identity"  # only these write `raw#N` ids
         embedder = load_embedder(cfg.embedder)
         # SemanticChunker(boundary_model="same") reuses the main embedder's
         # TextEmbedding instance to avoid doubling RAM (SC-002). Grab it via the
@@ -101,6 +114,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
         for raw in doc_source:
             if limit is not None and docs_processed >= limit:
                 break
+            written_ids: set[str] = set()
             for doc in framer.frame(raw):
                 chunks = chunker.chunk(doc)
                 if not chunks:
@@ -163,7 +177,12 @@ def run_cell(cfg: CellConfig) -> CellResult:
                         chunk_count=len(chunks),
                     )
                 sink.write_document(doc.id, chunks, embeddings, tags)
+                written_ids.add(doc.id)
                 chunks_written += len(chunks)
+            if incremental and cfg.target.delete_orphans:
+                # Drop frames this raw doc no longer produces (fewer sections, or
+                # the id switched between `x#N` and plain `x`, or zero chunks).
+                _delete_raw_doc(sink, raw.id, keep=written_ids, framed=framed)
             # `docs_processed` counts RAW docs (what the source yielded), not framed docs.
             docs_processed += 1
             if incremental:
@@ -187,7 +206,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
                 if isinstance(source, PrunableSource):
                     deleted = list(source.iter_deleted_since(cursor))
                     for did in deleted:
-                        sink.delete_document(did)
+                        _delete_raw_doc(sink, did, framed=framed)
                     if deleted:
                         _log(f"incremental: pruned {len(deleted)} deleted docs", log_path)
                 # Trim the cursor to the current on-disk manifest so deleted paths
