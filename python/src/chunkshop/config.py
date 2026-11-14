@@ -1215,6 +1215,12 @@ class TargetConfig(_DsnResolvable):
             raise ValueError("target.documents is currently supported only for postgres targets")
         if self.documents.enabled and self.documents.table == self.table:
             raise ValueError("target.documents.table must differ from target.table")
+        if self.memory is not None and self.delete_orphans:
+            raise ValueError(
+                "target.delete_orphans is not supported for memory targets "
+                "(memory tiers manage their own supersede; seq_nums are offset "
+                "per session, so orphan deletion would remove earlier episodes)"
+            )
         return self
 
 
