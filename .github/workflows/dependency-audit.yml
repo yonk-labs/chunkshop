@@ -5,6 +5,9 @@ on:
     branches: [main]
   push:
     branches: [main]
+  schedule:
+    # Weekly (Mondays 06:17 UTC) so new advisories surface without a push.
+    - cron: "17 6 * * 1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,7 +25,9 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-dependency-glob: "python/uv.lock"
+          cache-dependency-glob: |
+            python/uv.lock
+            python/connectors/uv.lock
 
       - name: Set up Python
         run: uv python install 3.12
@@ -32,6 +37,12 @@ jobs:
         run: |
           uv export --frozen --all-extras --no-hashes --no-emit-project \
             --output-file /tmp/chunkshop-pip-audit.txt
+
+      - name: Export locked connectors requirements
+        working-directory: python/connectors
+        run: |
+          uv export --frozen --all-extras --no-hashes --no-emit-project \
+            --output-file /tmp/chunkshop-connectors-pip-audit.txt
 
       - name: Run pip-audit
         working-directory: python
@@ -48,6 +59,19 @@ jobs:
           # inference; low exploitability for chunkshop's use. Mirrors the
           # cargo-audit RUSTSEC-2023-0071/2024-0436 ignores (no-fix advisories).
           # Remove once torch ships a patched release.
+
+
+      - name: Run pip-audit (connectors package)
+        # Separate invocation: the two lockfiles may pin the same package
+        # differently, and one requirements set per run avoids resolver conflicts.
+        working-directory: python/connectors
+        run: |
+          uv run --project ../ --with pip-audit pip-audit \
+            -r /tmp/chunkshop-connectors-pip-audit.txt \
+            --no-deps \
+            --disable-pip \
+            --skip-editable \
+            --ignore-vuln CVE-2025-3000
 
   rust:
     name: cargo audit
