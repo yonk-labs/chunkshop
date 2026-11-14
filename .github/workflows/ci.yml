@@ -34,8 +34,12 @@ jobs:
       CHUNKSHOP_TEST_DSN: postgresql://postgres:postgres@localhost:5434/chunkshop_test
       CHUNKSHOP_TEST_DSN_MARIADB: mysql://root:rootpw@localhost:3307/chunkshop_test
       CHUNKSHOP_TEST_DSN_CH: clickhouse://default:chpw@localhost:8124/chunkshop_test
-      # Pin fastembed cache to a path we can persist across runs.
-      FASTEMBED_CACHE_DIR: ${{ github.workspace }}/.cache/fastembed
+      # The connectors suite (test_real_world_kbs_smoke.py, e2e_real_world_5kbs.py)
+      # reads the _CLICKHOUSE spelling; the core suite reads _CH. Set both.
+      CHUNKSHOP_TEST_DSN_CLICKHOUSE: clickhouse://default:chpw@localhost:8124/chunkshop_test
+      # Pin fastembed cache to a path we can persist across runs. The code
+      # (embedders/_registry.py, fastembed_provider.py) reads FASTEMBED_CACHE_PATH.
+      FASTEMBED_CACHE_PATH: ${{ github.workspace }}/.cache/fastembed
 
     steps:
       - uses: actions/checkout@v6
@@ -166,3 +170,70 @@ jobs:
             cargo test --locked -p chunkshop-parsers --no-default-features --features "$f"
             echo "::endgroup::"
           done
+
+  rust-core:
+    name: chunkshop-rs core (rust, real databases)
+    runs-on: ubuntu-latest
+
+    env:
+      # Ports/credentials match docker-compose.test.yaml. Rust DB tests return Ok
+      # without testing anything when these are unset, so they MUST be set here.
+      CHUNKSHOP_TEST_DSN: postgresql://postgres:postgres@localhost:5434/chunkshop_test
+      CHUNKSHOP_TEST_DSN_MARIADB: mysql://root:rootpw@localhost:3307/chunkshop_test
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "python/uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-core-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            cargo-core-${{ runner.os }}-
+
+      - name: Start test databases (Postgres + MariaDB)
+        # Same compose file as the python job; ClickHouse is not needed here.
+        run: docker compose -f docker-compose.test.yaml up -d --wait postgres mariadb
+
+      - name: Verify pgvector extension available
+        run: |
+          PGPASSWORD=postgres psql -h localhost -p 5434 -U postgres -d chunkshop_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector; SELECT extversion FROM pg_extension WHERE extname='vector';"
+
+      - name: Install Python env (only what the MariaDB fixture seeder needs)
+        working-directory: python
+        run: uv sync --frozen --extra all-backends
+
+      - name: Seed MariaDB cross-language parity fixture (Python writes, Rust reads)
+        # Required by rust/chunkshop/tests/mariadb_cross_lang_parity.rs.
+        run: uv --project python run --no-sync python python/scripts/seed_mariadb_cross_lang_fixture.py
+
+      - name: Test (whole workspace, real databases)
+        working-directory: rust
+        run: cargo test --workspace --locked --no-fail-fast
+
+      - name: Clippy (deny-level lints only; style warnings are not gated yet)
+        working-directory: rust
+        run: cargo clippy --workspace --all-targets --locked
+
+      - name: Tear down test databases
+        if: always()
+        run: docker compose -f docker-compose.test.yaml down -v
