@@ -103,12 +103,16 @@ impl AnySource {
     /// loop succeeds. For `SessionStaging` (the only source that has
     /// post-iteration state today) it advances the `consumed` watermark
     /// for the sessions just emitted. Non-memory sources have no
-    /// post-iteration state — this is a no-op for them.
-    pub async fn commit_processed(&self) -> Result<()> {
+    /// post-iteration state — this is a no-op for them. `written` is the
+    /// ids of the raw documents the runner actually wrote.
+    pub async fn commit_processed(&self, written: &[String]) -> Result<()> {
         match self {
             #[cfg(feature = "memory")]
-            AnySource::SessionStaging(s) => s.commit_processed().await,
-            _ => Ok(()),
+            AnySource::SessionStaging(s) => s.commit_processed_for(written).await,
+            _ => {
+                let _ = written;
+                Ok(())
+            }
         }
     }
 }

@@ -3,10 +3,9 @@
 # block shows a keyed cloud provider (key supplied via api_key_env, never here).
 cell_name: openai_embedder_example
 source:
-  type: inline
-  documents:
-    - id: doc-1
-      content: "chunkshop can embed against a remote OpenAI-compatible endpoint."
+  type: files
+  glob: docs/samples/*-*.md   # run from the repo root
+  id_from: stem
 chunker:
   type: sentence_aware
   max_chars: 2000
@@ -26,5 +25,6 @@ embedder:
 target:
   type: postgres
   mode: overwrite
+  database: chunkshop_samples
   table: openai_embedder_demo
   dsn_env: CHUNKSHOP_DSN

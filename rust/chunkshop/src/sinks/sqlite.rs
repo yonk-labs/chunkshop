@@ -395,12 +395,20 @@ impl SqliteSink {
                 Box::new(self.cfg.source_tag.clone()),
             ];
             for pc in promote {
+                // Mirrors Python `_promote_value` (sinks/sqlite.py): null/missing is
+                // SQL NULL, bool binds as 1/0, list/dict are compact JSON text.
                 let v = jsonb_path_get(&c.metadata, &pc.path);
-                let s: Option<String> = v.map(|val| match val {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => serde_json::to_string(other).unwrap_or_default(),
-                });
-                params.push(Box::new(s));
+                match v {
+                    None | Some(serde_json::Value::Null) => params.push(Box::new(None::<String>)),
+                    Some(serde_json::Value::Bool(b)) => params.push(Box::new(*b)),
+                    Some(val) => {
+                        let s = match val {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => serde_json::to_string(other).unwrap_or_default(),
+                        };
+                        params.push(Box::new(Some(s)));
+                    }
+                }
             }
             let p_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
             main_q
@@ -422,6 +430,18 @@ impl SqliteSink {
             drop(vec_del_q);
             drop(vec_ins_q);
             let n_new = chunks.len() as i64;
+            // Vec table first, by exact id taken from the main table (LIKE would
+            // treat `_` as a wildcard and match case-insensitively).
+            tx.execute(
+                &format!(
+                    "DELETE FROM {} WHERE id IN \
+                     (SELECT id FROM {} WHERE doc_id = ? AND seq_num >= ?)",
+                    self.fq_vec(),
+                    self.fq_main()
+                ),
+                rusqlite::params![doc_id, n_new],
+            )
+            .context("delete orphans vec")?;
             tx.execute(
                 &format!(
                     "DELETE FROM {} WHERE doc_id = ? AND seq_num >= ?",
@@ -430,16 +450,6 @@ impl SqliteSink {
                 rusqlite::params![doc_id, n_new],
             )
             .context("delete orphans main")?;
-            // Vec table: id format is `doc_id::seq_num`. Match by LIKE + parse seq.
-            tx.execute(
-                &format!(
-                    "DELETE FROM {} WHERE id LIKE ? || '::%' \
-                     AND CAST(substr(id, instr(id, '::') + 2) AS INTEGER) >= ?",
-                    self.fq_vec()
-                ),
-                rusqlite::params![doc_id, n_new],
-            )
-            .context("delete orphans vec")?;
         }
         Ok(())
     }

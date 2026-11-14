@@ -23,7 +23,9 @@ for d in &docs { pipeline.ingest_document(d).await?; }
 - Legacy `.doc`/`.ppt` use a built-in, lenient OLE reader (no OLE crate); tables in `.doc` flatten to tab-separated rows. `.ppt` reads slide outline text plus free text boxes (appended after the outline text, not interleaved per slide).
 
 ## Untrusted input: `isolate`
-In-process, hostile files are bounded (per-part size caps, depth caps, clamped allocations, linear-time scanners; see `tests/hostile.rs`), but a PDF or spreadsheet crate can still overflow the stack, hang or exhaust memory, which `catch_unwind` cannot catch. With the `isolate` feature, binary formats parse in `chunkshop-parsers-worker`:
+**Parsing untrusted files in-process is not safe, even with the caps below.** A hostile file can abort your whole host process (out-of-memory or stack overflow; a Rust allocation failure cannot be caught, and `catch_unwind` only handles panics). `isolate` is the supported way to parse untrusted files. It is off by default: enable the `isolate` feature and call `ParsedFilesSource::with_isolation(...)` (example below). Without it, only parse files you trust.
+
+In-process, hostile files are bounded (per-part and aggregate size caps, a 128 MiB cap on total extracted text, a dense-range cap for XLSX/XLSB, depth caps, clamped allocations, linear-time scanners; see `tests/hostile.rs`), but a PDF or spreadsheet crate can still overflow the stack, hang or exhaust memory, which `catch_unwind` cannot catch. With the `isolate` feature, binary formats parse in `chunkshop-parsers-worker`:
 
 ```rust
 let iso = chunkshop_parsers::Isolation::locate().expect("worker next to the binary"); // or Isolation::new(path)

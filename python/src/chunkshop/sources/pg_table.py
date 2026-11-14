@@ -86,6 +86,11 @@ class PgTableSource:
             t=sql.Identifier(self.cfg.table),
         )
         params: list = []
+        conds: list = []
+        if self.cfg.where:
+            # Same filter as iter_documents; parenthesized so an OR can't bypass
+            # the cursor predicate. `%` escaped because params are passed below.
+            conds.append(sql.SQL("(") + sql.SQL(self.cfg.where.replace("%", "%%")) + sql.SQL(")"))
         # Tuple cursor: (after_ts, after_id) > (cursor.after_ts, cursor.after_id).
         # Casting id_col::text on both sides makes this uniform across int/uuid/text id
         # types — sync only needs the ordering to be CONSISTENT across runs, and
@@ -93,10 +98,12 @@ class PgTableSource:
         after_ts = cursor.get("after_ts")
         after_id = cursor.get("after_id")
         if after_ts is not None and after_id is not None:
-            q = q + sql.SQL(" WHERE (") + sql.Identifier(self.cfg.updated_at_column) + sql.SQL(
-                ", ") + sql.Identifier(self.cfg.id_column) + sql.SQL("::text) > (%s, %s)")
+            conds.append(sql.SQL("(") + sql.Identifier(self.cfg.updated_at_column) + sql.SQL(
+                ", ") + sql.Identifier(self.cfg.id_column) + sql.SQL("::text) > (%s, %s)"))
             params.append(_dt.datetime.fromisoformat(after_ts))
             params.append(str(after_id))
+        if conds:
+            q = q + sql.SQL(" WHERE ") + sql.SQL(" AND ").join(conds)
         q = q + sql.SQL(" ORDER BY ") + sql.Identifier(self.cfg.updated_at_column) + sql.SQL(
             ", ") + sql.Identifier(self.cfg.id_column) + sql.SQL("::text")
         with self.backend.connect() as conn, conn.cursor() as cur:

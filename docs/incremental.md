@@ -488,6 +488,10 @@ target:
   source_tag: files_incremental
 ```
 
+`source.incremental` is rejected at config load together with `target.mode: overwrite`
+(the default): overwrite drops the table every run, so an incremental run would keep
+only the changed files. Use `create_if_missing` (or `append` with a `source_tag`).
+
 Run it on a cron cadence like Pattern A — but your side is stateless; the cursor
 file carries everything:
 
@@ -508,6 +512,13 @@ size}`. Each run globs the directory and, per file:
 Unchanged files are skipped before chunking/embedding — the expensive step is
 never paid for them. Deleted files (in the cursor, gone from disk) have their
 chunks removed, scoped to the cell's `source_tag`.
+
+**Prune-all guard.** If a run would delete *every* document the cursor knows about
+(typically an unmounted directory or a glob typo, so the glob matches nothing),
+chunkshop refuses: the cell fails with the number of documents and the glob, nothing
+is deleted and the cursor is left unchanged. Set
+`source.incremental.allow_prune_all: true` when emptying the table is intended.
+Deleting only some files is unaffected.
 
 **Crash-safety.** The cursor is written atomically (temp file + rename) and
 **only after a fully successful run**. A crash mid-run leaves the previous

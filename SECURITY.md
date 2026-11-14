@@ -2,13 +2,16 @@
 
 ## Supported versions
 
-chunkshop is in beta (v0.5.x). Only the latest minor version receives
-security fixes. Older versions should upgrade.
+Only the latest released 1.x minor version receives security fixes
+(Python package `chunkshop` and Rust crates `chunkshop-rs` and
+`chunkshop-parsers`). Older versions, including all 0.x releases, should
+upgrade.
 
 | Version | Supported |
 |---------|-----------|
-| 0.5.x   | :white_check_mark: |
-| < 0.5   | :x: |
+| Latest 1.x minor | :white_check_mark: |
+| Older 1.x minors | :x: |
+| 0.x | :x: |
 
 ## Reporting a vulnerability
 
@@ -41,6 +44,9 @@ In your report, include:
 
 - Code in `python/src/chunkshop/` and `rust/chunkshop/src/` — source, framer,
   chunker, embedder, extractor, sink, runner, orchestrator/CLI surfaces.
+- Code in `rust/chunkshop-parsers/src/` — the optional crate that parses
+  untrusted PDF / Office / HTML files, including its `isolate` worker
+  (`chunkshop-parsers-worker`).
 - Shipped YAML configs in `python/src/chunkshop/configs/` and
   `docs/samples/`.
 - GitHub Actions workflows under `.github/workflows/`.

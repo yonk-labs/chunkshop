@@ -597,3 +597,103 @@ async fn underscore_prefixed_metadata_keys_stripped() -> anyhow::Result<()> {
     cleanup(&admin_pool, &database).await?;
     Ok(())
 }
+
+/// RSD-01: a session emits several episodes under one doc_id, each chunked
+/// from seq_num 0. The sink must renumber so later episodes do not upsert
+/// over earlier ones (mirror of Python `MemorySink._seq_base`).
+#[tokio::test]
+async fn multiple_episodes_same_doc_do_not_overwrite() -> anyhow::Result<()> {
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
+    let database = format!("chunkshop_review_p0rs_a_{}", unique_database());
+    let cfg = mk_cfg(&database, "ns1", Some("ns1"));
+    let backend = PostgresBackend::new(DSN_ENV.to_string());
+    let sink = MemorySink::new(cfg, backend, 4);
+    sink.create_table().await?;
+
+    let emb = vec![0.1, 0.2, 0.3, 0.4];
+    for body in ["episode one", "episode two", "episode three"] {
+        let ch = chunk("s1", 0, body, "episode", "s1");
+        sink.write_document("s1", std::slice::from_ref(&ch), &[emb.clone()], &[vec![]])
+            .await?;
+    }
+
+    let rows: Vec<(i32, String)> = sqlx::query_as(&format!(
+        r#"SELECT seq_num, original_content FROM "{database}".memory
+           WHERE doc_id = 's1' ORDER BY seq_num"#
+    ))
+    .fetch_all(&admin_pool)
+    .await?;
+    cleanup(&admin_pool, &database).await?;
+    assert_eq!(
+        rows,
+        vec![
+            (0, "episode one".to_string()),
+            (1, "episode two".to_string()),
+            (2, "episode three".to_string()),
+        ]
+    );
+    Ok(())
+}
+
+/// PYD-05: provisional tier, each run is a new process (new sink). A later
+/// run must append after rows an earlier run wrote, not restart at 0.
+#[tokio::test]
+async fn provisional_second_sink_appends_after_first() -> anyhow::Result<()> {
+    provisional_second_sink_appends(Some("ns1")).await
+}
+
+/// Same as above, but the cell has no source_tag (rows are written with
+/// source = NULL), so the base lookup must match NULL source.
+#[tokio::test]
+async fn provisional_second_sink_appends_after_first_no_source_tag() -> anyhow::Result<()> {
+    provisional_second_sink_appends(None).await
+}
+
+async fn provisional_second_sink_appends(source_tag: Option<&str>) -> anyhow::Result<()> {
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let admin_pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&dsn)
+        .await?;
+    let database = format!("chunkshop_review_p0rs_b_{}", unique_database());
+    let mk = || {
+        let mut cfg = mk_cfg(&database, "ns1", Some("ns1"));
+        cfg.source_tag = source_tag.map(|s| s.to_string());
+        cfg.memory.as_mut().unwrap().tier = MemoryTier::Provisional;
+        MemorySink::new(cfg, PostgresBackend::new(DSN_ENV.to_string()), 4)
+    };
+    let emb = vec![0.1, 0.2, 0.3, 0.4];
+
+    let run1 = mk();
+    run1.create_table().await?;
+    let c1 = chunk("s1", 0, "batch one", "episode", "s1");
+    run1.write_document("s1", std::slice::from_ref(&c1), &[emb.clone()], &[vec![]])
+        .await?;
+
+    let run2 = mk();
+    run2.create_table().await?;
+    let c2 = chunk("s1", 0, "batch two", "episode", "s1");
+    run2.write_document("s1", std::slice::from_ref(&c2), &[emb.clone()], &[vec![]])
+        .await?;
+
+    let rows: Vec<(i32, String)> = sqlx::query_as(&format!(
+        r#"SELECT seq_num, original_content FROM "{database}".memory
+           WHERE doc_id = 's1' ORDER BY seq_num"#
+    ))
+    .fetch_all(&admin_pool)
+    .await?;
+    cleanup(&admin_pool, &database).await?;
+    assert_eq!(
+        rows,
+        vec![(0, "batch one".to_string()), (1, "batch two".to_string())]
+    );
+    Ok(())
+}

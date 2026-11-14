@@ -21,17 +21,28 @@ fn open<'a>(bytes: &'a [u8], what: &str) -> Result<Zip<'a>, ParseError> {
     ZipArchive::new(Cursor::new(bytes)).map_err(|e| skip(what, e))
 }
 
-fn part(z: &mut Zip<'_>, name: &str, what: &str) -> Result<String, ParseError> {
+/// Aggregate zip-bomb guard: total decompressed bytes read across all parts of one document.
+/// Equal to the per-part cap, so a single-part document is unaffected; many parts can't add up.
+const MAX_TOTAL_PART_BYTES: u64 = MAX_PART_BYTES;
+
+/// `used` accumulates decompressed bytes over every part read for this document.
+fn part(z: &mut Zip<'_>, name: &str, what: &str, used: &mut u64) -> Result<String, ParseError> {
+    let cap = MAX_PART_BYTES.min(MAX_TOTAL_PART_BYTES.saturating_sub(*used));
     let mut buf = Vec::new();
     z.by_name(name)
         .map_err(|e| skip(what, format!("{name}: {e}")))?
-        .take(MAX_PART_BYTES + 1)
+        .take(cap + 1)
         .read_to_end(&mut buf)
         .map_err(|e| skip(what, e))?;
-    if buf.len() as u64 > MAX_PART_BYTES {
-        return Err(skip(what, format!("{name} exceeds {MAX_PART_BYTES} bytes (zip bomb?)")));
+    if buf.len() as u64 > cap {
+        return Err(skip(what, format!("{name} exceeds {MAX_PART_BYTES} bytes, or the {MAX_TOTAL_PART_BYTES}-byte total across parts (zip bomb?)")));
     }
+    *used += buf.len() as u64;
     String::from_utf8(buf).map_err(|e| skip(what, e))
+}
+
+fn too_much_text(what: &str) -> ParseError {
+    skip(what, format!("extracted text exceeds {} bytes", crate::MAX_TEXT_BYTES))
 }
 
 fn name(e: &quick_xml::events::BytesStart<'_>) -> String {
@@ -66,10 +77,11 @@ fn general_ref(r: &quick_xml::events::BytesRef<'_>) -> Option<String> {
 #[cfg(feature = "docx")]
 pub(crate) fn docx(bytes: &[u8]) -> Result<String, ParseError> {
     let what = "DOCX";
-    let xml = part(&mut open(bytes, what)?, "word/document.xml", what)?;
+    let xml = part(&mut open(bytes, what)?, "word/document.xml", what, &mut 0)?;
     let mut rd = Reader::from_str(&xml);
     let (mut depth, mut in_p, mut in_t, mut in_ppr) = (0usize, false, false, false);
     let (mut cur, mut paras) = (String::new(), Vec::<String>::new());
+    let mut total = 0usize;
     loop {
         match rd.read_event().map_err(|e| skip(what, e))? {
             Event::Start(e) => {
@@ -93,6 +105,10 @@ pub(crate) fn docx(bytes: &[u8]) -> Result<String, ParseError> {
                 match e.local_name().as_ref() {
                     "p" if depth == 2 && in_p => {
                         in_p = false;
+                        total += cur.len() + 1;
+                        if total > crate::MAX_TEXT_BYTES {
+                            return Err(too_much_text(what));
+                        }
                         paras.push(std::mem::take(&mut cur));
                     }
                     "pPr" => in_ppr = false,
@@ -115,9 +131,10 @@ pub(crate) fn docx(bytes: &[u8]) -> Result<String, ParseError> {
 pub(crate) fn pptx(bytes: &[u8]) -> Result<String, ParseError> {
     let what = "PPTX";
     let mut z = open(bytes, what)?;
+    let mut used = 0u64;
 
     // relationship id -> target
-    let rels = part(&mut z, "ppt/_rels/presentation.xml.rels", what)?;
+    let rels = part(&mut z, "ppt/_rels/presentation.xml.rels", what, &mut used)?;
     let mut targets = std::collections::HashMap::new();
     let mut rd = Reader::from_str(&rels);
     loop {
@@ -131,7 +148,7 @@ pub(crate) fn pptx(bytes: &[u8]) -> Result<String, ParseError> {
             _ => {}
         }
     }
-    let pres = part(&mut z, "ppt/presentation.xml", what)?;
+    let pres = part(&mut z, "ppt/presentation.xml", what, &mut used)?;
     let mut order = Vec::new();
     let mut rd = Reader::from_str(&pres);
     loop {
@@ -155,8 +172,9 @@ pub(crate) fn pptx(bytes: &[u8]) -> Result<String, ParseError> {
     }
 
     let mut frames = Vec::<String>::new();
+    let mut total = 0usize;
     for slide in order {
-        let xml = part(&mut z, &slide, what)?;
+        let xml = part(&mut z, &slide, what, &mut used)?;
         let mut rd = Reader::from_str(&xml);
         // depth 3 = child of p:sld > p:cSld > p:spTree
         let (mut depth, mut in_sp, mut in_t) = (0usize, false, false);
@@ -178,7 +196,12 @@ pub(crate) fn pptx(bytes: &[u8]) -> Result<String, ParseError> {
                     match e.local_name().as_ref() {
                         "sp" if depth == 3 && in_sp => {
                             in_sp = false;
-                            frames.push(lines.join("\n"));
+                            let frame = lines.join("\n");
+                            total += frame.len() + 1;
+                            if total > crate::MAX_TEXT_BYTES {
+                                return Err(too_much_text(what));
+                            }
+                            frames.push(frame);
                         }
                         "p" if in_sp => lines.push(std::mem::take(&mut cur)),
                         "t" => in_t = false,
@@ -199,10 +222,11 @@ pub(crate) fn pptx(bytes: &[u8]) -> Result<String, ParseError> {
 /// `text:s` = spaces, `text:tab`, `text:line-break`. No Python counterpart; tests assert by hand.
 #[cfg(feature = "odf")]
 pub(crate) fn odf(bytes: &[u8], what: &str) -> Result<String, ParseError> {
-    let xml = part(&mut open(bytes, what)?, "content.xml", what)?;
+    let xml = part(&mut open(bytes, what)?, "content.xml", what, &mut 0)?;
     let mut rd = Reader::from_str(&xml);
     // stack: a paragraph can hold a frame holding paragraphs
     let (mut stack, mut out) = (Vec::<String>::new(), Vec::<String>::new());
+    let mut total = 0usize; // bytes accumulated so far; a `text:s` run amplifies a few bytes into 10 KB
     loop {
         match rd.read_event().map_err(|e| skip(what, e))? {
             Event::Start(e) if matches!(name(&e).as_str(), "p" | "h") => stack.push(String::new()),
@@ -210,6 +234,10 @@ pub(crate) fn odf(bytes: &[u8], what: &str) -> Result<String, ParseError> {
             Event::Empty(e) if !stack.is_empty() => match name(&e).as_str() {
                 "s" => {
                     let n = attr(&e, "text:c").and_then(|c| c.parse::<usize>().ok()).unwrap_or(1).min(10_000); // ponytail: clamp hostile text:c
+                    total += n;
+                    if total > crate::MAX_TEXT_BYTES {
+                        return Err(too_much_text(what));
+                    }
                     stack.last_mut().unwrap().push_str(&" ".repeat(n));
                 }
                 "tab" => stack.last_mut().unwrap().push('\t'),
@@ -223,7 +251,12 @@ pub(crate) fn odf(bytes: &[u8], what: &str) -> Result<String, ParseError> {
             }
             Event::Text(t) => {
                 if let Some(p) = stack.last_mut() {
-                    p.push_str(&t.xml10_content());
+                    let s = t.xml10_content();
+                    total += s.len();
+                    if total > crate::MAX_TEXT_BYTES {
+                        return Err(too_much_text(what));
+                    }
+                    p.push_str(&s);
                 }
             }
             Event::GeneralRef(r) => {

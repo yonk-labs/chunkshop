@@ -92,8 +92,9 @@ class SessionStagingSource:
             watermark = cur.fetchone()[0]          # captured BEFORE the data SELECT
             cur.execute(q)
             rows = cur.fetchall()
-            sessions = {r[1] for r in rows}
+            sessions = set()  # only sessions actually yielded (max_sessions caps)
             for doc in self._documents_from_rows(rows):
+                sessions.add(doc.id)
                 yield doc
             if sessions:
                 cur.execute(

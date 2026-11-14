@@ -1,5 +1,6 @@
 """Single-cell runner: wires source -> chunker -> embedder -> extractor -> sink."""
 from __future__ import annotations
+import itertools
 import logging
 import os
 import time
@@ -33,6 +34,18 @@ class CellResult:
     # 0.0 when the run errored before embedding started.
     embed_seconds: float = 0.0
     error: Optional[str] = None
+
+
+def _delete_raw_doc(sink, raw_id: str, keep=frozenset(), framed: bool = True) -> None:
+    """Delete a raw doc's rows: its own id plus every framed id (`raw_id#N`) not in `keep`.
+
+    `framed=False` (identity framer) skips the frame lookup: no `raw_id#N` rows
+    can belong to this doc, and a live doc named `meeting#1` must not be
+    mistaken for a frame of `meeting`.
+    """
+    frames = sink.framed_doc_ids(raw_id) if framed else ()
+    for did in {raw_id, *frames} - set(keep):
+        sink.delete_document(did)
 
 
 def _log(msg: str, log_path: Optional[Path]) -> None:
@@ -75,6 +88,7 @@ def run_cell(cfg: CellConfig) -> CellResult:
         else:
             doc_source = source.iter_documents()
         framer = load_framer(cfg.framer)
+        framed = cfg.framer.type != "identity"  # only these write `raw#N` ids
         embedder = load_embedder(cfg.embedder)
         # SemanticChunker(boundary_model="same") reuses the main embedder's
         # TextEmbedding instance to avoid doubling RAM (SC-002). Grab it via the
@@ -90,6 +104,15 @@ def run_cell(cfg: CellConfig) -> CellResult:
         extractor = load_extractor(cfg.extractor)
         sink = load_sink(cfg.target, embed_dim=cfg.embedder.dim)
 
+        # Pull the first document BEFORE create_table(): in overwrite mode that
+        # drops the table, so a source that fails immediately (bad glob,
+        # unreachable DB) must abort with the existing table untouched.
+        doc_source = iter(doc_source)
+        _no_doc = object()
+        first_doc = next(doc_source, _no_doc)
+        if first_doc is not _no_doc:
+            doc_source = itertools.chain([first_doc], doc_source)
+
         _log("creating target table", log_path)
         sink.create_table()
 
@@ -101,9 +124,14 @@ def run_cell(cfg: CellConfig) -> CellResult:
         for raw in doc_source:
             if limit is not None and docs_processed >= limit:
                 break
+            written_ids: set[str] = set()
             for doc in framer.frame(raw):
                 chunks = chunker.chunk(doc)
                 if not chunks:
+                    if cfg.target.delete_orphans:
+                        # Doc now yields nothing: drop its stale rows (the
+                        # incremental case is also covered after this loop).
+                        sink.delete_document(doc.id)
                     continue
                 doc_record_metadata = dict(doc.metadata or {})
                 if cfg.target.documents.enabled and getattr(cfg.extractor, "type", None) == "lede_report":
@@ -163,7 +191,12 @@ def run_cell(cfg: CellConfig) -> CellResult:
                         chunk_count=len(chunks),
                     )
                 sink.write_document(doc.id, chunks, embeddings, tags)
+                written_ids.add(doc.id)
                 chunks_written += len(chunks)
+            if incremental and cfg.target.delete_orphans:
+                # Drop frames this raw doc no longer produces (fewer sections, or
+                # the id switched between `x#N` and plain `x`, or zero chunks).
+                _delete_raw_doc(sink, raw.id, keep=written_ids, framed=framed)
             # `docs_processed` counts RAW docs (what the source yielded), not framed docs.
             docs_processed += 1
             if incremental:
@@ -186,8 +219,20 @@ def run_cell(cfg: CellConfig) -> CellResult:
             else:
                 if isinstance(source, PrunableSource):
                     deleted = list(source.iter_deleted_since(cursor))
+                    if (
+                        deleted
+                        and len(deleted) == len(cursor)
+                        and not getattr(inc, "allow_prune_all", True)
+                    ):
+                        raise RuntimeError(
+                            f"incremental run would delete all {len(deleted)} documents "
+                            "known from the cursor (none of them exist in the source any more); "
+                            f"this usually means the glob no longer matches ({getattr(cfg.source, 'glob', None)!r}). "
+                            "Nothing was deleted and the cursor was not updated. Set "
+                            "source.incremental.allow_prune_all: true if this is intended."
+                        )
                     for did in deleted:
-                        sink.delete_document(did)
+                        _delete_raw_doc(sink, did, framed=framed)
                     if deleted:
                         _log(f"incremental: pruned {len(deleted)} deleted docs", log_path)
                 # Trim the cursor to the current on-disk manifest so deleted paths

@@ -80,6 +80,9 @@ class FilesIncrementalSettings(_Base):
     """
     cursor_path: str
     detect: Literal["hash", "mtime"] = "hash"
+    # Safety gate: a run whose glob no longer matches ANY previously-known file
+    # (unmounted dir, typo) would prune the whole table. Refused unless true.
+    allow_prune_all: bool = False
 
 
 class FilesSource(_Base):
@@ -1212,6 +1215,12 @@ class TargetConfig(_DsnResolvable):
             raise ValueError("target.documents is currently supported only for postgres targets")
         if self.documents.enabled and self.documents.table == self.table:
             raise ValueError("target.documents.table must differ from target.table")
+        if self.memory is not None and self.delete_orphans:
+            raise ValueError(
+                "target.delete_orphans is not supported for memory targets "
+                "(memory tiers manage their own supersede; seq_nums are offset "
+                "per session, so orphan deletion would remove earlier episodes)"
+            )
         return self
 
 
@@ -1235,6 +1244,21 @@ class CellConfig(_Base):
     extractor: ExtractorConfig = NoneExtractor()
     target: TargetConfig
     runtime: RuntimeConfig = RuntimeConfig()
+
+    @model_validator(mode="after")
+    def _incremental_files_not_overwrite(self):
+        if (
+            isinstance(self.source, FilesSource)
+            and self.source.incremental is not None
+            and self.target.mode == "overwrite"
+        ):
+            raise ValueError(
+                "source.incremental cannot be combined with target.mode: overwrite "
+                "(the default): overwrite drops the table every run, so an incremental "
+                "run would keep only the changed files. Set target.mode: "
+                "create_if_missing (or append with a source_tag)."
+            )
+        return self
 
 
 def load_config(path: str | Path) -> CellConfig:

@@ -28,6 +28,9 @@ impl FilesSource {
             return Err(anyhow!("no files matched glob: {}", self.cfg.glob));
         }
         paths.sort();
+        if self.cfg.id_from == "stem" {
+            Self::check_unique_stems(&paths)?;
+        }
 
         let mut out = Vec::with_capacity(paths.len());
         for p in paths {
@@ -47,6 +50,44 @@ impl FilesSource {
             });
         }
         Ok(out)
+    }
+
+    /// Mirrors Python `_check_unique_stems`: two files with the same stem
+    /// would share a doc id and overwrite each other's rows.
+    fn check_unique_stems(paths: &[PathBuf]) -> Result<()> {
+        let mut by_id: Vec<(String, Vec<String>)> = Vec::new();
+        for p in paths {
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let shown = p.display().to_string();
+            match by_id.iter_mut().find(|(k, _)| k == stem) {
+                Some((_, v)) => v.push(shown),
+                None => by_id.push((stem.to_string(), vec![shown])),
+            }
+        }
+        let dups: Vec<_> = by_id.into_iter().filter(|(_, v)| v.len() > 1).collect();
+        if dups.is_empty() {
+            return Ok(());
+        }
+        let shown: Vec<String> = dups
+            .iter()
+            .take(5)
+            .map(|(k, v)| format!("  '{k}': {}", v.join(", ")))
+            .collect();
+        let more = dups.len() - shown.len();
+        let more_line = if more > 0 {
+            format!("\n  ... and {more} more")
+        } else {
+            String::new()
+        };
+        Err(anyhow!(
+            "files source id_from='stem' maps multiple files to the same doc id \
+             (their chunks would overwrite each other):\n{}{}\n\
+             Set source.id_from: path to give each file a unique id.",
+            shown.join("\n"),
+            more_line
+        ))
     }
 
     fn id_for(&self, path: &Path) -> Result<String> {

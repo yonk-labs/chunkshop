@@ -1,5 +1,6 @@
 """MariaDB sink — chunks-table writer using the MariaDBBackend dialect."""
 from __future__ import annotations
+import json
 import os
 from typing import Any
 
@@ -9,6 +10,7 @@ from chunkshop.backends.base import ColSpec
 from chunkshop.backends.mariadb import MariaDBBackend
 from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
+from chunkshop.sinks.base import filter_framed_ids, frame_prefix
 
 
 def _jsonb_path_get(meta: dict, path: str):
@@ -19,6 +21,16 @@ def _jsonb_path_get(meta: dict, path: str):
             return None
         cur = cur[seg]
     return cur
+
+
+def _promote_value(value, pc):
+    """JSON-encode what pymysql can't bind, and anything headed for a JSON column
+    (text[] and jsonb map to JSON, which rejects non-JSON text; pg parity)."""
+    if value is None:
+        return None
+    if pc.type in ("text[]", "jsonb") or isinstance(value, (list, dict)):
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    return value
 
 
 def _canonical_cols(dim: int) -> list[ColSpec]:
@@ -209,7 +221,7 @@ class MariaDbSink:
                 # embedding handled inline above
                 self.cfg.source_tag,
             ]
-            promote_params = [_jsonb_path_get(c.metadata, pc.path) for pc in promote]
+            promote_params = [_promote_value(_jsonb_path_get(c.metadata, pc.path), pc) for pc in promote]
             sql_per_row.append(row_sql)
             params_per_row.append(tuple(base_params + promote_params))
 
@@ -238,6 +250,20 @@ class MariaDbSink:
             deleted = cur.rowcount
             conn.commit()
         return deleted
+
+    def framed_doc_ids(self, raw_id: str) -> list[str]:
+        """Doc ids that are frames (`raw_id#<digits>`) of `raw_id`."""
+        prefix = frame_prefix(raw_id)
+        # LEFT counts characters (like CHAR_LENGTH, unlike LENGTH's bytes).
+        sql = f"SELECT DISTINCT doc_id FROM {self._fq()} WHERE LEFT(doc_id, %s) = %s"
+        params: list = [len(prefix), prefix]
+        if self.cfg.source_tag:
+            sql += " AND source = %s"
+            params.append(self.cfg.source_tag)
+        with self.backend.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return filter_framed_ids(raw_id, (r[0] for r in cur.fetchall()))
 
     def count_docs(self) -> int:
         with self.backend.connect() as conn:

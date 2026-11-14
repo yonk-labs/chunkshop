@@ -123,7 +123,6 @@ def test_bakeoff_e2e_2x2_samples(ensure_pg, tmp_path):
 
     # recommended.yaml round-trips through CellConfig.
     recommended = yaml.safe_load(yaml_path.read_text())
-    recommended.pop("# NOTE", None)
     CellConfig.model_validate(recommended)
 
 

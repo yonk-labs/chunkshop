@@ -7,9 +7,34 @@
 //! each file. Sync; uses `hf-hub`'s `ureq` backend.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use hf_hub::api::sync::Api;
+use hf_hub::api::sync::{Api, ApiError};
+
+/// How long to wait for another thread or process that holds a file's download
+/// lock. hf-hub gives up after about 5 seconds, which is far less than a cold
+/// model download takes, so concurrent first runs failed with
+/// "Lock acquisition failed".
+const LOCK_WAIT: Duration = Duration::from_secs(600);
+
+/// Call `f` again while it fails only because the download lock is held.
+/// Once the holder finishes, hf-hub's `get` finds the file in the cache.
+fn retry_while_locked<T>(
+    max_wait: Duration,
+    mut f: impl FnMut() -> std::result::Result<T, ApiError>,
+) -> std::result::Result<T, ApiError> {
+    let start = Instant::now();
+    loop {
+        match f() {
+            Err(ApiError::LockAcquisition(_)) if start.elapsed() < max_wait => {
+                // hf-hub already slept ~5s inside its own lock attempt.
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            other => return other,
+        }
+    }
+}
 
 /// Files needed to construct `fastembed::UserDefinedEmbeddingModel`.
 ///
@@ -34,24 +59,25 @@ pub struct HfModelFiles {
 pub fn fetch_user_defined_files(repo: &str, onnx_path: &str) -> Result<HfModelFiles> {
     let api = Api::new().context("init hf-hub api")?;
     let r = api.model(repo.to_string());
+    let get = |name: &str| retry_while_locked(LOCK_WAIT, || r.get(name));
     let onnx = read_bytes(
-        r.get(onnx_path)
+        get(onnx_path)
             .with_context(|| format!("fetch {repo}:{onnx_path}"))?,
     )?;
     let tokenizer = read_bytes(
-        r.get("tokenizer.json")
+        get("tokenizer.json")
             .with_context(|| format!("fetch {repo}:tokenizer.json"))?,
     )?;
     let tokenizer_config = read_bytes(
-        r.get("tokenizer_config.json")
+        get("tokenizer_config.json")
             .with_context(|| format!("fetch {repo}:tokenizer_config.json"))?,
     )?;
     let special_tokens_map = read_bytes(
-        r.get("special_tokens_map.json")
+        get("special_tokens_map.json")
             .with_context(|| format!("fetch {repo}:special_tokens_map.json"))?,
     )?;
     let config = read_bytes(
-        r.get("config.json")
+        get("config.json")
             .with_context(|| format!("fetch {repo}:config.json"))?,
     )?;
     Ok(HfModelFiles {
@@ -78,5 +104,47 @@ mod tests {
     #[test]
     fn function_compiles() {
         let _ = fetch_user_defined_files;
+    }
+
+    fn locked() -> ApiError {
+        ApiError::LockAcquisition(PathBuf::from("x.lock"))
+    }
+
+    #[test]
+    fn retries_until_the_lock_holder_finishes() {
+        let mut calls = 0;
+        let got = retry_while_locked(Duration::from_secs(30), || {
+            calls += 1;
+            if calls < 3 {
+                Err(locked())
+            } else {
+                Ok("path")
+            }
+        });
+        assert_eq!(got.unwrap(), "path");
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn gives_up_after_max_wait_and_keeps_the_lock_error() {
+        let mut calls = 0;
+        let got: std::result::Result<(), ApiError> = retry_while_locked(Duration::ZERO, || {
+            calls += 1;
+            Err(locked())
+        });
+        assert!(matches!(got, Err(ApiError::LockAcquisition(_))));
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn other_errors_are_returned_immediately() {
+        let mut calls = 0;
+        let got: std::result::Result<(), ApiError> =
+            retry_while_locked(Duration::from_secs(30), || {
+                calls += 1;
+                Err(ApiError::IoError(std::io::Error::other("disk full")))
+            });
+        assert!(got.is_err());
+        assert_eq!(calls, 1);
     }
 }

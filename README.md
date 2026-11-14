@@ -144,10 +144,17 @@ pip install 'chunkshop[all-backends]'
 export CHUNKSHOP_DSN="postgresql://postgres:postgres@localhost:5432/mydb"
 
 # 3. Run the canonical demo: bakeoff against the NTSB aviation-accident corpus
-chunkshop bakeoff --config docs/samples/bakeoff-ntsb/bakeoff-ntsb.yaml --yes
+#    (Postgres only, 12 combos). The four-backend matrix is bakeoff-ntsb.yaml.
+chunkshop bakeoff --config docs/samples/bakeoff-ntsb/bakeoff-ntsb-pg.yaml --yes
 
 # 4. Take the recommended cell to production
 chunkshop ingest --config skill-output/bakeoff/ntsb_bakeoff/recommended.yaml
+
+# 5. Search what you just ingested. Without `target.fts:` in the cell this is
+#    semantic-only and prints "Note: FTS leg skipped" on stderr; add `fts:`
+#    to the target and re-ingest for hybrid search.
+chunkshop search --config skill-output/bakeoff/ntsb_bakeoff/recommended.yaml \
+    --query "icy runway landing accident" --k 3
 ```
 
 The walkthrough — install → bakeoff → recommended → ingest, with the

@@ -409,6 +409,10 @@ class GitHubConnector:
                 if not self._matches_glob(path):
                     continue
                 blob = (os.path.join(tmpdir, path))
+                if os.path.islink(blob):
+                    # Never follow repo symlinks: they can point at host files.
+                    logger.info("github: skipping symlink %r in clone", path)
+                    continue
                 with open(blob, "rb") as fh:
                     raw = fh.read()
                 try:

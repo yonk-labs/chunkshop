@@ -46,6 +46,25 @@ class FilesSource:
                 self._parsers[ext] = text_parser
         else:
             self._parsers = dict(parsers)
+        if cfg.id_from == "stem":
+            self._check_unique_stems()
+
+    def _check_unique_stems(self) -> None:
+        by_id: dict[str, list[str]] = {}
+        for p in self.current_paths():
+            by_id.setdefault(Path(p).stem, []).append(p)
+        dups = {k: v for k, v in by_id.items() if len(v) > 1}
+        if not dups:
+            return
+        shown = [f"  {k!r}: {', '.join(v)}" for k, v in list(dups.items())[:5]]
+        more = len(dups) - len(shown)
+        raise ValueError(
+            "files source id_from='stem' maps multiple files to the same doc id "
+            "(their chunks would overwrite each other):\n"
+            + "\n".join(shown)
+            + (f"\n  ... and {more} more" if more > 0 else "")
+            + "\nSet source.id_from: path to give each file a unique id."
+        )
 
     # --- full-resync path (unchanged behavior) ---------------------------
 

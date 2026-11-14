@@ -316,18 +316,30 @@ impl Sink for MariadbSink {
                 .acquire_create_lock(&mut tx, &self.cfg.database_name)
                 .await?;
 
-            // No CREATE EXTENSION step — VECTOR is built-in since MariaDB 11.7.
-            sqlx::query(&self.backend.create_database_sql(&self.cfg.database_name))
-                .execute(&mut *tx)
-                .await
-                .context("CREATE DATABASE")?;
+            let guarded: Result<()> = async {
+                // No CREATE EXTENSION step — VECTOR is built-in since MariaDB 11.7.
+                sqlx::query(&self.backend.create_database_sql(&self.cfg.database_name))
+                    .execute(&mut *tx)
+                    .await
+                    .context("CREATE DATABASE")?;
 
-            match self.cfg.mode.as_str() {
-                "overwrite" => self.overwrite_create_in_tx(&mut tx).await?,
-                "create_if_missing" => self.create_if_missing_in_tx(&mut tx).await?,
-                "append" => self.append_preflight_in_tx(&mut tx).await?,
-                other => return Err(anyhow!("unknown target.mode: {other:?}")),
+                match self.cfg.mode.as_str() {
+                    "overwrite" => self.overwrite_create_in_tx(&mut tx).await?,
+                    "create_if_missing" => self.create_if_missing_in_tx(&mut tx).await?,
+                    "append" => self.append_preflight_in_tx(&mut tx).await?,
+                    other => return Err(anyhow!("unknown target.mode: {other:?}")),
+                }
+                Ok(())
             }
+            .await;
+            // Release on the same connection, success or error (GET_LOCK is
+            // connection-scoped and the pooled connection outlives this call).
+            let released = self
+                .backend
+                .release_create_lock(&mut tx, &self.cfg.database_name)
+                .await;
+            guarded?;
+            released?;
             tx.commit().await.context("commit schema-setup tx")?;
             Ok(())
         }
@@ -646,9 +658,16 @@ fn mariadb_build_where(
 /// TIMESTAMP, DATE) infer from the column declaration — we just hand them a
 /// string. JSON columns accept JSON-encoded text. Mirrors `pg.rs::promote_value_for`.
 fn promote_value_for(metadata: &serde_json::Value, pc: &PromoteColumn) -> Option<String> {
+    use serde_json::Value;
+    // Mirrors Python `_promote_value` (sinks/mariadb.py): null/missing is SQL
+    // NULL; text[]/jsonb columns and any list/dict get compact JSON text.
     let v = jsonb_path_get(metadata, &pc.path)?;
     Some(match v {
-        serde_json::Value::String(s) => s.clone(),
+        Value::Null => return None,
+        Value::Bool(b) if !matches!(pc.type_.as_str(), "text[]" | "jsonb") => {
+            (*b as i64).to_string()
+        }
+        Value::String(s) if !matches!(pc.type_.as_str(), "text[]" | "jsonb") => s.clone(),
         other => serde_json::to_string(other).unwrap_or_default(),
     })
 }

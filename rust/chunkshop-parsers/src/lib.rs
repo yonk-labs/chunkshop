@@ -4,6 +4,16 @@
 //! (`metadata.parser` uses the Python class names).
 //!
 //! Local-only: no network, no external services, no subprocesses.
+//!
+//! # Untrusted files: use `isolate`
+//!
+//! Parsing in-process (the default) is only safe for files you trust. The parsers carry size and
+//! output caps, but a hostile file can still abort the whole host process (out-of-memory, stack
+//! overflow): a Rust allocation failure is not catchable, and `catch_unwind` only covers panics.
+//! To parse untrusted files, enable the `isolate` cargo feature and call
+//! `ParsedFilesSource::with_isolation` with `Isolation::locate()` (or `Isolation::new(path)`); the
+//! file is then parsed in a child worker with a timeout, output cap and heap ceiling, and a crash
+//! becomes a `Skip`. Isolation is off by default and is not enabled for you.
 
 use std::path::{Path, PathBuf};
 
@@ -60,6 +70,14 @@ fn intern_parser(n: &str) -> &'static str {
 fn intern_feature(n: &str) -> &'static str {
     ["pdf", "xlsx", "docx", "pptx", "odf", "doc", "ppt", "html"].into_iter().find(|k| *k == n).unwrap_or("all-parsers")
 }
+
+/// Ceiling on the TOTAL text one document may yield (128 MiB). A hostile file can amplify a few KB
+/// into gigabytes of output (repeat counts, many highly compressible parts); allocation failure
+/// aborts the process and `catch_unwind` cannot catch it, so parsers check this as they accumulate
+/// and return `Skip`. Far above any real document's text, well under the 256 MiB per-part and
+/// per-file ceilings so the worker's 1 GiB heap cap still has room for input plus output.
+#[cfg(any(feature = "docx", feature = "pptx", feature = "odf", feature = "xlsx"))]
+pub(crate) const MAX_TEXT_BYTES: usize = 128 << 20;
 
 /// Files above this are skipped (PDF/OLE parsers hold the whole file plus expansions in memory).
 const MAX_FILE_BYTES: u64 = 256 << 20;

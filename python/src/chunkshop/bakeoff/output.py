@@ -269,14 +269,16 @@ def write_recommended_yaml(
         if key == top_target_key and t.type == top.backend
     )
 
+    # Written as a real YAML comment: cell configs forbid unknown keys, so a
+    # "# NOTE" data key made the file fail `chunkshop ingest` / `search`.
+    note = (
+        f"# Top combo from multi-target bakeoff '{results.run_name}' "
+        f"(target={top_target_key}, backend={top.backend}, "
+        f"MRR={top.aggregate.get('mrr', 0):.3f}, "
+        f"r@1={top.aggregate.get('recall_at_1', 0):.3f}).\n"
+        "# Point `source` at your real corpus before running `chunkshop ingest`.\n"
+    )
     recommended = {
-        "# NOTE": (
-            f"Top combo from multi-target bakeoff '{results.run_name}' "
-            f"(target={top_target_key}, backend={top.backend}, "
-            f"MRR={top.aggregate.get('mrr', 0):.3f}, "
-            f"r@1={top.aggregate.get('recall_at_1', 0):.3f}). "
-            "Point `source` at your real corpus before running `chunkshop ingest`."
-        ),
         "cell_name": f"{results.run_name}_recommended",
         "source": cfg.source.model_dump(exclude_none=True, by_alias=True),
         "framer": cfg.framer.model_dump(exclude_none=True, by_alias=True),
@@ -296,5 +298,5 @@ def write_recommended_yaml(
         },
     }
     out = out_dir / "recommended.yaml"
-    out.write_text(yaml.safe_dump(recommended, sort_keys=False))
+    out.write_text(note + yaml.safe_dump(recommended, sort_keys=False))
     return out

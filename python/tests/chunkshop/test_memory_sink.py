@@ -78,3 +78,25 @@ def test_memorysink_returned_and_stamps(ensure_pg):
         row = cur.fetchone()
     assert row[0] == "episode" and row[1] == "provisional"
     assert row[2] == "ns1" and row[3] == "s1" and row[4] is not None
+
+
+@pytest.mark.parametrize("tag", ["ns1", None])
+def test_provisional_second_process_does_not_overwrite_first_batch(ensure_pg, tag):
+    """PYD-05: realtime runs are fresh processes; the seq base must resume
+    from the table, not restart at 0 (which overwrote run 1's rows)."""
+    import numpy as np
+    emb = np.array([[0.1, 0.2, 0.3]])
+    sink1 = load_sink(_target(source_tag=tag), embed_dim=3)
+    sink1.create_table()
+    sink1.write_document("s1", [Chunk("s1", 0, "batch one", "batch one",
+                                      {"session_id": "s1"})], emb, [[]])
+    sink2 = load_sink(_target(source_tag=tag), embed_dim=3)   # fresh sink = fresh process
+    sink2.write_document("s1", [Chunk("s1", 0, "batch two", "batch two",
+                                      {"session_id": "s1"})], emb, [[]])
+    sink2.write_document("s1", [Chunk("s1", 0, "batch three", "batch three",
+                                      {"session_id": "s1"})], emb, [[]])
+    with psycopg.connect(ensure_pg) as c, c.cursor() as cur:
+        cur.execute("SELECT seq_num, original_content "
+                    "FROM chunkshop_test_memory.mem ORDER BY seq_num")
+        rows = cur.fetchall()
+    assert rows == [(0, "batch one"), (1, "batch two"), (2, "batch three")]

@@ -5,6 +5,7 @@ owns the two-table dance: every `write_document` writes both atomically; every
 `delete_orphans` deletes from both.
 """
 from __future__ import annotations
+import json
 import logging
 import sqlite3
 from typing import Any
@@ -15,6 +16,7 @@ from chunkshop.backends.base import ColSpec
 from chunkshop.backends.sqlite import SQLiteBackend
 from chunkshop.chunkers.base import Chunk
 from chunkshop.config import TargetConfig
+from chunkshop.sinks.base import filter_framed_ids, frame_prefix
 
 _log = logging.getLogger(__name__)
 _HNSW_WARNED: set[int] = set()  # process-id keyed so we warn once per process
@@ -27,6 +29,13 @@ def _jsonb_path_get(meta: dict, path: str):
             return None
         cur = cur[seg]
     return cur
+
+
+def _promote_value(value):
+    """SQLite can't bind list/dict; store them as JSON text (pg parity)."""
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    return value
 
 
 def _canonical_cols(dim: int) -> list[ColSpec]:
@@ -229,7 +238,7 @@ class SqliteSink:
                 self.backend.json_literal(c.metadata),
                 self.cfg.source_tag,
             ]
-            promoted = [_jsonb_path_get(c.metadata, pc.path) for pc in promote]
+            promoted = [_promote_value(_jsonb_path_get(c.metadata, pc.path)) for pc in promote]
             main_rows.append(tuple(base + promoted))
             vec_ids.append((chunk_id,))
             vec_rows.append((chunk_id, self.backend.vector_literal(emb)))
@@ -240,13 +249,15 @@ class SqliteSink:
             cur.executemany(vec_delete_stmt, vec_ids)
             cur.executemany(vec_insert_stmt, vec_rows)
             if self.cfg.delete_orphans:
+                # Vec rows first, by exact id from the main rows about to go
+                # (LIKE is case-insensitive and treats `_`/`%` as wildcards).
                 cur.execute(
-                    f"DELETE FROM {self._fq_main()} WHERE doc_id = ? AND seq_num >= ?",
+                    f"DELETE FROM {self._fq_vec()} WHERE id IN "
+                    f"(SELECT id FROM {self._fq_main()} WHERE doc_id = ? AND seq_num >= ?)",
                     (doc_id, len(chunks)),
                 )
                 cur.execute(
-                    f"DELETE FROM {self._fq_vec()} WHERE id LIKE ? || '::%' "
-                    f"AND CAST(substr(id, instr(id, '::') + 2) AS INTEGER) >= ?",
+                    f"DELETE FROM {self._fq_main()} WHERE doc_id = ? AND seq_num >= ?",
                     (doc_id, len(chunks)),
                 )
             conn.commit()
@@ -278,6 +289,19 @@ class SqliteSink:
             cur.execute(f"DELETE FROM {self._fq_vec()} WHERE id IN ({placeholders})", ids)
             conn.commit()
         return deleted
+
+    def framed_doc_ids(self, raw_id: str) -> list[str]:
+        """Doc ids that are frames (`raw_id#<digits>`) of `raw_id`."""
+        prefix = frame_prefix(raw_id)
+        sql = f"SELECT DISTINCT doc_id FROM {self._fq_main()} WHERE substr(doc_id, 1, ?) = ?"
+        params: list = [len(prefix), prefix]
+        if self.cfg.source_tag:
+            sql += " AND source = ?"
+            params.append(self.cfg.source_tag)
+        with self.backend.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return filter_framed_ids(raw_id, (r[0] for r in cur.fetchall()))
 
     def count_docs(self) -> int:
         with self.backend.connect() as conn:

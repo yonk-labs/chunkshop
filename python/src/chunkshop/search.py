@@ -29,8 +29,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import threading
 import time
+import warnings
 from contextlib import contextmanager
 from typing import Any, Optional
 
@@ -233,33 +235,44 @@ def _execute_read(
     via ``set_config(..., is_local=true)`` — transaction-scoped, so it resets at
     txn end and never leaks across pooled connection reuse.
     """
-    def _run(cur) -> list[tuple]:
-        if ef_search is not None:
-            cur.execute("SELECT set_config('hnsw.ef_search', %s, true)", [str(ef_search)])
-        cur.execute(sql, params)
-        return cur.fetchall()
+    def _run(conn) -> list[tuple]:
+        with conn.cursor() as cur:
+            if ef_search is None:
+                cur.execute(sql, params)
+                return cur.fetchall()
+            # is_local=true only lives inside one transaction; pooled conns are
+            # autocommit, so wrap set_config + query in an explicit block.
+            with conn.transaction():
+                cur.execute("SELECT set_config('hnsw.ef_search', %s, true)", [str(ef_search)])
+                cur.execute(sql, params)
+                return cur.fetchall()
 
     if not _pool_enabled():
-        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-            return _run(cur)
+        with psycopg.connect(dsn) as conn:
+            return _run(conn)
 
     conn, reused = _pool_acquire(dsn)
     try:
-        with conn.cursor() as cur:
-            rows = _run(cur)
+        rows = _run(conn)
     except _CONN_ERRORS:
         _close_quietly(conn)
         if not reused:
             raise
         conn2 = _open_read_conn(dsn)
         try:
-            with conn2.cursor() as cur:
-                rows = _run(cur)
+            rows = _run(conn2)
         except BaseException:
             _close_quietly(conn2)
             raise
         _pool_release(dsn, conn2, ok=True)
         return rows
+    except psycopg.Error:
+        # Non-connection DB error (e.g. SQL error): conn is still healthy.
+        _pool_release(dsn, conn, ok=True)
+        raise
+    except BaseException:
+        _close_quietly(conn)
+        raise
     _pool_release(dsn, conn, ok=True)
     return rows
 
@@ -582,6 +595,37 @@ def semantic_search(
     ]
 
 
+class FtsUnavailableError(RuntimeError):
+    """The FTS leg was requested but the table has no ``search_vector`` column."""
+
+
+class FtsSkippedWarning(UserWarning):
+    """The FTS leg was skipped (no ``search_vector`` column); semantic results returned."""
+
+
+def _fts_guidance(schema: str, table: str) -> str:
+    return (
+        f"{schema}.{table} has no search_vector column. Add `target.fts:` to the "
+        f"cell config and re-ingest to enable hybrid search."
+    )
+
+
+@contextmanager
+def fts_skipped_notes_to_stderr():
+    """Route :class:`FtsSkippedWarning` to stderr as a plain one-line note (CLI use).
+
+    Other warnings are re-emitted untouched.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        yield
+    for w in caught:
+        if issubclass(w.category, FtsSkippedWarning):
+            print(f"Note: {w.message}", file=sys.stderr)
+        else:
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+
+
 def hybrid_search(
     dsn: str,
     *,
@@ -635,10 +679,20 @@ def hybrid_search(
             where=where, vector_metric=vector_metric, ef_search=ef_search,
         )
     if "fts" in legs:
-        leg_thunks["fts"] = lambda: keyword_search(
-            dsn, schema=schema, table=table, query=query, k=cand_k, where=where,
-            language=language,
-        )
+        def _fts_leg() -> list[Hit]:
+            try:
+                return keyword_search(
+                    dsn, schema=schema, table=table, query=query, k=cand_k,
+                    where=where, language=language,
+                )
+            except psycopg.errors.UndefinedColumn as exc:
+                if "search_vector" not in str(exc):
+                    raise
+                raise FtsUnavailableError(
+                    f"FTS leg unavailable: {_fts_guidance(schema, table)}"
+                ) from exc
+
+        leg_thunks["fts"] = _fts_leg
 
     leg_results: dict[str, list[Hit]] = {}
     if len(leg_thunks) > 1:
@@ -650,7 +704,14 @@ def hybrid_search(
             futures = {name: pool.submit(thunk) for name, thunk in leg_thunks.items()}
             # .result() re-raises any leg exception, matching sequential behavior.
             for name, fut in futures.items():
-                leg_results[name] = fut.result()
+                try:
+                    leg_results[name] = fut.result()
+                except FtsUnavailableError:
+                    # Semantic is also requested: degrade to it, tell the user once.
+                    warnings.warn(
+                        f"FTS leg skipped: {_fts_guidance(schema, table)}",
+                        FtsSkippedWarning, stacklevel=2,
+                    )
     else:
         for name, thunk in leg_thunks.items():
             leg_results[name] = thunk()

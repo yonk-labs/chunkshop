@@ -70,16 +70,16 @@ impl<'a> Ole<'a> {
             let sec = o.sector(s).ok_or_else(|| bad("bad FAT sector"))?;
             o.fat.extend(sec.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])));
         }
-        let dirs = o.chain(dir0, what)?;
+        let dirs = o.chain(dir0, usize::MAX, what)?;
         for e in dirs.chunks_exact(128) {
             let nl = (rd16(e, 0x40).unwrap_or(0) as usize).min(64);
             let u: Vec<u16> = e[..nl.saturating_sub(2)].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
             o.dir.push((String::from_utf16_lossy(&u), rd32(e, 0x74).unwrap_or(END), rd32(e, 0x78).unwrap_or(0) as usize));
         }
         let (root_start, root_size) = o.dir.first().map(|e| (e.1, e.2)).ok_or_else(|| bad("empty directory"))?;
-        let mf = o.chain(mf0, what).unwrap_or_default();
+        let mf = o.chain(mf0, usize::MAX, what).unwrap_or_default();
         o.minifat = mf.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-        o.ministream = o.chain(root_start, what).unwrap_or_default();
+        o.ministream = o.chain(root_start, root_size, what).unwrap_or_default();
         o.ministream.truncate(root_size);
         Ok(o)
     }
@@ -89,9 +89,11 @@ impl<'a> Ole<'a> {
     }
 
     /// Follow a FAT chain; at most `fat.len()` hops (cycle guard) and MAX_STREAM bytes.
-    fn chain(&self, mut s: u32, what: &str) -> Result<Vec<u8>, ParseError> {
+    /// Stops once `want` bytes are read (the stream's declared size), so a chain longer than the
+    /// declaration is never read in full.
+    fn chain(&self, mut s: u32, want: usize, what: &str) -> Result<Vec<u8>, ParseError> {
         let (mut out, mut hops) = (Vec::new(), 0usize);
-        while s < END {
+        while s < END && out.len() < want {
             hops += 1;
             if hops > self.fat.len() || out.len() + self.ss > MAX_STREAM {
                 return Err(skip(what, "FAT chain cycle or oversized stream"));
@@ -114,7 +116,7 @@ impl<'a> Ole<'a> {
         }
         let mut out = if *size < 4096 {
             let (mut out, mut s, mut hops) = (Vec::new(), *start, 0usize);
-            while s < END {
+            while s < END && out.len() < *size {
                 hops += 1;
                 if hops > self.minifat.len() {
                     return Err(skip(what, "mini-FAT cycle"));
@@ -124,7 +126,7 @@ impl<'a> Ole<'a> {
             }
             out
         } else {
-            self.chain(*start, what)?
+            self.chain(*start, *size, what)?
         };
         out.truncate(*size);
         Ok(out)

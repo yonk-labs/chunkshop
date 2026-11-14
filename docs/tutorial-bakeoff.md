@@ -127,9 +127,9 @@ On a modern laptop with the int8 models already cached this runs in 20-30s
 for the 6-combo matrix. First run adds model download time (~200 MB across
 the three models; one-time cost under `~/.cache/fastembed/`).
 
-By default the bakeoff schema is dropped on exit — `--keep-schema` keeps it
-so you can poke at the tables. Use `--keep-schema` when debugging a
-surprising leaderboard.
+The bakeoff schema is kept after the run so you can poke at the tables when
+debugging a surprising leaderboard. Drop it yourself when you are done (the
+Rust CLI will do it for you if you pass `--drop-schema`).
 
 ## Step 4: read the report
 

@@ -149,19 +149,18 @@ Stdout = checkpoint reports during the run, JSON summary at the end.
 
 Runs a chunker × embedder matrix against a corpus with hand-written gold
 queries, scores recall@k + MRR per combo, writes a leaderboard + a
-runnable `recommended.yaml`. Config-driven — the matrix lives in YAML,
-not on the command line.
+runnable `recommended.yaml`. Config-driven — the matrix and the target
+DSN env vars (`targets[].dsn_env`) live in YAML, not on the command line.
+The bakeoff does not drop its schemas afterwards.
 
 ```
-chunkshop bakeoff --config PATH [--dsn DSN] [--yes] [--keep-schema]
+chunkshop bakeoff --config PATH [--yes]
 ```
 
 | Flag            | Default                 | Purpose                                                       |
 |-----------------|-------------------------|---------------------------------------------------------------|
 | `--config`      | —                       | Path to the bakeoff YAML. Required.                           |
-| `--dsn`         | `$CHUNKSHOP_DSN`        | Postgres DSN. Required (env var or flag).                     |
 | `--yes`         | off                     | Bypass the >50-cell matrix confirmation prompt.               |
-| `--keep-schema` | off                     | Keep the bakeoff schema after run — useful for debugging.     |
 
 Outputs land in `skill-output/bakeoff/{name}/`:
 - `results.json` — raw per-combo + per-query data.
@@ -316,8 +315,9 @@ RAKE downloads NLTK corpora (`stopwords`, `punkt`) on first use to `~/nltk_data/
 
 | Field              | Required             | Default                  | Notes                                                                                                                                             |
 |--------------------|----------------------|--------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
-| `dsn_env`          | no                   | `AGE_BAKEOFF_PGRG_DSN`   | Name of the env var holding your DSN. **Override this** to `CHUNKSHOP_DSN` in your configs.                                                       |
-| `schema`           | yes                  | —                        | Lowercase ident; must match `^[a-z_][a-z0-9_]*$`. Created if missing.                                                                             |
+| `type`             | yes                  | —                        | `postgres`, `mariadb`, `sqlite` or `clickhouse`.                                                                                                  |
+| `dsn_env`          | one of `dsn` / `dsn_env` | —                    | Name of the env var holding your DSN (e.g. `CHUNKSHOP_DSN`). `dsn` takes a literal or `${VAR}` string instead.                                    |
+| `database`         | yes                  | —                        | Lowercase ident; must match `^[a-z_][a-z0-9_]*$`. The Postgres schema (or database) name; created if missing.                                     |
 | `table`            | yes                  | —                        | Same ident rule.                                                                                                                                  |
 | `mode`             | no                   | `overwrite`              | One of `overwrite`, `append`, `create_if_missing`. See [`../docs/tutorial-multi-source.md`](../docs/tutorial-multi-source.md).                     |
 | `source_tag`       | when `mode=append`   | `null`                   | Ident-safe tag written to every row's `source` column. Required for `append`; optional (but recommended) for `overwrite`/`create_if_missing`.     |
@@ -361,8 +361,9 @@ and its own tag. Queries filter or group by the `source` column. See
 
 ```yaml
 target:
+  type: postgres
   dsn_env: CHUNKSHOP_DSN
-  schema: mydata
+  database: mydata
   table: all_docs
   mode: append
   source_tag: support_tickets
@@ -381,7 +382,7 @@ target:
 
 | Var                                    | When chunkshop reads it                                    |
 |----------------------------------------|------------------------------------------------------------|
-| `$<target.dsn_env>` (default `AGE_BAKEOFF_PGRG_DSN`) | At sink construction; must be a valid libpq DSN. |
+| `$<target.dsn_env>`                    | At sink construction; must be a valid libpq DSN.           |
 | `OMP_NUM_THREADS` and friends          | Set by `runner` before any numpy/ORT import.               |
 | `HF_HOME` / `HF_HUB_CACHE`             | Respected by fastembed's downloader if you've moved the cache. |
 

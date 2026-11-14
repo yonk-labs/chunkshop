@@ -48,6 +48,9 @@ _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 # Matches Sitemap 0.9 <loc> elements without namespace plumbing.
 _LOC_RE = re.compile(r"<loc>(.*?)</loc>", re.IGNORECASE | re.DOTALL)
 
+_MAX_REDIRECTS = 5
+_REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+
 # MIMEs we treat as text. Anything else is skipped with a warning.
 _TEXTY_MIMES = (
     "text/html",
@@ -168,6 +171,8 @@ class HttpSource:
         self._robots_cache: dict[str, Optional[urllib.robotparser.RobotFileParser]] = {}
         # Polite-delay state — monotonic timestamp of the last outbound request.
         self._last_request_ts: float = 0.0
+        # Hosts the crawl may touch; set by _crawl once seeds are known.
+        self._seed_hosts: set[str] = set()
 
     # ------------------------------------------------------------------ http
 
@@ -176,7 +181,7 @@ class HttpSource:
             transport=self._transport,
             headers={"User-Agent": self.cfg.user_agent},
             timeout=30.0,
-            follow_redirects=True,
+            follow_redirects=False,  # hops are resolved (and vetted) in _request
         )
 
     def _polite_wait(self) -> None:
@@ -196,14 +201,48 @@ class HttpSource:
         *,
         if_none_match: Optional[str] = None,
         if_modified_since: Optional[str] = None,
+        check_robots: bool = True,
     ) -> httpx.Response:
-        self._polite_wait()
         headers = {}
         if if_none_match:
             headers["If-None-Match"] = if_none_match
         if if_modified_since:
             headers["If-Modified-Since"] = if_modified_since
-        return client.get(url, headers=headers)
+        current = url
+        for _ in range(_MAX_REDIRECTS + 1):
+            self._polite_wait()
+            resp = client.get(current, headers=headers)
+            loc = resp.headers.get("Location")
+            if resp.status_code not in _REDIRECT_STATUSES or not loc:
+                return resp
+            target = urljoin(current, loc)
+            if not self._redirect_allowed(client, url, target, check_robots):
+                raise RuntimeError(
+                    f"redirect from {current} to {target} refused (host not in the "
+                    f"seed URLs, or disallowed by robots.txt; add that host as a seed "
+                    f"URL, or set allow_external: true)"
+                )
+            current = target
+        raise RuntimeError(f"more than {_MAX_REDIRECTS} redirects from {url}")
+
+    def _redirect_allowed(
+        self, client: httpx.Client, origin: str, target: str, check_robots: bool
+    ) -> bool:
+        """Apply the crawler's link rules (scheme, host, robots) to a redirect hop."""
+        t = urlparse(target)
+        host = (t.hostname or "").lower()
+        if t.scheme not in ("http", "https") or not host:
+            return False
+        # example.com <-> www.example.com is the commonest redirect on the web;
+        # treat the pair as one host so seeds don't need both spellings.
+        def bare(h: str) -> str:
+            return h[4:] if h.startswith("www.") else h
+
+        allowed = {bare(h) for h in self._seed_hosts}
+        allowed.add(bare((urlparse(origin).hostname or "").lower()))
+        if not (self.cfg.allow_external or bare(host) in allowed):
+            return False
+        return not check_robots or self._robots_allows(client, target)
 
     # ------------------------------------------------------------- robots.txt
 
@@ -216,7 +255,7 @@ class HttpSource:
             return self._robots_cache[host_key]
         rp = urllib.robotparser.RobotFileParser()
         try:
-            resp = self._request(client, f"{host_key}/robots.txt")
+            resp = self._request(client, f"{host_key}/robots.txt", check_robots=False)
             if 200 <= resp.status_code < 300 and resp.text:
                 rp.parse(resp.text.splitlines())
             else:
@@ -360,6 +399,7 @@ class HttpSource:
             # Pin allowed hostnames (the set of seed hosts). Off-host links are
             # only followed when allow_external is True.
             seed_hosts = {(urlparse(s).hostname or "").lower() for s in seeds}
+            self._seed_hosts = seed_hosts
 
             visited: set[str] = set()
             # frontier holds (url, depth_remaining)

@@ -134,6 +134,16 @@ pub struct HttpSource {
     cfg: HttpSourceConfig,
     last_request_ts: Mutex<Option<Instant>>,
     robots_cache: Mutex<HashMap<String, Option<RobotsRules>>>,
+    /// Hosts the crawl may touch; set by `crawl` once the seeds are known.
+    seed_hosts: Mutex<HashSet<String>>,
+}
+
+/// Redirect hops resolved per request before giving up (Python `_MAX_REDIRECTS`).
+const MAX_REDIRECTS: usize = 5;
+
+/// `example.com` and `www.example.com` count as one host.
+fn bare_host(h: &str) -> &str {
+    h.strip_prefix("www.").unwrap_or(h)
 }
 
 impl HttpSource {
@@ -142,6 +152,7 @@ impl HttpSource {
             cfg,
             last_request_ts: Mutex::new(None),
             robots_cache: Mutex::new(HashMap::new()),
+            seed_hosts: Mutex::new(HashSet::new()),
         }
     }
 
@@ -153,7 +164,8 @@ impl HttpSource {
         reqwest::Client::builder()
             .default_headers(headers)
             .timeout(Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::default())
+            // Hops are resolved (and vetted) in `get_following`.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .context("build reqwest client")
     }
@@ -214,8 +226,8 @@ impl HttpSource {
     }
 
     async fn fetch_robots_body(&self, client: &reqwest::Client, url: &str) -> Option<String> {
-        self.polite_wait().await;
-        let resp = client.get(url).send().await.ok()?;
+        // check_robots=false: fetching robots.txt must not consult robots.txt.
+        let resp = self.get_following(client, url, None, false).await?;
         if !resp.status().is_success() {
             return None;
         }
@@ -232,33 +244,120 @@ impl HttpSource {
         }
     }
 
+    /// GET `url`, resolving redirects manually (at most `MAX_REDIRECTS` hops).
+    /// Each hop must pass `redirect_allowed`; a refused or over-long chain logs
+    /// and returns `None` (no document). Mirrors Python `_request`.
+    async fn get_following(
+        &self,
+        client: &reqwest::Client,
+        url: &str,
+        cursor_entry: Option<&HttpUrlCursor>,
+        check_robots: bool,
+    ) -> Option<reqwest::Response> {
+        let mut current = url.to_string();
+        for _ in 0..=MAX_REDIRECTS {
+            self.polite_wait().await;
+            let mut req = client.get(&current);
+            if let Some(ce) = cursor_entry {
+                if let Some(etag) = &ce.etag {
+                    if let Ok(v) = HeaderValue::from_str(etag) {
+                        req = req.header(reqwest::header::IF_NONE_MATCH, v);
+                    }
+                }
+                if let Some(lm) = &ce.last_modified {
+                    if let Ok(v) = HeaderValue::from_str(lm) {
+                        req = req.header(reqwest::header::IF_MODIFIED_SINCE, v);
+                    }
+                }
+            }
+            let resp = match req.send().await {
+                Ok(r) => r,
+                Err(err) => {
+                    tracing::warn!(target: "chunkshop::http", "GET {current} failed: {err}");
+                    return None;
+                }
+            };
+            let loc = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let is_redirect = matches!(resp.status().as_u16(), 301 | 302 | 303 | 307 | 308);
+            let Some(loc) = loc.filter(|_| is_redirect) else {
+                return Some(resp);
+            };
+            let target = reqwest::Url::parse(&current)
+                .ok()
+                .and_then(|base| base.join(&loc).ok());
+            let allowed = match &target {
+                Some(t) => self.redirect_allowed(client, url, t, check_robots).await,
+                None => false,
+            };
+            let Some(target) = target.filter(|_| allowed) else {
+                tracing::warn!(
+                    target: "chunkshop::http",
+                    "redirect from {current} to {loc} refused (host not in the seed URLs, \
+                     or disallowed by robots.txt; add that host as a seed URL, or set \
+                     allow_external: true)"
+                );
+                return None;
+            };
+            current = target.to_string();
+        }
+        tracing::warn!(
+            target: "chunkshop::http",
+            "more than {MAX_REDIRECTS} redirects from {url}; skipping"
+        );
+        None
+    }
+
+    /// Apply the crawler's link rules (scheme, host, robots) to a redirect hop.
+    /// Returns a boxed `Send` future (not `async fn`) to break the
+    /// get_following -> redirect_allowed -> robots_for -> get_following cycle.
+    fn redirect_allowed<'a>(
+        &'a self,
+        client: &'a reqwest::Client,
+        origin: &'a str,
+        target: &'a reqwest::Url,
+        check_robots: bool,
+    ) -> std::pin::Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(async move {
+            if !matches!(target.scheme(), "http" | "https") {
+                return false;
+            }
+            let Some(host) = target.host_str().map(|h| h.to_lowercase()) else {
+                return false;
+            };
+            if !self.cfg.allow_external {
+                let mut allowed: HashSet<String> = self
+                    .seed_hosts
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|h| bare_host(h).to_string())
+                    .collect();
+                if let Some(h) = host_of(origin) {
+                    allowed.insert(bare_host(&h).to_string());
+                }
+                if !allowed.contains(bare_host(&host)) {
+                    return false;
+                }
+            }
+            if check_robots {
+                let rules = self.robots_for(client, target.as_str()).await;
+                return Self::robots_allows(&rules, target.as_str());
+            }
+            true
+        })
+    }
+
     async fn request(
         &self,
         client: &reqwest::Client,
         url: &str,
         cursor_entry: Option<&HttpUrlCursor>,
     ) -> Option<(StatusCode, HeaderMap, String)> {
-        self.polite_wait().await;
-        let mut req = client.get(url);
-        if let Some(ce) = cursor_entry {
-            if let Some(etag) = &ce.etag {
-                if let Ok(v) = HeaderValue::from_str(etag) {
-                    req = req.header(reqwest::header::IF_NONE_MATCH, v);
-                }
-            }
-            if let Some(lm) = &ce.last_modified {
-                if let Ok(v) = HeaderValue::from_str(lm) {
-                    req = req.header(reqwest::header::IF_MODIFIED_SINCE, v);
-                }
-            }
-        }
-        let resp = match req.send().await {
-            Ok(r) => r,
-            Err(err) => {
-                tracing::warn!(target: "chunkshop::http", "GET {url} failed: {err}");
-                return None;
-            }
-        };
+        let resp = self.get_following(client, url, cursor_entry, true).await?;
         let status = resp.status();
         let headers = resp.headers().clone();
         let body = match resp.text().await {
@@ -378,6 +477,7 @@ impl HttpSource {
             .filter_map(|s| reqwest::Url::parse(s).ok())
             .filter_map(|u| u.host_str().map(|h| h.to_lowercase()))
             .collect();
+        *self.seed_hosts.lock().unwrap() = seed_hosts.clone();
 
         let mut visited: HashSet<String> = HashSet::new();
         let mut frontier: VecDeque<(String, u32)> = VecDeque::new();

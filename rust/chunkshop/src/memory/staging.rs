@@ -86,8 +86,16 @@ pub async fn ensure_staging_table(pool: &PgPool, schema: &str, table: &str) -> R
     let session_seq_ix = format!("\"{table}_session_seq\"");
     let staged_at_ix = format!("\"{table}_staged_at\"");
 
+    // Serialize concurrent first calls: CREATE SCHEMA / TABLE IF NOT EXISTS
+    // still race on the pg_namespace / pg_type unique indexes. The xact lock
+    // is released on commit (or rollback on error).
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(format!("chunkshop_staging:{schema}"))
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(&format!(r#"CREATE SCHEMA IF NOT EXISTS "{schema}""#))
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     sqlx::query(&format!(
         r#"CREATE TABLE IF NOT EXISTS {fq} (
@@ -104,18 +112,19 @@ pub async fn ensure_staging_table(pool: &PgPool, schema: &str, table: &str) -> R
             metadata    jsonb NOT NULL DEFAULT '{{}}'::jsonb
         )"#
     ))
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     sqlx::query(&format!(
         "CREATE INDEX IF NOT EXISTS {session_seq_ix} ON {fq} (session_id, seq)"
     ))
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     sqlx::query(&format!(
         "CREATE INDEX IF NOT EXISTS {staged_at_ix} ON {fq} (staged_at)"
     ))
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 

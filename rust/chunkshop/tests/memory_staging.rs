@@ -244,3 +244,36 @@ async fn ensure_staging_table_rejects_unsafe_identifiers() -> anyhow::Result<()>
     assert!(res.is_err(), "unsafe identifier must be rejected pre-SQL");
     Ok(())
 }
+
+/// Two producers (cells / processes) calling `ensure_staging_table` for the
+/// same brand-new schema at once must both succeed. Unserialized
+/// `CREATE SCHEMA IF NOT EXISTS` races on pg_namespace_nspname_index.
+#[tokio::test]
+async fn ensure_staging_table_is_safe_under_concurrent_first_call() -> anyhow::Result<()> {
+    let Some(dsn) = skip_if_no_dsn() else {
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(16)
+        .connect(&dsn)
+        .await?;
+    for round in 0..10 {
+        let schema = format!("chunkshop_review_p1t_race_{round}");
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let pool = pool.clone();
+                let schema = schema.clone();
+                tokio::spawn(async move { ensure_staging_table(&pool, &schema, "staging").await })
+            })
+            .collect();
+        let mut errs = Vec::new();
+        for h in handles {
+            if let Err(e) = h.await? {
+                errs.push(format!("{e:#}"));
+            }
+        }
+        cleanup(&pool, &schema).await?;
+        assert!(errs.is_empty(), "round {round}: concurrent ensure failed: {errs:?}");
+    }
+    Ok(())
+}

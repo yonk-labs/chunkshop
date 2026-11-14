@@ -107,7 +107,12 @@ class Pipeline:
         (SQLite: deletes from both chunks + chunks_vec; PG/MariaDB: single
         table DELETE) lives in the Sink implementation.
         """
-        return self._sink.delete_document(doc_id)
+        # Frames of a non-identity framer are stored as `doc_id#N`; remove those too.
+        # Skipped for the identity framer so a real doc named `x#1` is not taken
+        # for a frame of `x`.
+        framed = self.cfg.framer.type != "identity"
+        ids = {doc_id, *(self._sink.framed_doc_ids(doc_id) if framed else ())}
+        return sum(self._sink.delete_document(i) for i in ids)
 
     def count_docs(self) -> int:
         return self._sink.count_docs()
