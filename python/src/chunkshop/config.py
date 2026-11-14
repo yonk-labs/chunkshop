@@ -80,6 +80,9 @@ class FilesIncrementalSettings(_Base):
     """
     cursor_path: str
     detect: Literal["hash", "mtime"] = "hash"
+    # Safety gate: a run whose glob no longer matches ANY previously-known file
+    # (unmounted dir, typo) would prune the whole table. Refused unless true.
+    allow_prune_all: bool = False
 
 
 class FilesSource(_Base):

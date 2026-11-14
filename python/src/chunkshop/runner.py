@@ -219,6 +219,18 @@ def run_cell(cfg: CellConfig) -> CellResult:
             else:
                 if isinstance(source, PrunableSource):
                     deleted = list(source.iter_deleted_since(cursor))
+                    if (
+                        deleted
+                        and len(deleted) == len(cursor)
+                        and not getattr(inc, "allow_prune_all", True)
+                    ):
+                        raise RuntimeError(
+                            f"incremental run would delete all {len(deleted)} documents "
+                            "known from the cursor (none of them exist in the source any more); "
+                            f"this usually means the glob no longer matches ({getattr(cfg.source, 'glob', None)!r}). "
+                            "Nothing was deleted and the cursor was not updated. Set "
+                            "source.incremental.allow_prune_all: true if this is intended."
+                        )
                     for did in deleted:
                         _delete_raw_doc(sink, did, framed=framed)
                     if deleted:
