@@ -31,6 +31,11 @@ pub struct MemorySink {
     /// supersede DELETE for the same doc on a subsequent write_document
     /// call within the same cell run. Mirror of Python `self._superseded`.
     superseded: Mutex<std::collections::HashSet<String>>,
+    /// Per-doc_id next seq_num. The framer emits every episode of a session
+    /// under one doc_id and the chunker numbers each from 0; without a base
+    /// each write upserts over the previous episode. Mirror of Python
+    /// `self._seq_base`.
+    seq_base: Mutex<std::collections::HashMap<String, i64>>,
 }
 
 impl MemorySink {
@@ -52,6 +57,7 @@ impl MemorySink {
             recorded_at,
             namespace,
             superseded: Mutex::new(std::collections::HashSet::new()),
+            seq_base: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -119,7 +125,38 @@ impl Sink for MemorySink {
         tags_per_chunk: &[Vec<String>],
     ) -> impl Future<Output = Result<()>> + Send {
         async move {
-            let stamped: Vec<Chunk> = chunks.iter().map(|c| self.stamp(c)).collect();
+            let mut stamped: Vec<Chunk> = chunks.iter().map(|c| self.stamp(c)).collect();
+
+            // Renumber seq_num = base + i so successive episodes of the same
+            // doc_id never collide on the row PK. First sighting of a doc_id:
+            // provisional tier resumes after rows an earlier run wrote (each
+            // run is a new process); consolidated starts at 0 (its supersede
+            // DELETE clears prior rows).
+            let known = self.seq_base.lock().unwrap().get(doc_id).copied();
+            let base: i64 = match known {
+                Some(b) => b,
+                None if matches!(self.mem.tier, MemoryTier::Provisional) => {
+                    let fq = self.inner.fq_pub();
+                    // NULL-safe: a cell without source_tag writes source = NULL.
+                    let source = self.inner.source_tag();
+                    sqlx::query_scalar::<_, i64>(&format!(
+                        "SELECT coalesce(max(seq_num) + 1, 0)::bigint FROM {fq} \
+                         WHERE doc_id = $1 AND source IS NOT DISTINCT FROM $2"
+                    ))
+                    .bind(doc_id)
+                    .bind(source)
+                    .fetch_one(self.inner.pool().await?)
+                    .await?
+                }
+                None => 0,
+            };
+            for (i, c) in stamped.iter_mut().enumerate() {
+                c.seq_num = (base + i as i64) as usize;
+            }
+            self.seq_base
+                .lock()
+                .unwrap()
+                .insert(doc_id.to_string(), base + stamped.len() as i64);
 
             // Supersede: for consolidated-tier writes, DELETE prior rows for
             // this doc_id scoped by source_tag (so cross-namespace memory
