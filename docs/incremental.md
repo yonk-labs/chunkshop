@@ -488,6 +488,10 @@ target:
   source_tag: files_incremental
 ```
 
+`source.incremental` is rejected at config load together with `target.mode: overwrite`
+(the default): overwrite drops the table every run, so an incremental run would keep
+only the changed files. Use `create_if_missing` (or `append` with a `source_tag`).
+
 Run it on a cron cadence like Pattern A — but your side is stateless; the cursor
 file carries everything:
 

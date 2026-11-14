@@ -1236,6 +1236,21 @@ class CellConfig(_Base):
     target: TargetConfig
     runtime: RuntimeConfig = RuntimeConfig()
 
+    @model_validator(mode="after")
+    def _incremental_files_not_overwrite(self):
+        if (
+            isinstance(self.source, FilesSource)
+            and self.source.incremental is not None
+            and self.target.mode == "overwrite"
+        ):
+            raise ValueError(
+                "source.incremental cannot be combined with target.mode: overwrite "
+                "(the default): overwrite drops the table every run, so an incremental "
+                "run would keep only the changed files. Set target.mode: "
+                "create_if_missing (or append with a source_tag)."
+            )
+        return self
+
 
 def load_config(path: str | Path) -> CellConfig:
     data = yaml.safe_load(Path(path).read_text())
