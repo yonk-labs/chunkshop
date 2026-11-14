@@ -316,18 +316,30 @@ impl Sink for MariadbSink {
                 .acquire_create_lock(&mut tx, &self.cfg.database_name)
                 .await?;
 
-            // No CREATE EXTENSION step — VECTOR is built-in since MariaDB 11.7.
-            sqlx::query(&self.backend.create_database_sql(&self.cfg.database_name))
-                .execute(&mut *tx)
-                .await
-                .context("CREATE DATABASE")?;
+            let guarded: Result<()> = async {
+                // No CREATE EXTENSION step — VECTOR is built-in since MariaDB 11.7.
+                sqlx::query(&self.backend.create_database_sql(&self.cfg.database_name))
+                    .execute(&mut *tx)
+                    .await
+                    .context("CREATE DATABASE")?;
 
-            match self.cfg.mode.as_str() {
-                "overwrite" => self.overwrite_create_in_tx(&mut tx).await?,
-                "create_if_missing" => self.create_if_missing_in_tx(&mut tx).await?,
-                "append" => self.append_preflight_in_tx(&mut tx).await?,
-                other => return Err(anyhow!("unknown target.mode: {other:?}")),
+                match self.cfg.mode.as_str() {
+                    "overwrite" => self.overwrite_create_in_tx(&mut tx).await?,
+                    "create_if_missing" => self.create_if_missing_in_tx(&mut tx).await?,
+                    "append" => self.append_preflight_in_tx(&mut tx).await?,
+                    other => return Err(anyhow!("unknown target.mode: {other:?}")),
+                }
+                Ok(())
             }
+            .await;
+            // Release on the same connection, success or error (GET_LOCK is
+            // connection-scoped and the pooled connection outlives this call).
+            let released = self
+                .backend
+                .release_create_lock(&mut tx, &self.cfg.database_name)
+                .await;
+            guarded?;
+            released?;
             tx.commit().await.context("commit schema-setup tx")?;
             Ok(())
         }

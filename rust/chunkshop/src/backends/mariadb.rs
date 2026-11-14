@@ -49,6 +49,35 @@ impl MariadbBackend {
             })
             .await
     }
+
+    /// Release the GET_LOCK taken by `acquire_create_lock`. Must run on the
+    /// same connection (the tx's) that took it; GET_LOCK is connection-scoped.
+    pub async fn release_create_lock(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        key: &str,
+    ) -> Result<()> {
+        let name = create_lock_name(key);
+        sqlx::query("SELECT RELEASE_LOCK(?)")
+            .bind(&name)
+            .fetch_one(&mut **tx)
+            .await
+            .with_context(|| format!("RELEASE_LOCK({name:?})"))?;
+        Ok(())
+    }
+}
+
+/// Lock name for the create-table GET_LOCK, truncated to MariaDB's 64-byte limit.
+fn create_lock_name(key: &str) -> String {
+    let raw = format!("chunkshop_{key}");
+    let name: String = raw.chars().take(64).collect();
+    // Byte-truncation to match Python exactly, only matters for non-ASCII keys
+    // (idents are regex-enforced ASCII).
+    if name.len() > 64 {
+        name[..64].to_string()
+    } else {
+        name
+    }
 }
 
 impl BackendDialect for MariadbBackend {
@@ -210,16 +239,7 @@ impl BackendConn for MariadbBackend {
             // GET_LOCK is connection-scoped, not tx-scoped, but executing it
             // through the tx's underlying connection is what matters.
             // Lock-name truncation to 64 bytes mirrors Python's `[:64]`.
-            let raw = format!("chunkshop_{key}");
-            let name: String = raw.chars().take(64).collect();
-            // Be safe: MariaDB GET_LOCK has a 64-char limit. Use byte-truncation
-            // to match Python exactly, but only when the byte length matches the
-            // char length (ASCII keys, which is the regex-enforced case).
-            let name = if name.len() > 64 {
-                name[..64].to_string()
-            } else {
-                name
-            };
+            let name = create_lock_name(key);
 
             use sqlx::Row;
             let row = sqlx::query("SELECT GET_LOCK(?, 30)")
@@ -233,13 +253,9 @@ impl BackendConn for MariadbBackend {
                     "could not acquire MariaDB lock {name:?} within 30s"
                 ));
             }
-            // Best-effort RELEASE_LOCK on tx commit/rollback would require
-            // hooking sqlx's tx lifecycle. Mirroring Python's pattern, we
-            // release here once the lock has been recorded; the caller's
-            // create-table DDL runs after this method returns. For chunkshop's
-            // narrow use (one-shot lock around CREATE TABLE), GET_LOCK's
-            // session-scope semantics make the explicit release optional —
-            // session close releases it anyway.
+            // The lock is connection-scoped and the pooled connection outlives
+            // this call, so the caller MUST call `release_create_lock` on the
+            // same tx once the guarded work is done (success or error).
             Ok(())
         }
     }
